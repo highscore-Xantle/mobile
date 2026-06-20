@@ -79,7 +79,7 @@ export const font = {
 
 /** Type scale (size + the family to pair it with). */
 export const text = {
-  logo: { fontFamily: font.display, fontSize: 104 },
+  logo: { fontFamily: font.display, fontSize: 104, color: colors.text },
   h1: { fontFamily: font.extrabold, fontSize: 28, color: colors.text },
   h2: { fontFamily: font.extrabold, fontSize: 22, color: colors.text },
   title: { fontFamily: font.bold, fontSize: 18, color: colors.text },
