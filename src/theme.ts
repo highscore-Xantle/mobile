@@ -30,6 +30,11 @@ export const colors = {
   textMuted: '#939BA7', // secondary text
   textFaint: '#6086A9', // faint labels / hints (muted blue-grey)
   white: '#FFFFFF',
+
+  // ---- Semantic status ----
+  success: '#4ADE80', // available / win / positive
+  danger: '#F87171', // error / taken / loss
+  warning: '#FBBF24', // caution
 } as const;
 
 /** Two-stop gradients (use with <GradientFill />). */
