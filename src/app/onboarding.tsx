@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -34,7 +34,7 @@ export default function Onboarding() {
   const [errorMsg, setErrorMsg] = useState('');
 
   // Debounce ref so we don't hammer Supabase on every keystroke
-  let debounceTimer: ReturnType<typeof setTimeout>;
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleChange = (value: string) => {
     const trimmed = value.trim().toLowerCase();
@@ -51,9 +51,9 @@ export default function Onboarding() {
     }
 
     // Start debounce — wait 600ms after user stops typing, then check
-    clearTimeout(debounceTimer);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
     setCheckState('checking');
-    debounceTimer = setTimeout(() => checkAvailability(trimmed), 600);
+    debounceTimer.current = setTimeout(() => checkAvailability(trimmed), 600);
   };
 
   const checkAvailability = async (value: string) => {

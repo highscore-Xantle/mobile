@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useSession } from '../lib/useSession';
 import { GradientFill } from '../components/GradientFill';
 import { RolloverReveal } from '../components/RolloverReveal';
+import { MenuDrawer } from '../components/MenuDrawer';
 import {
   colors,
   font,
@@ -18,6 +19,7 @@ import {
 export default function Home() {
   const router = useRouter();
   const { session, loading } = useSession();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Auth guard — redirect to login if there's no active session
   useEffect(() => {
@@ -26,13 +28,9 @@ export default function Home() {
     }
   }, [session, loading]);
 
-  const handleMenuPress = () => {
-    // Day 4 / D3: opens the menu drawer (Sam's task)
-  };
+  const handleMenuPress = () => setMenuOpen(true);
 
-  const handleAvatarPress = () => {
-    // Day 4 / D3: navigates to profile screen (Sam's task)
-  };
+  const handleAvatarPress = () => router.push('/profile');
 
   // Derive initials — prefer username from profile metadata, fallback to email first char
   const avatarLetter =
@@ -110,6 +108,8 @@ export default function Home() {
         </RolloverReveal>
 
       </SafeAreaView>
+
+      <MenuDrawer visible={menuOpen} onClose={() => setMenuOpen(false)} />
     </View>
   );
 }
