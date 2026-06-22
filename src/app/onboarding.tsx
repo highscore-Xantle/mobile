@@ -20,7 +20,6 @@ import { colors, font, gradients, radius, shadow, space, text as themeText } fro
 
 const MIN_LEN = 3;
 const MAX_LEN = 20;
-// Only letters, numbers, underscores — no spaces or special chars
 const VALID_RE = /^[a-zA-Z0-9_]+$/;
 
 type CheckState = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
@@ -34,24 +33,14 @@ export default function Onboarding() {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Debounce ref so we don't hammer Supabase on every keystroke
   let debounceTimer: ReturnType<typeof setTimeout>;
 
   const handleChange = (value: string) => {
     const trimmed = value.trim().toLowerCase();
     setUsername(trimmed);
     setErrorMsg('');
-
-    if (trimmed.length < MIN_LEN) {
-      setCheckState('idle');
-      return;
-    }
-    if (trimmed.length > MAX_LEN || !VALID_RE.test(trimmed)) {
-      setCheckState('invalid');
-      return;
-    }
-
-    // Start debounce — wait 600ms after user stops typing, then check
+    if (trimmed.length < MIN_LEN) { setCheckState('idle'); return; }
+    if (trimmed.length > MAX_LEN || !VALID_RE.test(trimmed)) { setCheckState('invalid'); return; }
     clearTimeout(debounceTimer);
     setCheckState('checking');
     debounceTimer = setTimeout(() => checkAvailability(trimmed), 600);
@@ -59,18 +48,14 @@ export default function Onboarding() {
 
   const checkAvailability = async (value: string) => {
     const { data, error } = await supabase
-      .from('profiles')
-      .select('username')
-      .eq('username', value)
-      .maybeSingle();
-
-    if (error) {
-      setCheckState('idle');
-      return;
-    }
+      .from('profiles').select('username').eq('username', value).maybeSingle();
+    if (error) { setCheckState('idle'); return; }
     setCheckState(data ? 'taken' : 'available');
-    if (data) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    else Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Haptics.notificationAsync(
+      data
+        ? Haptics.NotificationFeedbackType.Error
+        : Haptics.NotificationFeedbackType.Success
+    );
   };
 
   const handleConfirm = async () => {
@@ -78,36 +63,28 @@ export default function Onboarding() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setSaving(true);
     setErrorMsg('');
-
     const { error } = await supabase
-      .from('profiles')
-      .update({ username })
-      .eq('id', session.user.id);
-
+      .from('profiles').update({ username }).eq('id', session.user.id);
     setSaving(false);
-
     if (error) {
       setErrorMsg(error.message);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
-
-    // Username saved — head to home
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     router.replace('/home');
   };
 
-  const statusConfig: Record<CheckState, { text: string; color: string } | null> = {
+  // Status pill config
+  type StatusConfig = { label: string; color: string; bg: string } | null;
+  const statusConfig: Record<CheckState, StatusConfig> = {
     idle: null,
-    checking: { text: 'Checking availability…', color: colors.textMuted },
-    available: { text: '✓ Available', color: '#4ADE80' },
-    taken: { text: '✗ Already taken', color: '#F87171' },
-    invalid: {
-      text: `Letters, numbers and _ only · ${MIN_LEN}–${MAX_LEN} chars`,
-      color: '#FBBF24',
-    },
+    checking: { label: 'Checking…', color: colors.textMuted, bg: 'rgba(147,155,167,0.12)' },
+    available: { label: '✓  Available', color: '#4ADE80', bg: 'rgba(74,222,128,0.12)' },
+    taken: { label: '✗  Already taken', color: '#F87171', bg: 'rgba(248,113,113,0.12)' },
+    invalid: { label: `Letters, numbers, _ · ${MIN_LEN}–${MAX_LEN} chars`, color: '#FBBF24', bg: 'rgba(251,191,36,0.12)' },
   };
-  const status = statusConfig[checkState];
+  const statusPill = statusConfig[checkState];
   const ctaEnabled = checkState === 'available' && !saving;
 
   return (
@@ -118,46 +95,59 @@ export default function Onboarding() {
       <GradientFill colors={gradients.background} />
 
       <SafeAreaView style={styles.safe}>
-        <RolloverReveal delay={80} duration={800}>
-          <View style={styles.header}>
-            <Text style={themeText.h1}>Pick your name.</Text>
-            <Text style={[themeText.body, styles.subtitle]}>
-              This is how other players will see you.{'\n'}Choose wisely — you can't change it later.
-            </Text>
+
+        {/* ── Heading with cyan accent bar ────────── */}
+        <RolloverReveal delay={80} duration={750}>
+          <View style={styles.headingRow}>
+            <View style={styles.accentBar} />
+            <View style={styles.headingText}>
+              <Text style={themeText.h1}>Pick your</Text>
+              <Text style={[themeText.h1, styles.headingCyan]}>name.</Text>
+              <Text style={styles.subtitle}>
+                This is how other players see you.{'\n'}Choose wisely — it's permanent.
+              </Text>
+            </View>
           </View>
         </RolloverReveal>
 
-        <RolloverReveal delay={300} duration={800} style={styles.formWrap}>
-          {/* Input */}
-          <View
-            style={[
-              styles.inputWrap,
-              checkState === 'available' && styles.inputBorderGreen,
-              checkState === 'taken' && styles.inputBorderRed,
-            ]}
-          >
-            <Text style={styles.atSign}>@</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="your_username"
-              placeholderTextColor={colors.textFaint}
-              autoCapitalize="none"
-              autoCorrect={false}
-              maxLength={MAX_LEN}
-              value={username}
-              onChangeText={handleChange}
-            />
-            {checkState === 'checking' && (
-              <ActivityIndicator size="small" color={colors.textMuted} />
-            )}
+        {/* ── Input card ──────────────────────────── */}
+        <RolloverReveal delay={260} duration={750} style={styles.inputSection}>
+
+          {/* Floating input card */}
+          <View style={[
+            styles.inputCard,
+            checkState === 'available' && styles.inputCardGreen,
+            checkState === 'taken' && styles.inputCardRed,
+          ]}>
+            <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
+            <View style={styles.inputRow}>
+              <Text style={styles.atSign}>@</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="your_username"
+                placeholderTextColor={colors.textFaint}
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={MAX_LEN}
+                value={username}
+                onChangeText={handleChange}
+              />
+              {checkState === 'checking' && (
+                <ActivityIndicator size="small" color={colors.textMuted} style={styles.spinner} />
+              )}
+            </View>
           </View>
 
-          {/* Status hint */}
-          {status && (
-            <Text style={[styles.statusText, { color: status.color }]}>{status.text}</Text>
+          {/* Status pill */}
+          {statusPill && (
+            <View style={[styles.statusPill, { backgroundColor: statusPill.bg }]}>
+              <Text style={[styles.statusText, { color: statusPill.color }]}>
+                {statusPill.label}
+              </Text>
+            </View>
           )}
 
-          {/* Error from Supabase write */}
+          {/* Supabase error */}
           {errorMsg ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{errorMsg}</Text>
@@ -167,7 +157,7 @@ export default function Onboarding() {
           {/* CTA */}
           <Pressable
             style={({ pressed }) => [
-              styles.ctaBtn,
+              styles.cta,
               !ctaEnabled && styles.ctaDisabled,
               pressed && ctaEnabled && styles.pressed,
             ]}
@@ -176,15 +166,15 @@ export default function Onboarding() {
           >
             <View style={styles.ctaInner}>
               {ctaEnabled && <GradientFill colors={gradients.button} />}
-              {saving ? (
-                <ActivityIndicator color={colors.white} />
-              ) : (
-                <Text style={[styles.ctaText, !ctaEnabled && styles.ctaTextDim]}>
-                  Let's go →
-                </Text>
-              )}
+              {saving
+                ? <ActivityIndicator color={colors.white} />
+                : <Text style={[styles.ctaText, !ctaEnabled && styles.ctaTextDim]}>
+                    Let's go →
+                  </Text>
+              }
             </View>
           </Pressable>
+
         </RolloverReveal>
       </SafeAreaView>
     </KeyboardAvoidingView>
@@ -193,29 +183,48 @@ export default function Onboarding() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
-  safe: { flex: 1, paddingHorizontal: space.lg, justifyContent: 'center' },
+  safe: { flex: 1, paddingHorizontal: space.lg, justifyContent: 'center', gap: space.xl },
 
-  header: { marginBottom: space.xl },
-  subtitle: { marginTop: space.sm, color: colors.textMuted, lineHeight: 22 },
+  // ── Heading
+  headingRow: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
+  accentBar: {
+    width: 5,
+    height: 88,
+    borderRadius: radius.pill,
+    backgroundColor: colors.cyan,
+    marginTop: 4,
+  },
+  headingText: { flex: 1, gap: space.xs },
+  headingCyan: { color: colors.cyan, marginTop: -8 },
+  subtitle: {
+    fontFamily: font.semibold,
+    fontSize: 14,
+    color: colors.textMuted,
+    lineHeight: 21,
+    marginTop: space.sm,
+  },
 
-  formWrap: { gap: space.md },
+  // ── Input section
+  inputSection: { gap: space.md },
 
-  // Input row
-  inputWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
+  inputCard: {
+    borderRadius: radius.xl,
     borderWidth: 1.5,
     borderColor: colors.hairline,
-    paddingHorizontal: space.md,
+    overflow: 'hidden',
     ...shadow.card,
   },
-  inputBorderGreen: { borderColor: '#4ADE80' },
-  inputBorderRed: { borderColor: '#F87171' },
+  inputCardGreen: { borderColor: '#4ADE80' },
+  inputCardRed: { borderColor: '#F87171' },
+
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: space.md,
+  },
   atSign: {
     fontFamily: font.extrabold,
-    fontSize: 18,
+    fontSize: 20,
     color: colors.textFaint,
     marginRight: space.xs,
   },
@@ -224,54 +233,40 @@ const styles = StyleSheet.create({
     fontFamily: font.semibold,
     fontSize: 18,
     color: colors.text,
-    paddingVertical: space.md,
+    paddingVertical: space.lg,
   },
+  spinner: { marginRight: space.sm },
 
-  statusText: {
-    fontFamily: font.semibold,
-    fontSize: 13,
-    marginTop: -space.xs,
+  // Status pill
+  statusPill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
   },
+  statusText: { fontFamily: font.bold, fontSize: 13 },
 
+  // Error
   errorBox: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: 'rgba(239,68,68,0.10)',
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderColor: 'rgba(239,68,68,0.30)',
     borderRadius: radius.sm,
     padding: space.md,
   },
-  errorText: {
-    color: '#F87171',
-    fontFamily: font.semibold,
-    fontSize: 14,
-    textAlign: 'center',
-  },
+  errorText: { fontFamily: font.semibold, fontSize: 14, color: '#F87171', textAlign: 'center' },
 
   // CTA
-  ctaBtn: {
-    borderRadius: radius.md,
-    overflow: 'hidden',
-    ...shadow.blueGlow,
-    marginTop: space.sm,
-  },
-  ctaDisabled: {
-    opacity: 0.4,
-    shadowOpacity: 0,
-    elevation: 0,
-  },
+  cta: { borderRadius: radius.lg, overflow: 'hidden', ...shadow.blueGlow },
+  ctaDisabled: { opacity: 0.35, shadowOpacity: 0, elevation: 0 },
   ctaInner: {
-    paddingVertical: space.md + 2,
+    paddingVertical: 20,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.surface,
   },
-  ctaText: {
-    fontFamily: font.extrabold,
-    fontSize: 17,
-    color: colors.white,
-    letterSpacing: 0.4,
-  },
+  ctaText: { fontFamily: font.extrabold, fontSize: 17, color: colors.white, letterSpacing: 0.4 },
   ctaTextDim: { color: colors.textMuted },
 
-  pressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
+  pressed: { transform: [{ scale: 0.97 }], opacity: 0.88 },
 });
