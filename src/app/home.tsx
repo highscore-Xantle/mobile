@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useSession } from '../lib/useSession';
@@ -21,110 +21,133 @@ export default function Home() {
   const { session, loading } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // Auth guard — redirect to login if there's no active session
   useEffect(() => {
-    if (!loading && !session) {
-      router.replace('/login');
-    }
+    if (!loading && !session) router.replace('/login');
   }, [session, loading]);
 
   const handleMenuPress = () => setMenuOpen(true);
 
   const handleAvatarPress = () => router.push('/profile');
 
-  // Derive initials — prefer username from profile metadata, fallback to email first char
+  const handleGamePress = (id: string) => router.push(`/game/${id}`);
+
   const avatarLetter =
     (session?.user?.user_metadata?.username as string)?.[0]?.toUpperCase() ??
-    session?.user?.email?.[0]?.toUpperCase() ??
-    '?';
+    session?.user?.email?.[0]?.toUpperCase() ?? '?';
 
-  // Don't render anything while the session is being resolved
   if (loading || !session) return null;
 
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
 
-      <SafeAreaView style={styles.safe}>
-
-        {/* ── Top Bar ─────────────────────────────── */}
-        <View style={styles.topBar}>
-
-          {/* Avatar chip — left */}
-          <Pressable
-            style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
-            onPress={handleAvatarPress}
-          >
-            <Text style={styles.avatarLetter}>{avatarLetter}</Text>
-          </Pressable>
-
-          {/* App wordmark — centre */}
-          <Text style={styles.wordmark}>Xantle</Text>
-
-          {/* Hamburger menu — right */}
-          <Pressable
-            style={({ pressed }) => [styles.menuBtn, pressed && styles.pressed]}
-            onPress={handleMenuPress}
-          >
-            <View style={styles.menuBar} />
-            <View style={[styles.menuBar, { width: 18 }]} />
-            <View style={[styles.menuBar, { width: 14 }]} />
-          </Pressable>
-
-        </View>
-
-        {/* ── Hero — roll-over reveal ──────────────── */}
-        <RolloverReveal delay={100} duration={900} style={styles.heroSection}>
-          <View style={styles.heroCard}>
-            <GradientFill colors={gradients.featured} />
-            <Text style={styles.heroTitle}>Game Night{'\n'}Starts Here.</Text>
-            <Text style={styles.heroSub}>
-              Pick a game. Gather your crew.{'\n'}Let the chaos begin.
-            </Text>
-          </View>
-        </RolloverReveal>
-
-        {/* ── Games section — second reveal, offset delay ─ */}
-        <RolloverReveal delay={380} duration={850} style={styles.gamesSection}>
-          <Text style={themeText.h2}>What do you want to play?</Text>
-          <Text style={[themeText.hint, { marginTop: space.xs, marginBottom: space.md }]}>
-            Game grid coming Day 4 →
-          </Text>
-
-          {/* Placeholder game cards (replaced on Day 4) */}
-          <View style={styles.cardRow}>
-            {PLACEHOLDER_GAMES.map((g) => (
-              <Pressable
-                key={g.label}
-                style={({ pressed }) => [styles.gameCard, pressed && styles.pressed]}
-                onPress={() => {}}
-              >
-                <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
-                <Text style={styles.gameEmoji}>{g.emoji}</Text>
-                <Text style={styles.gameLabel}>{g.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </RolloverReveal>
-
-      </SafeAreaView>
-
       <MenuDrawer visible={menuOpen} onClose={() => setMenuOpen(false)} />
+
+      <SafeAreaView style={styles.safe}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+
+          {/* ── Top Bar ─────────────────────────────── */}
+          <View style={styles.topBar}>
+            {/* Avatar chip with blue glow */}
+            <Pressable
+              style={({ pressed }) => [styles.avatarWrap, pressed && styles.pressed]}
+              onPress={handleAvatarPress}
+            >
+              <View style={styles.avatarInner}>
+                <Text style={styles.avatarLetter}>{avatarLetter}</Text>
+              </View>
+            </Pressable>
+
+            {/* Wordmark */}
+            <View style={styles.wordmarkRow}>
+              <Text style={[styles.wordmark, { color: colors.blue }]}>X</Text>
+              <Text style={styles.wordmark}>antle</Text>
+            </View>
+
+            {/* Hamburger menu */}
+            <Pressable
+              style={({ pressed }) => [styles.menuBtn, pressed && styles.pressed]}
+              onPress={handleMenuPress}
+            >
+              <View style={styles.menuBar} />
+              <View style={[styles.menuBar, { width: 18 }]} />
+              <View style={[styles.menuBar, { width: 14 }]} />
+            </Pressable>
+          </View>
+
+          {/* ── Hero Card ───────────────────────────── */}
+          <RolloverReveal delay={100} duration={800} style={styles.heroSection}>
+            <View style={styles.heroCard}>
+              <GradientFill colors={gradients.featured} />
+              {/* Background watermark */}
+              <Text style={styles.heroWatermark}>X</Text>
+              
+              <View style={styles.heroContent}>
+                <Text style={styles.heroTitle}>Game Night{'\n'}Starts Here.</Text>
+                <Text style={styles.heroSub}>
+                  Pick a game. Gather your crew.{'\n'}Let the chaos begin.
+                </Text>
+              </View>
+            </View>
+          </RolloverReveal>
+
+          {/* ── Game Grid (D2 Launcher) ─────────────── */}
+          <RolloverReveal delay={280} duration={800} style={styles.gamesSection}>
+            
+            <View style={styles.sectionHeader}>
+              <Text style={themeText.h2}>Pick a Game</Text>
+              <Pressable onPress={() => {}}>
+                <Text style={styles.seeAll}>SEE ALL →</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.gridRow}>
+              {GAMES.map((g) => (
+                <Pressable
+                  key={g.id}
+                  style={({ pressed }) => [styles.gameCard, pressed && styles.pressedCard]}
+                  onPress={() => handleGamePress(g.id)}
+                >
+                  <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
+                  
+                  {/* Image/Gradient band at top */}
+                  <View style={styles.gameImageBand}>
+                    <GradientFill colors={g.gradient} />
+                  </View>
+
+                  {/* Info area */}
+                  <View style={styles.gameInfo}>
+                    <Text style={styles.gameTag}>{g.tag}</Text>
+                    <Text style={styles.gameTitle}>{g.title}</Text>
+                  </View>
+
+                  {/* Arrow chip */}
+                  <View style={styles.gameArrowChip}>
+                    <Text style={styles.gameArrow}>→</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+
+          </RolloverReveal>
+
+        </ScrollView>
+      </SafeAreaView>
     </View>
   );
 }
 
-const PLACEHOLDER_GAMES = [
-  { emoji: '🎯', label: 'Game 1' },
-  { emoji: '🎲', label: 'Game 2' },
-  { emoji: '🃏', label: 'Game 3' },
+const GAMES = [
+  { id: 'trivia', title: 'Trivia Royale', tag: 'PARTY', gradient: gradients.featured },
+  { id: 'spy', title: 'Find the Spy', tag: 'SOCIAL', gradient: gradients.button },
 ];
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg, overflow: 'hidden' },
-  safe: { flex: 1, paddingHorizontal: space.lg, paddingBottom: space.md },
+  root: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1 },
+  scrollContent: { paddingHorizontal: space.lg, paddingBottom: space.xl },
 
-  // ── Top bar ──────────────────────────────────────────────────
+  // ── Top bar
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -132,93 +155,111 @@ const styles = StyleSheet.create({
     paddingTop: space.sm,
     paddingBottom: space.md,
   },
-  avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: colors.surface,
-    borderWidth: 2,
-    borderColor: colors.blue,
+  avatarWrap: {
+    width: 44, height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.blue,
+    ...shadow.blueGlow,
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadow.card,
   },
-  avatarLetter: {
-    fontFamily: font.extrabold,
-    fontSize: 18,
-    color: colors.blue,
+  avatarInner: {
+    width: 40, height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  wordmark: {
-    fontFamily: font.display,
-    fontSize: 22,
-    color: colors.text,
-    letterSpacing: -0.5,
-  },
+  avatarLetter: { fontFamily: font.extrabold, fontSize: 17, color: colors.blue },
+  
+  wordmarkRow: { flexDirection: 'row', alignItems: 'center' },
+  wordmark: { fontFamily: font.display, fontSize: 24, color: colors.text, letterSpacing: -0.5 },
+  
   menuBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: radius.sm,
+    width: 44, height: 44,
+    borderRadius: radius.md,
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
+    borderWidth: 1, borderColor: colors.hairline,
     ...shadow.card,
   },
-  menuBar: {
-    width: 22,
-    height: 2.5,
-    borderRadius: 2,
-    backgroundColor: colors.text,
-  },
+  menuBar: { width: 22, height: 2.5, borderRadius: 2, backgroundColor: colors.text },
 
-  // ── Hero card ─────────────────────────────────────────────────
-  heroSection: { marginBottom: space.lg },
+  // ── Hero card
+  heroSection: { marginBottom: space.xl },
   heroCard: {
     borderRadius: radius.xl,
     overflow: 'hidden',
+    minHeight: 200,
+    borderWidth: 1, borderColor: colors.hairline,
+    ...shadow.card,
+  },
+  heroWatermark: {
+    position: 'absolute',
+    right: -20, top: -40,
+    fontFamily: font.display,
+    fontSize: 220,
+    color: colors.white,
+    opacity: 0.07,
+  },
+  heroContent: {
+    flex: 1,
     padding: space.lg,
     paddingVertical: space.xl,
-    minHeight: 190,
     justifyContent: 'flex-end',
-    borderWidth: 1,
-    borderColor: colors.hairline,
   },
   heroTitle: {
     fontFamily: font.black,
-    fontSize: 30,
+    fontSize: 32,
     color: colors.white,
-    lineHeight: 36,
+    lineHeight: 38,
     marginBottom: space.sm,
   },
   heroSub: {
     fontFamily: font.semibold,
     fontSize: 14,
-    color: 'rgba(255,255,255,0.80)',
+    color: 'rgba(255,255,255,0.85)',
     lineHeight: 20,
   },
 
-  // ── Games placeholder ─────────────────────────────────────────
+  // ── Games Section
   gamesSection: { flex: 1 },
-  cardRow: { flexDirection: 'row', gap: space.sm },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    marginBottom: space.md,
+  },
+  seeAll: { fontFamily: font.bold, fontSize: 12, color: colors.blue, letterSpacing: 0.5 },
+  
+  gridRow: { flexDirection: 'row', gap: space.md },
   gameCard: {
     flex: 1,
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
     overflow: 'hidden',
-    height: 120,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    gap: space.xs,
+    height: 160,
+    borderWidth: 1, borderColor: colors.hairline,
     ...shadow.card,
   },
-  gameEmoji: { fontSize: 28 },
-  gameLabel: {
-    fontFamily: font.bold,
-    fontSize: 12,
-    color: colors.textMuted,
-    textAlign: 'center',
+  gameImageBand: { height: '55%', width: '100%' },
+  gameInfo: { padding: space.sm, gap: 2 },
+  gameTag: { fontFamily: font.extrabold, fontSize: 10, color: colors.textFaint, letterSpacing: 0.5 },
+  gameTitle: { fontFamily: font.bold, fontSize: 14, color: colors.text },
+  
+  gameArrowChip: {
+    position: 'absolute',
+    bottom: space.sm,
+    right: space.sm,
+    width: 24, height: 24,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  gameArrow: { fontFamily: font.bold, fontSize: 12, color: colors.blue },
 
-  pressed: { opacity: 0.75, transform: [{ scale: 0.96 }] },
+  pressed: { opacity: 0.75, transform: [{ scale: 0.95 }] },
+  pressedCard: { transform: [{ scale: 0.97 }], opacity: 0.95 },
 });
