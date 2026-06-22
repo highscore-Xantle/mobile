@@ -5,7 +5,6 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -33,6 +32,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
 
   // Logo entrance — short and snappy
   const logoIn = useSharedValue(0);
@@ -64,6 +64,7 @@ export default function Login() {
     if (!email || !password) { setErrorMsg('Please enter your email and password.'); return; }
     setLoading(true);
     setErrorMsg('');
+    setSuccessMsg('');
 
     // 1. Try signing in first
     const { error: signInError, data: signInData } = await supabase.auth.signInWithPassword({ email, password });
@@ -85,7 +86,8 @@ export default function Login() {
       }
       // Email confirmation required
       if (signUpData.user && signUpData.session === null) {
-        Alert.alert('Almost there!', 'We sent a confirmation link to your email. Click it, then sign in here.');
+        setLoading(false);
+        setSuccessMsg('📬  Check your email — we sent a confirmation link. Click it, then sign in here.');
         return;
       }
       handleAuthResult(null, signUpData);
@@ -147,6 +149,12 @@ export default function Login() {
 
         {/* ── Auth card ────────────────────────────── */}
         <Animated.View style={[styles.card, formStyle]}>
+
+          {successMsg ? (
+            <View style={styles.successBox}>
+              <Text style={styles.successText}>{successMsg}</Text>
+            </View>
+          ) : null}
 
           {errorMsg ? (
             <View style={styles.errorBox}>
@@ -351,6 +359,16 @@ const styles = StyleSheet.create({
   cta: { borderRadius: radius.lg, overflow: 'hidden', ...shadow.blueGlow },
   ctaInner: { paddingVertical: 20, alignItems: 'center', justifyContent: 'center' },
   ctaText: { fontFamily: font.extrabold, fontSize: 17, color: colors.white, letterSpacing: 0.4 },
+
+  // Success banner
+  successBox: {
+    backgroundColor: 'rgba(74,222,128,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(74,222,128,0.30)',
+    borderRadius: radius.sm,
+    padding: space.md,
+  },
+  successText: { fontFamily: font.semibold, fontSize: 14, color: '#4ADE80', textAlign: 'center' },
 
   // Error
   errorBox: {

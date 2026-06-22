@@ -21,6 +21,6 @@ export const supabase = createClient(url ?? '', anonKey ?? '', {
     storage: Platform.OS === 'web' ? undefined : AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false, // RN has no URL session; web auth handled separately
+    detectSessionInUrl: Platform.OS === 'web', // Web reads the token from the URL hash after email confirmation; native doesn't use URLs
   },
 });

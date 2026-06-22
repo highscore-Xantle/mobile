@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -33,7 +33,7 @@ export default function Onboarding() {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  let debounceTimer: ReturnType<typeof setTimeout>;
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleChange = (value: string) => {
     const trimmed = value.trim().toLowerCase();
@@ -41,15 +41,21 @@ export default function Onboarding() {
     setErrorMsg('');
     if (trimmed.length < MIN_LEN) { setCheckState('idle'); return; }
     if (trimmed.length > MAX_LEN || !VALID_RE.test(trimmed)) { setCheckState('invalid'); return; }
-    clearTimeout(debounceTimer);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
     setCheckState('checking');
-    debounceTimer = setTimeout(() => checkAvailability(trimmed), 600);
+    debounceTimer.current = setTimeout(() => checkAvailability(trimmed), 600);
   };
 
   const checkAvailability = async (value: string) => {
     const { data, error } = await supabase
       .from('profiles').select('username').eq('username', value).maybeSingle();
-    if (error) { setCheckState('idle'); return; }
+    if (error) {
+      // Surface the error so the user isn't left staring at a disabled button
+      setCheckState('idle');
+      setErrorMsg(`Could not check username: ${error.message}`);
+      return;
+    }
+    setErrorMsg('');
     setCheckState(data ? 'taken' : 'available');
     Haptics.notificationAsync(
       data
