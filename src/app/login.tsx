@@ -1,14 +1,26 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../components/GradientFill';
 import { supabase } from '../lib/supabase';
-import { colors, font, gradients, radius, shadow, space, text as themeText } from '../theme';
-
-// Native social sign-in (Apple / Google) + haptics need native modules that are
-// NOT in the current SDK-54 dev build — deferred to a planned native-build cycle.
-// Email auth works with no native module. See the "coming soon" handlers below.
+import { colors, font, gradients, radius, shadow, space } from '../theme';
 
 export default function Login() {
   const router = useRouter();
@@ -19,103 +31,115 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Logo entrance — short and snappy
+  const logoIn = useSharedValue(0);
+  const formIn = useSharedValue(0);
+  useEffect(() => {
+    logoIn.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) });
+    formIn.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
+  }, []);
+  const logoStyle = useAnimatedStyle(() => ({
+    opacity: logoIn.value,
+    transform: [{ translateY: (1 - logoIn.value) * -16 }],
+  }));
+  const formStyle = useAnimatedStyle(() => ({
+    opacity: formIn.value,
+    transform: [{ translateY: (1 - formIn.value) * 24 }],
+  }));
+
+  const haptic = () => {}; // haptics deferred (native module — re-add expo-haptics in a native build)
+
   const handleAuthResult = async (error: any, data: any) => {
-    if (error) {
-      setErrorMsg(error.message);
-      return;
-    }
-
-    // Check if the user has a username. If not, they need to onboard.
+    if (error) { setErrorMsg(error.message); return; }
     const { data: profile } = await supabase
-      .from('profiles')
-      .select('username')
-      .eq('id', data.user.id)
-      .single();
-
-    if (!profile?.username) {
-      router.replace('/onboarding');
-    } else {
-      router.replace('/home');
-    }
+      .from('profiles').select('username').eq('id', data.user.id).single();
+    router.replace(profile?.username ? '/home' : '/onboarding');
   };
 
   const signInWithEmail = async () => {
+    haptic();
     setLoading(true);
     setErrorMsg('');
     const { error, data } = await supabase.auth.signInWithPassword({ email, password });
-
-    // No account yet? Fall back to sign-up.
-    if (error && error.message.includes('Invalid login credentials')) {
+    if (error?.message.includes('Invalid login credentials')) {
       const { error: signUpError, data: signUpData } = await supabase.auth.signUp({ email, password });
       setLoading(false);
-      if (signUpError) {
-        setErrorMsg(signUpError.message);
-      } else if (signUpData.user && signUpData.session === null) {
+      if (signUpError) { setErrorMsg(signUpError.message); return; }
+      if (signUpData.user && signUpData.session === null) {
         Alert.alert('Check your email', 'We sent you a confirmation link.');
-      } else {
-        handleAuthResult(signUpError, signUpData);
+        return;
       }
+      handleAuthResult(signUpError, signUpData);
       return;
     }
-
     setLoading(false);
     handleAuthResult(error, data);
   };
 
-  const comingSoon = (provider: string) => () => {
+  // Apple/Google sign-in need native modules not in the SDK-54 dev build — deferred
+  // to a native-build cycle. Email works with no native dependency.
+  const comingSoon = (provider: string) => () =>
     Alert.alert('Coming soon', `${provider} sign-in arrives in a later update — use email for now.`);
-  };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <GradientFill colors={gradients.background} />
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <Text style={themeText.logo}>X</Text>
-          <Text style={[themeText.h2, styles.subtitle]}>Sign in to Xantle</Text>
-          <Text style={themeText.body}>Get ready for game night.</Text>
-        </View>
 
-        <View style={styles.formContainer}>
+      <SafeAreaView style={styles.safe}>
+
+        {/* ── Logo ─────────────────────────────────── */}
+        <Animated.View style={[styles.logoArea, logoStyle]}>
+          <View style={styles.logoRow}>
+            <Text style={styles.xBig}>X</Text>
+            <Text style={styles.antle}>antle</Text>
+          </View>
+          <Text style={styles.tagline}>Game night awaits.</Text>
+        </Animated.View>
+
+        {/* ── Auth card ────────────────────────────── */}
+        <Animated.View style={[styles.card, formStyle]}>
+
           {errorMsg ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{errorMsg}</Text>
             </View>
           ) : null}
 
-          <Pressable
-            style={({ pressed }) => [styles.socialBtn, pressed && styles.pressed]}
+          {/* Apple */}
+          <SocialButton
+            chip={<Text style={styles.chipGlyph}>⌘</Text>}
+            chipBg={colors.surfaceAlt}
+            label="Continue with Apple"
             onPress={comingSoon('Apple')}
-          >
-            <Text style={styles.socialBtnText}>Continue with Apple</Text>
-          </Pressable>
+          />
 
-          <Pressable
-            style={({ pressed }) => [styles.socialBtn, pressed && styles.pressed]}
+          {/* Google */}
+          <SocialButton
+            chip={<Text style={[styles.chipGlyph, { color: colors.cyan }]}>G</Text>}
+            chipBg={colors.surfaceAlt}
+            label="Continue with Google"
             onPress={comingSoon('Google')}
-          >
-            <Text style={styles.socialBtnText}>Continue with Google</Text>
-          </Pressable>
+          />
 
+          {/* Divider */}
           <View style={styles.divider}>
-            <View style={styles.line} />
-            <Text style={styles.orText}>or</Text>
-            <View style={styles.line} />
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>or</Text>
+            <View style={styles.dividerLine} />
           </View>
 
+          {/* Email */}
           {!showEmailForm ? (
-            <Pressable
-              style={({ pressed }) => [styles.socialBtn, pressed && styles.pressed]}
-              onPress={() => setShowEmailForm(true)}
-            >
-              <Text style={styles.socialBtnText}>Continue with Email</Text>
-            </Pressable>
+            <SocialButton
+              chip={<Text style={[styles.chipGlyph, { color: colors.blue }]}>@</Text>}
+              chipBg={colors.surfaceAlt}
+              label="Continue with Email"
+              onPress={() => { haptic(); setShowEmailForm(true); }}
+            />
           ) : (
-            <View style={styles.emailForm}>
-              <View style={styles.inputWrap}>
+            <View style={styles.emailSection}>
+              {/* Both inputs in one floating card */}
+              <View style={styles.inputCard}>
                 <TextInput
                   style={styles.input}
                   placeholder="Email"
@@ -125,8 +149,7 @@ export default function Login() {
                   value={email}
                   onChangeText={setEmail}
                 />
-              </View>
-              <View style={styles.inputWrap}>
+                <View style={styles.inputSep} />
                 <TextInput
                   style={styles.input}
                   placeholder="Password"
@@ -138,60 +161,133 @@ export default function Login() {
               </View>
 
               <Pressable
-                style={({ pressed }) => [styles.ctaBtn, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
                 onPress={signInWithEmail}
                 disabled={loading}
               >
                 <View style={styles.ctaInner}>
                   <GradientFill colors={gradients.button} />
-                  {loading ? (
-                    <ActivityIndicator color={colors.white} />
-                  ) : (
-                    <Text style={styles.ctaText}>Sign In / Sign Up</Text>
-                  )}
+                  {loading
+                    ? <ActivityIndicator color={colors.white} />
+                    : <Text style={styles.ctaText}>Sign In / Sign Up</Text>
+                  }
                 </View>
               </Pressable>
             </View>
           )}
-        </View>
+        </Animated.View>
+
       </SafeAreaView>
     </KeyboardAvoidingView>
   );
 }
 
+/** Reusable social button row with left icon chip */
+function SocialButton({
+  chip, chipBg, label, onPress,
+}: {
+  chip: React.ReactNode;
+  chipBg: string;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.socialBtn, pressed && styles.pressed]}
+      onPress={onPress}
+    >
+      <View style={[styles.iconChip, { backgroundColor: chipBg }]}>{chip}</View>
+      <Text style={styles.socialLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
-  safe: { flex: 1, paddingHorizontal: space.lg, justifyContent: 'center' },
-  header: { alignItems: 'center', marginBottom: space.xl * 1.5 },
-  subtitle: { marginTop: space.sm, marginBottom: space.xs },
+  safe: { flex: 1, paddingHorizontal: space.lg, justifyContent: 'center', gap: space.xl },
 
-  formContainer: { gap: space.md },
+  // ── Logo
+  logoArea: { alignItems: 'center' },
+  logoRow: { flexDirection: 'row', alignItems: 'flex-end' },
+  xBig: {
+    fontFamily: font.display,
+    fontSize: 80,
+    lineHeight: 80,
+    color: colors.text,
+    includeFontPadding: false,
+  },
+  antle: {
+    fontFamily: font.display,
+    fontSize: 46,
+    lineHeight: 46,
+    color: colors.text,
+    letterSpacing: -1,
+    includeFontPadding: false,
+    marginBottom: 6,
+  },
+  tagline: {
+    fontFamily: font.semibold,
+    fontSize: 15,
+    color: colors.textMuted,
+    marginTop: space.sm,
+    letterSpacing: 0.3,
+  },
 
-  socialBtn: {
+  // ── Auth card
+  card: {
     backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingVertical: space.md,
-    alignItems: 'center',
+    borderRadius: radius.xl,
+    padding: space.lg,
+    gap: space.sm,
     borderWidth: 1,
     borderColor: colors.hairline,
     ...shadow.card,
   },
-  socialBtnText: {
+
+  // Social buttons
+  socialBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: colors.bg,
+    borderRadius: radius.md,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.sm,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+  },
+  iconChip: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipGlyph: {
+    fontFamily: font.extrabold,
+    fontSize: 20,
+    color: colors.text,
+  },
+  socialLabel: {
     fontFamily: font.bold,
-    fontSize: 16,
+    fontSize: 15,
     color: colors.text,
   },
 
-  divider: { flexDirection: 'row', alignItems: 'center', marginVertical: space.sm, gap: space.md },
-  line: { flex: 1, height: 1, backgroundColor: colors.hairline },
-  orText: { fontFamily: font.semibold, color: colors.textFaint, fontSize: 13 },
+  // Divider
+  divider: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.hairline },
+  dividerText: { fontFamily: font.semibold, fontSize: 12, color: colors.textFaint },
 
-  emailForm: { gap: space.md },
-  inputWrap: {
+  // Email form
+  emailSection: { gap: space.md },
+  inputCard: {
     backgroundColor: colors.surfaceAlt,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.hairline,
+    overflow: 'hidden',
+    ...shadow.card,
   },
   input: {
     fontFamily: font.semibold,
@@ -200,34 +296,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: space.md,
   },
+  inputSep: { height: 1, backgroundColor: colors.hairline, marginHorizontal: space.md },
 
-  ctaBtn: { borderRadius: radius.md, overflow: 'hidden', ...shadow.blueGlow, marginTop: space.sm },
-  ctaInner: {
-    paddingVertical: space.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ctaText: {
-    fontFamily: font.extrabold,
-    fontSize: 16,
-    color: colors.white,
-    letterSpacing: 0.5,
-  },
+  // CTA
+  cta: { borderRadius: radius.lg, overflow: 'hidden', ...shadow.blueGlow },
+  ctaInner: { paddingVertical: 20, alignItems: 'center', justifyContent: 'center' },
+  ctaText: { fontFamily: font.extrabold, fontSize: 17, color: colors.white, letterSpacing: 0.4 },
 
+  // Error
   errorBox: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: 'rgba(239,68,68,0.10)',
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderColor: 'rgba(239,68,68,0.30)',
     borderRadius: radius.sm,
     padding: space.md,
-    alignItems: 'center',
   },
-  errorText: {
-    color: colors.danger,
-    fontFamily: font.semibold,
-    fontSize: 14,
-    textAlign: 'center',
-  },
+  errorText: { fontFamily: font.semibold, fontSize: 14, color: colors.danger, textAlign: 'center' },
 
-  pressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
+  pressed: { transform: [{ scale: 0.97 }], opacity: 0.88 },
 });
