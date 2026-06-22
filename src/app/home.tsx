@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -6,6 +6,7 @@ import * as Haptics from 'expo-haptics';
 import { useSession } from '../lib/useSession';
 import { GradientFill } from '../components/GradientFill';
 import { RolloverReveal } from '../components/RolloverReveal';
+import { MenuDrawer } from '../components/MenuDrawer';
 import {
   colors,
   font,
@@ -19,12 +20,17 @@ import {
 export default function Home() {
   const router = useRouter();
   const { session, loading } = useSession();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!loading && !session) router.replace('/login');
   }, [session, loading]);
 
-  const handleMenuPress = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const handleMenuPress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setMenuOpen(true);
+  };
+  
   const handleAvatarPress = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
   const handleGamePress = (id: string) => {
@@ -41,6 +47,8 @@ export default function Home() {
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
+
+      <MenuDrawer visible={menuOpen} onClose={() => setMenuOpen(false)} />
 
       <SafeAreaView style={styles.safe}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
