@@ -61,23 +61,46 @@ export default function Login() {
 
   const signInWithEmail = async () => {
     haptic();
+    if (!email || !password) { setErrorMsg('Please enter your email and password.'); return; }
     setLoading(true);
     setErrorMsg('');
-    const { error, data } = await supabase.auth.signInWithPassword({ email, password });
-    if (error?.message.includes('Invalid login credentials')) {
-      const { error: signUpError, data: signUpData } = await supabase.auth.signUp({ email, password });
+
+    // 1. Try signing in first
+    const { error: signInError, data: signInData } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (!signInError) {
+      // ✅ Sign-in succeeded
       setLoading(false);
-      if (signUpError) { setErrorMsg(signUpError.message); return; }
-      if (signUpData.user && signUpData.session === null) {
-        Alert.alert('Check your email', 'We sent you a confirmation link.');
-        return;
-      }
-      handleAuthResult(signUpError, signUpData);
+      handleAuthResult(null, signInData);
       return;
     }
+
+    // 2. If the error is specifically "Invalid login credentials", the user doesn't exist yet — try signing up
+    if (signInError.message.toLowerCase().includes('invalid login credentials')) {
+      const { error: signUpError, data: signUpData } = await supabase.auth.signUp({ email, password });
+      setLoading(false);
+      if (signUpError) {
+        setErrorMsg(signUpError.message);
+        return;
+      }
+      // Email confirmation required
+      if (signUpData.user && signUpData.session === null) {
+        Alert.alert('Almost there!', 'We sent a confirmation link to your email. Click it, then sign in here.');
+        return;
+      }
+      handleAuthResult(null, signUpData);
+      return;
+    }
+
+    // 3. Any other error (wrong password, email not confirmed, network, etc.) — show it clearly
     setLoading(false);
-    handleAuthResult(error, data);
+    if (signInError.message.toLowerCase().includes('email not confirmed')) {
+      setErrorMsg('Please confirm your email first — check your inbox for a link from us.');
+    } else {
+      setErrorMsg(signInError.message);
+    }
   };
+
 
   const signInWithApple = async () => {
     haptic();
