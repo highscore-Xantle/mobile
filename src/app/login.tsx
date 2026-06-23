@@ -33,7 +33,8 @@ export default function Login() {
 
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -65,42 +66,40 @@ export default function Login() {
     router.replace(profile?.username ? '/home' : '/onboarding');
   };
 
-  const signInWithEmail = async () => {
+  const sendOtp = async () => {
     haptic();
-    if (!email || !password) { setErrorMsg('Please enter your email and password.'); return; }
+    if (!email) { setErrorMsg('Please enter your email.'); return; }
     setLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
 
-    // Try sign in
-    const { error: signInError, data: signInData } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (!signInError) {
-      setLoading(false);
-      handleAuthResult(null, signInData);
-      return;
-    }
-
-    // Try sign up if invalid credentials
-    if (signInError.message.toLowerCase().includes('invalid login credentials')) {
-      const { error: signUpError, data: signUpData } = await supabase.auth.signUp({ email, password });
-      setLoading(false);
-      if (signUpError) {
-        setErrorMsg(signUpError.message);
-        return;
-      }
-      
-      // If Victor sets up SMTP this will send an email. If Victor turns off confirmations, it logs in instantly.
-      if (signUpData.user && signUpData.session === null) {
-        setSuccessMsg('📬  Check your email for a confirmation link.');
-        return;
-      }
-      handleAuthResult(null, signUpData);
-      return;
-    }
-
+    const { error } = await supabase.auth.signInWithOtp({ email });
     setLoading(false);
-    setErrorMsg(signInError.message);
+
+    if (error) {
+      setErrorMsg(error.message);
+    } else {
+      setSuccessMsg(`We sent a 6-digit code to ${email}`);
+      setIsVerifying(true);
+    }
+  };
+
+  const verifyOtp = async () => {
+    haptic();
+    if (!otp) { setErrorMsg('Please enter the 6-digit code.'); return; }
+    setLoading(true);
+    setErrorMsg('');
+
+    const { data, error } = await supabase.auth.verifyOtp({ email, token: otp, type: 'email' });
+    setLoading(false);
+
+    if (error) {
+      setErrorMsg(error.message);
+      return;
+    }
+    
+    // Auth successful
+    handleAuthResult(null, data);
   };
 
   const signInWithGoogle = async () => {
@@ -182,40 +181,61 @@ export default function Login() {
             />
           ) : (
             <View style={styles.emailSection}>
-              <View style={styles.inputCard}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Email"
-                  placeholderTextColor={colors.textFaint}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  value={email}
-                  onChangeText={setEmail}
-                />
-                <View style={styles.inputSep} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Password"
-                  placeholderTextColor={colors.textFaint}
-                  secureTextEntry
-                  value={password}
-                  onChangeText={setPassword}
-                />
-              </View>
-
-              <Pressable
-                style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
-                onPress={signInWithEmail}
-                disabled={loading}
-              >
-                <View style={styles.ctaInner}>
-                  <GradientFill colors={gradients.button} />
-                  {loading
-                    ? <ActivityIndicator color={colors.white} />
-                    : <Text style={styles.ctaText}>Sign In / Sign Up</Text>
-                  }
-                </View>
-              </Pressable>
+              {!isVerifying ? (
+                <>
+                  <View style={styles.inputCard}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Email"
+                      placeholderTextColor={colors.textFaint}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      value={email}
+                      onChangeText={setEmail}
+                    />
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+                    onPress={sendOtp}
+                    disabled={loading}
+                  >
+                    <View style={styles.ctaInner}>
+                      <GradientFill colors={gradients.button} />
+                      {loading
+                        ? <ActivityIndicator color={colors.white} />
+                        : <Text style={styles.ctaText}>Send Code</Text>
+                      }
+                    </View>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <View style={styles.inputCard}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="6-digit code"
+                      placeholderTextColor={colors.textFaint}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      value={otp}
+                      onChangeText={setOtp}
+                    />
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+                    onPress={verifyOtp}
+                    disabled={loading}
+                  >
+                    <View style={styles.ctaInner}>
+                      <GradientFill colors={gradients.button} />
+                      {loading
+                        ? <ActivityIndicator color={colors.white} />
+                        : <Text style={styles.ctaText}>Verify & Sign In</Text>
+                      }
+                    </View>
+                  </Pressable>
+                </>
+              )}
             </View>
           )}
         </Animated.View>
