@@ -19,8 +19,11 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
+  withSpring,
+  withDelay,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FontAwesome } from '@expo/vector-icons';
 import { GradientFill } from '../components/GradientFill';
 import { supabase } from '../lib/supabase';
 import { colors, font, gradients, radius, shadow, space } from '../theme';
@@ -35,38 +38,22 @@ export default function Login() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Logo entrance — short and snappy
+  // Improved Animations (Spring + Stagger)
   const logoIn = useSharedValue(0);
   const formIn = useSharedValue(0);
+  
   useEffect(() => {
-    logoIn.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) });
-    formIn.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
+    logoIn.value = withSpring(1, { damping: 14, stiffness: 90 });
+    formIn.value = withDelay(150, withSpring(1, { damping: 15, stiffness: 100 }));
   }, []);
+  
   const logoStyle = useAnimatedStyle(() => ({
-    opacity: logoIn.value,
-    transform: [{ translateY: (1 - logoIn.value) * -16 }],
+    opacity: withTiming(logoIn.value, { duration: 400 }),
+    transform: [{ translateY: (1 - logoIn.value) * -20 }, { scale: 0.95 + (logoIn.value * 0.05) }],
   }));
   const formStyle = useAnimatedStyle(() => ({
-    opacity: formIn.value,
-    transform: [{ translateY: (1 - formIn.value) * 24 }],
-  }));
-
-  const haptic = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-  // Logo entrance — short and snappy
-  const logoIn = useSharedValue(0);
-  const formIn = useSharedValue(0);
-  useEffect(() => {
-    logoIn.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) });
-    formIn.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
-  }, []);
-  const logoStyle = useAnimatedStyle(() => ({
-    opacity: logoIn.value,
-    transform: [{ translateY: (1 - logoIn.value) * -16 }],
-  }));
-  const formStyle = useAnimatedStyle(() => ({
-    opacity: formIn.value,
-    transform: [{ translateY: (1 - formIn.value) * 24 }],
+    opacity: withTiming(formIn.value, { duration: 400 }),
+    transform: [{ translateY: (1 - formIn.value) * 30 }],
   }));
 
   const haptic = () => {}; // haptics deferred (native module — re-add expo-haptics in a native build)
@@ -85,17 +72,16 @@ export default function Login() {
     setErrorMsg('');
     setSuccessMsg('');
 
-    // 1. Try signing in first
+    // Try sign in
     const { error: signInError, data: signInData } = await supabase.auth.signInWithPassword({ email, password });
 
     if (!signInError) {
-      // ✅ Sign-in succeeded
       setLoading(false);
       handleAuthResult(null, signInData);
       return;
     }
 
-    // 2. If the error is specifically "Invalid login credentials", the user doesn't exist yet — try signing up
+    // Try sign up if invalid credentials
     if (signInError.message.toLowerCase().includes('invalid login credentials')) {
       const { error: signUpError, data: signUpData } = await supabase.auth.signUp({ email, password });
       setLoading(false);
@@ -103,29 +89,36 @@ export default function Login() {
         setErrorMsg(signUpError.message);
         return;
       }
-      // Email confirmation required
+      
+      // If Victor sets up SMTP this will send an email. If Victor turns off confirmations, it logs in instantly.
       if (signUpData.user && signUpData.session === null) {
-        setLoading(false);
-        setSuccessMsg('📬  Check your email — we sent a confirmation link. Click it, then sign in here.');
+        setSuccessMsg('📬  Check your email for a confirmation link.');
         return;
       }
       handleAuthResult(null, signUpData);
       return;
     }
 
-    // 3. Any other error (wrong password, email not confirmed, network, etc.) — show it clearly
     setLoading(false);
-    if (signInError.message.toLowerCase().includes('email not confirmed')) {
-      setErrorMsg('Please confirm your email first — check your inbox for a link from us.');
+    setErrorMsg(signInError.message);
+  };
+
+  const signInWithGoogle = async () => {
+    haptic();
+    if (Platform.OS === 'web') {
+      await supabase.auth.signInWithOAuth({ 
+        provider: 'google', 
+        options: { redirectTo: window.location.origin + '/home' } 
+      });
     } else {
-      setErrorMsg(signInError.message);
+      Alert.alert('Google Auth', 'Requires Victor\\'s EAS dev build for native support.');
     }
   };
 
-  // Apple/Google sign-in need native modules not in the SDK-54 dev build — deferred
-  // to a native-build cycle. Email works with no native dependency.
-  const comingSoon = (provider: string) => () =>
-    Alert.alert('Coming soon', `${provider} sign-in arrives in a later update — use email for now.`);
+  const signInWithApple = async () => {
+    haptic();
+    Alert.alert('Apple Auth', 'Requires Victor\\'s EAS dev build for native iOS support.');
+  };
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -158,18 +151,18 @@ export default function Login() {
 
           {/* Apple */}
           <SocialButton
-            chip={<Text style={styles.chipGlyph}>⌘</Text>}
+            icon={<FontAwesome name="apple" size={22} color={colors.text} />}
             chipBg={colors.surfaceAlt}
             label="Continue with Apple"
-            onPress={comingSoon('Apple')}
+            onPress={signInWithApple}
           />
 
           {/* Google */}
           <SocialButton
-            chip={<Text style={[styles.chipGlyph, { color: colors.cyan }]}>G</Text>}
+            icon={<FontAwesome name="google" size={20} color={colors.text} />}
             chipBg={colors.surfaceAlt}
             label="Continue with Google"
-            onPress={comingSoon('Google')}
+            onPress={signInWithGoogle}
           />
 
           {/* Divider */}
@@ -182,14 +175,13 @@ export default function Login() {
           {/* Email */}
           {!showEmailForm ? (
             <SocialButton
-              chip={<Text style={[styles.chipGlyph, { color: colors.blue }]}>@</Text>}
+              icon={<FontAwesome name="envelope" size={16} color={colors.blue} />}
               chipBg={colors.surfaceAlt}
               label="Continue with Email"
               onPress={() => { haptic(); setShowEmailForm(true); }}
             />
           ) : (
             <View style={styles.emailSection}>
-              {/* Both inputs in one floating card */}
               <View style={styles.inputCard}>
                 <TextInput
                   style={styles.input}
@@ -235,9 +227,9 @@ export default function Login() {
 
 /** Reusable social button row with left icon chip */
 function SocialButton({
-  chip, chipBg, label, onPress,
+  icon, chipBg, label, onPress,
 }: {
-  chip: React.ReactNode;
+  icon: React.ReactNode;
   chipBg: string;
   label: string;
   onPress: () => void;
@@ -247,7 +239,7 @@ function SocialButton({
       style={({ pressed }) => [styles.socialBtn, pressed && styles.pressed]}
       onPress={onPress}
     >
-      <View style={[styles.iconChip, { backgroundColor: chipBg }]}>{chip}</View>
+      <View style={[styles.iconChip, { backgroundColor: chipBg }]}>{icon}</View>
       <Text style={styles.socialLabel}>{label}</Text>
     </Pressable>
   );
