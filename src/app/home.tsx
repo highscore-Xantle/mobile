@@ -4,9 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSession } from '../lib/useSession';
+import { supabase } from '../lib/supabase';
 import { GradientFill } from '../components/GradientFill';
 import { RolloverReveal } from '../components/RolloverReveal';
 import { MenuDrawer } from '../components/MenuDrawer';
+import { JoinModal } from '../components/JoinModal';
 import {
   colors,
   font,
@@ -21,6 +23,7 @@ export default function Home() {
   const router = useRouter();
   const { session, loading } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [joinVisible, setJoinVisible] = useState(false);
 
   useEffect(() => {
     if (!loading && !session) router.replace('/login');
@@ -33,7 +36,19 @@ export default function Home() {
   
   const handleAvatarPress = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-  const handleGamePress = (id: string) => router.push(`/game/${id}`);
+  const handleGamePress = async (id: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    const { data: room, error } = await supabase.rpc('create_room', { 
+      p_game_kind: id,
+      p_is_group: false,
+      p_max: 2 
+    });
+    if (error) {
+      alert('Error creating room: ' + error.message);
+      return;
+    }
+    router.push(`/room/${room.code}`);
+  };
   const avatarLetter =
     (session?.user?.user_metadata?.username as string)?.[0]?.toUpperCase() ??
     session?.user?.email?.[0]?.toUpperCase() ?? '?';
@@ -45,6 +60,7 @@ export default function Home() {
       <GradientFill colors={gradients.background} />
 
       <MenuDrawer visible={menuOpen} onClose={() => setMenuOpen(false)} />
+      <JoinModal visible={joinVisible} onClose={() => setJoinVisible(false)} />
 
       <SafeAreaView style={styles.safe}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
@@ -94,13 +110,13 @@ export default function Home() {
             </View>
           </RolloverReveal>
 
-          {/* ── Game Grid (D2 Launcher) ─────────────── */}
+          {/* ── Game Grid (Host mode) ─────────────── */}
           <RolloverReveal delay={280} duration={800} style={styles.gamesSection}>
             
             <View style={styles.sectionHeader}>
-              <Text style={themeText.h2}>Pick a Game</Text>
-              <Pressable onPress={() => {}}>
-                <Text style={styles.seeAll}>SEE ALL →</Text>
+              <Text style={themeText.h2}>Host a Game</Text>
+              <Pressable style={styles.joinActionBtn} onPress={() => setJoinVisible(true)}>
+                <Text style={styles.joinActionText}>JOIN ROOM →</Text>
               </Pressable>
             </View>
 
@@ -236,6 +252,8 @@ const styles = StyleSheet.create({
     marginBottom: space.md,
   },
   seeAll: { fontFamily: font.bold, fontSize: 12, color: colors.blue, letterSpacing: 0.5 },
+  joinActionBtn: { backgroundColor: 'rgba(46,126,240,0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.sm },
+  joinActionText: { fontFamily: font.bold, fontSize: 12, color: colors.blue, letterSpacing: 0.5 },
   
   gridRow: { flexDirection: 'row', gap: space.md },
   gameCard: {

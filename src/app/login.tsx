@@ -110,13 +110,13 @@ export default function Login() {
         options: { redirectTo: window.location.origin + '/home' } 
       });
     } else {
-      Alert.alert('Google Auth', 'Requires Victor\\'s EAS dev build for native support.');
+      Alert.alert('Google Auth', "Requires Victor's EAS dev build for native support.");
     }
   };
 
   const signInWithApple = async () => {
     haptic();
-    Alert.alert('Apple Auth', 'Requires Victor\\'s EAS dev build for native iOS support.');
+    Alert.alert('Apple Auth', "Requires Victor's EAS dev build for native iOS support.");
   };
 
   return (
