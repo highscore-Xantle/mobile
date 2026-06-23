@@ -33,11 +33,7 @@ export default function Home() {
   
   const handleAvatarPress = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-  const handleGamePress = (id: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push(`/game/${id}`);
-  };
-
+  const handleGamePress = (id: string) => router.push(`/game/${id}`);
   const avatarLetter =
     (session?.user?.user_metadata?.username as string)?.[0]?.toUpperCase() ??
     session?.user?.email?.[0]?.toUpperCase() ?? '?';
@@ -103,7 +99,7 @@ export default function Home() {
             
             <View style={styles.sectionHeader}>
               <Text style={themeText.h2}>Pick a Game</Text>
-              <Pressable onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}>
+              <Pressable onPress={() => {}}>
                 <Text style={styles.seeAll}>SEE ALL →</Text>
               </Pressable>
             </View>

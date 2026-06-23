@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import * as Haptics from 'expo-haptics';
 import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
 import { GradientFill } from '../components/GradientFill';
@@ -57,16 +56,10 @@ export default function Onboarding() {
     }
     setErrorMsg('');
     setCheckState(data ? 'taken' : 'available');
-    Haptics.notificationAsync(
-      data
-        ? Haptics.NotificationFeedbackType.Error
-        : Haptics.NotificationFeedbackType.Success
-    );
   };
 
   const handleConfirm = async () => {
     if (checkState !== 'available' || !session?.user) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setSaving(true);
     setErrorMsg('');
     const { error } = await supabase
@@ -74,10 +67,8 @@ export default function Onboarding() {
     setSaving(false);
     if (error) {
       setErrorMsg(error.message);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     router.replace('/home');
   };
 
@@ -86,9 +77,9 @@ export default function Onboarding() {
   const statusConfig: Record<CheckState, StatusConfig> = {
     idle: null,
     checking: { label: 'Checking…', color: colors.textMuted, bg: 'rgba(147,155,167,0.12)' },
-    available: { label: '✓  Available', color: '#4ADE80', bg: 'rgba(74,222,128,0.12)' },
-    taken: { label: '✗  Already taken', color: '#F87171', bg: 'rgba(248,113,113,0.12)' },
-    invalid: { label: `Letters, numbers, _ · ${MIN_LEN}–${MAX_LEN} chars`, color: '#FBBF24', bg: 'rgba(251,191,36,0.12)' },
+    available: { label: '✓  Available', color: colors.success, bg: 'rgba(74,222,128,0.12)' },
+    taken: { label: '✗  Already taken', color: colors.danger, bg: 'rgba(248,113,113,0.12)' },
+    invalid: { label: `Letters, numbers, _ · ${MIN_LEN}–${MAX_LEN} chars`, color: colors.warning, bg: 'rgba(251,191,36,0.12)' },
   };
   const statusPill = statusConfig[checkState];
   const ctaEnabled = checkState === 'available' && !saving;
@@ -220,8 +211,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...shadow.card,
   },
-  inputCardGreen: { borderColor: '#4ADE80' },
-  inputCardRed: { borderColor: '#F87171' },
+  inputCardGreen: { borderColor: colors.success },
+  inputCardRed: { borderColor: colors.danger },
 
   inputRow: {
     flexDirection: 'row',
@@ -260,7 +251,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     padding: space.md,
   },
-  errorText: { fontFamily: font.semibold, fontSize: 14, color: '#F87171', textAlign: 'center' },
+  errorText: { fontFamily: font.semibold, fontSize: 14, color: colors.danger, textAlign: 'center' },
 
   // CTA
   cta: { borderRadius: radius.lg, overflow: 'hidden', ...shadow.blueGlow },

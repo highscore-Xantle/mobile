@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -51,6 +52,24 @@ export default function Login() {
   }));
 
   const haptic = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+  // Logo entrance — short and snappy
+  const logoIn = useSharedValue(0);
+  const formIn = useSharedValue(0);
+  useEffect(() => {
+    logoIn.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) });
+    formIn.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
+  }, []);
+  const logoStyle = useAnimatedStyle(() => ({
+    opacity: logoIn.value,
+    transform: [{ translateY: (1 - logoIn.value) * -16 }],
+  }));
+  const formStyle = useAnimatedStyle(() => ({
+    opacity: formIn.value,
+    transform: [{ translateY: (1 - formIn.value) * 24 }],
+  }));
+
+  const haptic = () => {}; // haptics deferred (native module — re-add expo-haptics in a native build)
 
   const handleAuthResult = async (error: any, data: any) => {
     if (error) { setErrorMsg(error.message); return; }
@@ -103,34 +122,10 @@ export default function Login() {
     }
   };
 
-
-  const signInWithApple = async () => {
-    haptic();
-    try {
-      const credential = await AppleAuthentication.signInAsync({
-        requestedScopes: [
-          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
-          AppleAuthentication.AppleAuthenticationScope.EMAIL,
-        ],
-      });
-      // Day 2 wiring: await supabase.auth.signInWithIdToken({ provider: 'apple', token: credential.identityToken! });
-      Alert.alert('Apple Auth', 'Credential ready — awaiting Victor\'s Supabase key config.');
-    } catch (e: any) {
-      if (e.code !== 'ERR_REQUEST_CANCELED') setErrorMsg('Apple Sign-In failed');
-    }
-  };
-
-  const signInWithGoogle = async () => {
-    haptic();
-    try {
-      await GoogleSignin.hasPlayServices();
-      await GoogleSignin.signIn();
-      // Day 2 wiring: await supabase.auth.signInWithIdToken({ provider: 'google', token: userInfo.idToken! });
-      Alert.alert('Google Auth', 'Credential ready — awaiting Victor\'s Supabase key config.');
-    } catch {
-      setErrorMsg('Google Sign-In failed');
-    }
-  };
+  // Apple/Google sign-in need native modules not in the SDK-54 dev build — deferred
+  // to a native-build cycle. Email works with no native dependency.
+  const comingSoon = (provider: string) => () =>
+    Alert.alert('Coming soon', `${provider} sign-in arrives in a later update — use email for now.`);
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -155,7 +150,6 @@ export default function Login() {
               <Text style={styles.successText}>{successMsg}</Text>
             </View>
           ) : null}
-
           {errorMsg ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{errorMsg}</Text>
@@ -167,7 +161,7 @@ export default function Login() {
             chip={<Text style={styles.chipGlyph}>⌘</Text>}
             chipBg={colors.surfaceAlt}
             label="Continue with Apple"
-            onPress={signInWithApple}
+            onPress={comingSoon('Apple')}
           />
 
           {/* Google */}
@@ -175,7 +169,7 @@ export default function Login() {
             chip={<Text style={[styles.chipGlyph, { color: colors.cyan }]}>G</Text>}
             chipBg={colors.surfaceAlt}
             label="Continue with Google"
-            onPress={signInWithGoogle}
+            onPress={comingSoon('Google')}
           />
 
           {/* Divider */}
@@ -378,7 +372,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     padding: space.md,
   },
-  errorText: { fontFamily: font.semibold, fontSize: 14, color: '#F87171', textAlign: 'center' },
-
+  errorText: { fontFamily: font.semibold, fontSize: 14, color: colors.danger, textAlign: 'center' },
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.88 },
 });
