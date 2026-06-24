@@ -40,8 +40,18 @@
             "imageWidth": 76
           }
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#3B9DE7"
+        }
       ]
     ],
+    "notification": {
+      "serviceWorkerPath": "/expo-notifications-sw.js",
+      "vapidPublicKey": "BOrRwqmjPtjrpvU8SUdaARw9644oMCySl3pO-wsD9AEu-J1fBRu2Ck1JXhFsm-9H0EJecK5mcf66e6dIKiilDKw"
+    },
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
