@@ -25,21 +25,13 @@ async function ensureAndroidChannel() {
 }
 
 /**
- * Whether push can be registered here. On web this needs Service Worker + Push +
- * Notification APIs (absent in e.g. older Safari / private windows). On native it
- * needs a real device — simulators/emulators can't register. When false the
- * Settings toggle stays off and disabled so it can't get stuck mid-flip.
+ * Push is Android/iOS only (spec'd scope — see push_tokens migration). Web has no
+ * CORS-friendly push token endpoint and simulators/emulators can't register, so
+ * the Settings toggle must stay off and disabled on those — otherwise it can be
+ * switched off but never back on.
  */
 export function isPushSupported(): boolean {
-  if (Platform.OS === 'web') {
-    return (
-      typeof window !== 'undefined' &&
-      'serviceWorker' in navigator &&
-      'PushManager' in window &&
-      'Notification' in window
-    );
-  }
-  return Device.isDevice;
+  return Device.isDevice && Platform.OS !== 'web';
 }
 
 /** OS-level permission only — used to draw the Settings toggle without prompting. */
@@ -67,19 +59,8 @@ export async function registerForPushNotifications(userId: string): Promise<stri
   if (status !== 'granted') return null;
 
   try {
-    let token: string;
-    if (Platform.OS === 'web') {
-      // Web push isn't an Expo-service token. getDevicePushTokenAsync subscribes
-      // against notification.vapidPublicKey (app.json) and returns a VAPID record
-      // { endpoint, keys: { p256dh, auth } }. Serialize it into the shared `token`
-      // column; the send side distinguishes it from Expo tokens by shape (JSON
-      // object vs. an "ExponentPushToken[...]" string).
-      const { data } = await Notifications.getDevicePushTokenAsync();
-      token = JSON.stringify(data);
-    } else {
-      const projectId = Constants.expoConfig?.extra?.eas?.projectId;
-      ({ data: token } = await Notifications.getExpoPushTokenAsync({ projectId }));
-    }
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+    const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
 
     await supabase
       .from('push_tokens')
