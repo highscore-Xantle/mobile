@@ -80,7 +80,7 @@ export function JoinModal({ visible, onClose }: JoinModalProps) {
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.6)' },
   card: {
     backgroundColor: colors.surface,
     borderTopLeftRadius: radius.xl,
