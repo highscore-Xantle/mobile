@@ -10,7 +10,7 @@ import { colors, font, gradients, radius, shadow, space, text as themeText } fro
 
 const MIN_LEN = 3;
 const MAX_LEN = 20;
-const VALID_RE = /^[a-zA-Z0-9_]+$/;
+const VALID_RE = /^[a-z0-9_]+$/;
 
 type CheckState = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 
@@ -116,7 +116,11 @@ export default function Profile() {
 
     setSaving(false);
     if (error) {
-      setErrorMsg(error.message);
+      if (error.code === '23505') {
+        setCheckState('taken');
+      } else {
+        setErrorMsg(error.message);
+      }
       return;
     }
 

@@ -6,7 +6,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
 import { goBackOr } from '../../lib/navigation';
 import {
-  hasNotificationPermission,
   isPushSupported,
   registerForPushNotifications,
   unregisterPushNotifications,
@@ -25,9 +24,14 @@ export default function Settings() {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    if (!pushSupported) return;
-    hasNotificationPermission().then(setNotifEnabled);
-  }, [pushSupported]);
+    if (!pushSupported || !session?.user) return;
+    supabase
+      .from('push_tokens')
+      .select('token')
+      .eq('user_id', session.user.id)
+      .maybeSingle()
+      .then(({ data }) => setNotifEnabled(!!data));
+  }, [pushSupported, session?.user?.id]);
 
   const toggleNotifications = async (value: boolean) => {
     if (!session?.user) return;
