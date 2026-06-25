@@ -19,6 +19,26 @@ export default function RoomLobby() {
   const [room, setRoom] = useState<any>(null);
   const [players, setPlayers] = useState<any[]>([]);
 
+  // Hooks must all be declared before any early return (Rules of Hooks)
+  const pulse = useSharedValue(0.5);
+  const pulseStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
+
+  // Derive isHost from state so we can use it in an effect before early return
+  const isHost = !!room && room.host_id === session?.user.id;
+
+  useEffect(() => {
+    if (!isHost && !loading && room) {
+      pulse.value = withRepeat(
+        withSequence(
+          withTiming(1, { duration: 800, easing: Easing.inOut(Easing.ease) }),
+          withTiming(0.5, { duration: 800, easing: Easing.inOut(Easing.ease) })
+        ),
+        -1,
+        true
+      );
+    }
+  }, [isHost, loading, room]);
+
   useEffect(() => {
     if (!code || !session) return;
     fetchRoomAndPlayers();
@@ -113,24 +133,7 @@ export default function RoomLobby() {
     );
   }
 
-  const isHost = room.host_id === session?.user.id;
   const canStart = isHost && players.length >= 2;
-
-  // Pulse animation for waiting text
-  const pulse = useSharedValue(0.5);
-  useEffect(() => {
-    if (!isHost) {
-      pulse.value = withRepeat(
-        withSequence(
-          withTiming(1, { duration: 800, easing: Easing.inOut(Easing.ease) }),
-          withTiming(0.5, { duration: 800, easing: Easing.inOut(Easing.ease) })
-        ),
-        -1,
-        true
-      );
-    }
-  }, [isHost]);
-  const pulseStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
 
   return (
     <View style={styles.root}>
