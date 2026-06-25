@@ -27,6 +27,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { GradientFill } from '../components/GradientFill';
 import { supabase } from '../lib/supabase';
 import { colors, font, gradients, radius, shadow, space } from '../theme';
+import * as AppleAuthentication from 'expo-apple-authentication';
 
 export default function Login() {
   const router = useRouter();
@@ -114,10 +115,36 @@ export default function Login() {
     }
   };
 
+  // Native Apple sign-in (iOS): get an identity token from Apple, hand it to
+  // Supabase via signInWithIdToken. Needs a dev build that includes
+  // expo-apple-authentication (the current SDK-54 build must be rebuilt).
   const signInWithApple = async () => {
-    haptic();
-    Alert.alert('Apple Auth', "Requires Victor's EAS dev build for native iOS support.");
+    setErrorMsg('');
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      if (!credential.identityToken) {
+        setErrorMsg('Apple did not return a token.');
+        return;
+      }
+      const { error, data } = await supabase.auth.signInWithIdToken({
+        provider: 'apple',
+        token: credential.identityToken,
+      });
+      handleAuthResult(error, data);
+    } catch (e: any) {
+      if (e.code !== 'ERR_REQUEST_CANCELED') setErrorMsg('Apple sign-in failed. Please try again.');
+    }
   };
+
+  // Google sign-in is Promise's task (native @react-native-google-signin). Until
+  // that native build lands, the Google button shows "coming soon".
+  const comingSoon = (provider: string) => () =>
+    Alert.alert('Coming soon', `${provider} sign-in arrives in a later update — use email for now.`);
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -148,13 +175,15 @@ export default function Login() {
             </View>
           ) : null}
 
-          {/* Apple */}
-          <SocialButton
-            icon={<FontAwesome name="apple" size={22} color={colors.text} />}
-            chipBg={colors.surfaceAlt}
-            label="Continue with Apple"
-            onPress={signInWithApple}
-          />
+          {/* Apple — native, iOS only */}
+          {Platform.OS === 'ios' && (
+            <SocialButton
+              icon={<FontAwesome name="apple" size={22} color={colors.text} />}
+              chipBg={colors.surfaceAlt}
+              label="Continue with Apple"
+              onPress={signInWithApple}
+            />
+          )}
 
           {/* Google */}
           <SocialButton
