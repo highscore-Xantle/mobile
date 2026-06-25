@@ -27,7 +27,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { GradientFill } from '../components/GradientFill';
 import { supabase } from '../lib/supabase';
 import { colors, font, gradients, radius, shadow, space } from '../theme';
-import * as AppleAuthentication from 'expo-apple-authentication';
+
 
 export default function Login() {
   const router = useRouter();
