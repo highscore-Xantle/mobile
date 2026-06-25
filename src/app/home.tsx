@@ -97,6 +97,12 @@ export default function Home() {
   useEffect(() => {
     if (!session) return;
 
+    // Remove any lingering channel from previous renders to avoid the "cannot add presence callbacks after subscribe()" error
+    const existing = supabase.getChannels().find(c => c.topic === 'realtime:global_presence');
+    if (existing) {
+      supabase.removeChannel(existing);
+    }
+
     const channel = supabase.channel('global_presence', {
       config: { presence: { key: session.user.id } },
     });

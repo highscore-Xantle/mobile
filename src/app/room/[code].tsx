@@ -48,7 +48,7 @@ export default function RoomLobby() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${code}` }, (payload) => {
         setRoom(payload.new);
         if (payload.new.status === 'active') {
-          router.replace({ pathname: '/game/[id]', params: { id: payload.new.game_kind } });
+          router.replace({ pathname: '/game/[id]', params: { id: payload.new.game_kind, roomCode: code } });
         }
       })
       .subscribe();
@@ -90,7 +90,7 @@ export default function RoomLobby() {
     setLoading(false);
 
     if (roomData.status === 'active') {
-      router.replace({ pathname: '/game/[id]', params: { id: roomData.game_kind } });
+      router.replace({ pathname: '/game/[id]', params: { id: roomData.game_kind, roomCode: code } });
     }
   };
 
