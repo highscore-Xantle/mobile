@@ -156,18 +156,18 @@ export default function Home() {
 
   const handleGamePress = async (game: typeof GAMES[number]) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    
+    // Wait for the physical press animation to resolve before jumping
+    await new Promise(resolve => setTimeout(resolve, 150));
+    
     if (!game.available) {
       // Coming soon — just show a stub
       router.push(`/game/${game.id}`);
       return;
     }
-    const { data: room, error } = await supabase.rpc('create_room', {
-      p_game_kind: game.id,
-      p_is_group: false,
-      p_max: 2,
-    });
-    if (error) { alert('Error creating room: ' + error.message); return; }
-    router.push(`/room/${room.code}`);
+    
+    // Push to the new setup screen to configure the game rules
+    router.push(`/setup/${game.id}` as any);
   };
 
   const handleWatchLive = (gameId: string) => {
