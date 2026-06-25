@@ -1,11 +1,18 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../components/GradientFill';
+import { goBackOr } from '../lib/navigation';
 import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../theme';
+
+const MIN_LEN = 3;
+const MAX_LEN = 20;
+const VALID_RE = /^[a-z0-9_]+$/;
+
+type CheckState = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 
 export default function Profile() {
   const router = useRouter();
@@ -15,6 +22,12 @@ export default function Profile() {
   const [errorMsg, setErrorMsg] = useState('');
   const [username, setUsername] = useState<string | null>(null);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [checkState, setCheckState] = useState<CheckState>('idle');
+  const [saving, setSaving] = useState(false);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (sessionLoading) return;
@@ -45,6 +58,89 @@ export default function Profile() {
     };
   }, [sessionLoading, session?.user?.id]);
 
+  const startEditing = () => {
+    setDraft(username ?? '');
+    setCheckState('idle');
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setEditing(false);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+  };
+
+  const handleChange = (value: string) => {
+    const trimmed = value.trim().toLowerCase();
+    setDraft(trimmed);
+
+    if (trimmed === username) {
+      setCheckState('idle');
+      return;
+    }
+    if (trimmed.length < MIN_LEN) {
+      setCheckState('idle');
+      return;
+    }
+    if (trimmed.length > MAX_LEN || !VALID_RE.test(trimmed)) {
+      setCheckState('invalid');
+      return;
+    }
+
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    setCheckState('checking');
+    debounceTimer.current = setTimeout(() => checkAvailability(trimmed), 600);
+  };
+
+  const checkAvailability = async (value: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('username', value)
+      .maybeSingle();
+
+    if (error) {
+      setCheckState('idle');
+      return;
+    }
+    setCheckState(data ? 'taken' : 'available');
+  };
+
+  const handleSave = async () => {
+    if (checkState !== 'available' || !session?.user) return;
+    setSaving(true);
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ username: draft })
+      .eq('id', session.user.id);
+
+    setSaving(false);
+    if (error) {
+      if (error.code === '23505') {
+        setCheckState('taken');
+      } else {
+        setErrorMsg(error.message);
+      }
+      return;
+    }
+
+    setUsername(draft);
+    setEditing(false);
+  };
+
+  const statusConfig: Record<CheckState, { text: string; color: string } | null> = {
+    idle: null,
+    checking: { text: 'Checking availability…', color: colors.textMuted },
+    available: { text: '✓ Available', color: colors.success },
+    taken: { text: '✗ Already taken', color: colors.danger },
+    invalid: {
+      text: `Letters, numbers and _ only · ${MIN_LEN}–${MAX_LEN} chars`,
+      color: colors.warning,
+    },
+  };
+  const status = statusConfig[checkState];
+  const saveEnabled = checkState === 'available' && !saving;
+
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
@@ -52,7 +148,7 @@ export default function Profile() {
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            onPress={() => router.back()}
+            onPress={() => goBackOr(router, '/home')}
           >
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
@@ -74,7 +170,62 @@ export default function Profile() {
               <GradientFill colors={gradients.featured} />
               <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
             </View>
-            <Text style={[themeText.h1, styles.username]}>{username}</Text>
+            {editing ? (
+              <View style={styles.editWrap}>
+                <View
+                  style={[
+                    styles.inputWrap,
+                    checkState === 'available' && styles.inputBorderGreen,
+                    checkState === 'taken' && styles.inputBorderRed,
+                  ]}
+                >
+                  <Text style={styles.atSign}>@</Text>
+                  <TextInput
+                    style={styles.input}
+                    autoFocus
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={MAX_LEN}
+                    value={draft}
+                    onChangeText={handleChange}
+                  />
+                  {checkState === 'checking' && (
+                    <ActivityIndicator size="small" color={colors.textMuted} />
+                  )}
+                </View>
+                {status && <Text style={[styles.statusText, { color: status.color }]}>{status.text}</Text>}
+                <View style={styles.editActions}>
+                  <Pressable
+                    style={({ pressed }) => [styles.editActionBtn, pressed && styles.pressed]}
+                    onPress={cancelEditing}
+                  >
+                    <Text style={styles.editActionTextMuted}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.editActionBtn,
+                      !saveEnabled && styles.ctaDisabled,
+                      pressed && saveEnabled && styles.pressed,
+                    ]}
+                    onPress={handleSave}
+                    disabled={!saveEnabled}
+                  >
+                    {saving ? (
+                      <ActivityIndicator size="small" color={colors.blue} />
+                    ) : (
+                      <Text style={[styles.editActionText, !saveEnabled && styles.editActionTextMuted]}>
+                        Save
+                      </Text>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable style={styles.usernameRow} onPress={startEditing}>
+                <Text style={[themeText.h1, styles.username]}>{username}</Text>
+                <Text style={styles.editGlyph}>✎</Text>
+              </Pressable>
+            )}
             <Text style={[themeText.hint, styles.email]}>{session?.user?.email}</Text>
 
             {joinedAt ? (
@@ -135,6 +286,32 @@ const styles = StyleSheet.create({
   avatarLetter: { fontFamily: font.extrabold, fontSize: 38, color: colors.white },
   username: { marginBottom: space.xs },
   email: { marginBottom: space.xl },
+
+  usernameRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: space.xs },
+  editGlyph: { color: colors.textFaint, fontSize: 16 },
+
+  editWrap: { alignSelf: 'stretch', gap: space.sm, marginBottom: space.xl },
+  inputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.hairline,
+    paddingHorizontal: space.md,
+    ...shadow.card,
+  },
+  inputBorderGreen: { borderColor: colors.success },
+  inputBorderRed: { borderColor: colors.danger },
+  atSign: { fontFamily: font.extrabold, fontSize: 18, color: colors.textFaint, marginRight: space.xs },
+  input: { flex: 1, fontFamily: font.semibold, fontSize: 18, color: colors.text, paddingVertical: space.md },
+  statusText: { fontFamily: font.semibold, fontSize: 13 },
+
+  editActions: { flexDirection: 'row', justifyContent: 'center', gap: space.lg },
+  editActionBtn: { paddingVertical: space.sm, paddingHorizontal: space.md },
+  editActionText: { fontFamily: font.bold, fontSize: 15, color: colors.blue },
+  editActionTextMuted: { fontFamily: font.bold, fontSize: 15, color: colors.textFaint },
+  ctaDisabled: { opacity: 0.5 },
 
   card: {
     alignSelf: 'stretch',
