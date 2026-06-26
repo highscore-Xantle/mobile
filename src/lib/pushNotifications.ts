@@ -1,20 +1,43 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { colors } from '../theme';
 import { supabase } from './supabase';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// `expo-notifications` resolves a native module (ExpoPushTokenManager) at import
+// time, which throws on web and on any build that predates the module being
+// added (e.g. an older dev client). A static `import` would therefore crash the
+// whole app at startup just by loading this file. So we require it lazily and
+// only on a supported native platform, caching the module and one-time handler.
+type NotificationsModule = typeof import('expo-notifications');
+let cached: NotificationsModule | null = null;
+let handlerSet = false;
 
-async function ensureAndroidChannel() {
+function getNotifications(): NotificationsModule | null {
+  if (Platform.OS === 'web') return null;
+  if (cached) return cached;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('expo-notifications') as NotificationsModule;
+    if (!handlerSet) {
+      mod.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+        }),
+      });
+      handlerSet = true;
+    }
+    cached = mod;
+    return mod;
+  } catch {
+    return null; // native module not present in this build
+  }
+}
+
+async function ensureAndroidChannel(Notifications: NotificationsModule) {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync('default', {
     name: 'default',
@@ -28,15 +51,17 @@ async function ensureAndroidChannel() {
  * Push is Android/iOS only (spec'd scope — see push_tokens migration). Web has no
  * CORS-friendly push token endpoint and simulators/emulators can't register, so
  * the Settings toggle must stay off and disabled on those — otherwise it can be
- * switched off but never back on.
+ * switched off but never back on. Also false when the native module isn't in the
+ * current build, so the toggle disables gracefully instead of crashing.
  */
 export function isPushSupported(): boolean {
-  return Device.isDevice && Platform.OS !== 'web';
+  return Device.isDevice && Platform.OS !== 'web' && getNotifications() !== null;
 }
 
 /** OS-level permission only — used to draw the Settings toggle without prompting. */
 export async function hasNotificationPermission(): Promise<boolean> {
-  if (!Device.isDevice) return false;
+  const Notifications = getNotifications();
+  if (!Device.isDevice || !Notifications) return false;
   const { status } = await Notifications.getPermissionsAsync();
   return status === 'granted';
 }
@@ -47,9 +72,10 @@ export async function hasNotificationPermission(): Promise<boolean> {
  * user denied permission or this is a simulator/emulator (no push there).
  */
 export async function registerForPushNotifications(userId: string): Promise<string | null> {
-  if (!isPushSupported()) return null;
+  const Notifications = getNotifications();
+  if (!isPushSupported() || !Notifications) return null;
 
-  await ensureAndroidChannel();
+  await ensureAndroidChannel(Notifications);
 
   const { status: existing } = await Notifications.getPermissionsAsync();
   let status = existing;
