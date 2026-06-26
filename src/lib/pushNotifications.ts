@@ -1,3 +1,4 @@
+import { requireOptionalNativeModule } from 'expo-modules-core';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
@@ -16,6 +17,12 @@ let handlerSet = false;
 function getNotifications(): NotificationsModule | null {
   if (Platform.OS === 'web') return null;
   if (cached) return cached;
+  // Feature-detect the native module WITHOUT importing expo-notifications.
+  // Importing the package eagerly resolves ExpoPushTokenManager, and Metro
+  // logs a red error when that module is absent (a dev client built before
+  // push was added) — even if we catch the throw. requireOptionalNativeModule
+  // returns null instead of throwing/logging, so we bail before requiring.
+  if (!requireOptionalNativeModule('ExpoPushTokenManager')) return null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require('expo-notifications') as NotificationsModule;
