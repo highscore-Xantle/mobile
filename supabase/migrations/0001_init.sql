@@ -50,7 +50,6 @@ create table if not exists public.rooms (
   status       public.room_status not null default 'lobby',
   is_group     boolean not null default false,
   max_players  int not null default 2 check (max_players between 2 and 50),
-  state        jsonb not null default '{}'::jsonb,     -- per-game state lives here
   created_at   timestamptz not null default now(),
   started_at   timestamptz,
   finished_at  timestamptz
