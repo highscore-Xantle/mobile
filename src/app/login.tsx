@@ -1,4 +1,4 @@
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
+
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
@@ -103,17 +103,7 @@ export default function Login() {
     handleAuthResult(null, data);
   };
 
-  const signInWithGoogle = async () => {
-    haptic();
-    if (Platform.OS === 'web') {
-      await supabase.auth.signInWithOAuth({ 
-        provider: 'google', 
-        options: { redirectTo: window.location.origin + '/home' } 
-      });
-    } else {
-      Alert.alert('Google Auth', "Requires Victor's EAS dev build for native support.");
-    }
-  };
+
 
   // Native Apple sign-in (iOS): get an identity token from Apple, hand it to
   // Supabase via signInWithIdToken. Needs a dev build that includes
@@ -185,12 +175,12 @@ export default function Login() {
             />
           )}
 
-          {/* Google */}
+          {/* Google — coming soon, wired by Valiant */}
           <SocialButton
             icon={<FontAwesome name="google" size={20} color={colors.text} />}
             chipBg={colors.surfaceAlt}
             label="Continue with Google"
-            onPress={signInWithGoogle}
+            onPress={comingSoon('Google')}
           />
 
           {/* Divider */}
