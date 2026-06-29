@@ -29,7 +29,9 @@ export default function Home() {
 
   const handleAvatarPress = () => router.push('/profile');
 
-  const handleGamePress = (id: string) => router.push(`/game/${id}`);
+  const handleGamePress = (game: typeof GAMES[0]) => {
+    if (game.route) router.push(game.route as Parameters<typeof router.push>[0]);
+  };
 
   const avatarLetter =
     (session?.user?.user_metadata?.username as string)?.[0]?.toUpperCase() ??
@@ -105,8 +107,9 @@ export default function Home() {
               {GAMES.map((g) => (
                 <Pressable
                   key={g.id}
-                  style={({ pressed }) => [styles.gameCard, pressed && styles.pressedCard]}
-                  onPress={() => handleGamePress(g.id)}
+                  style={({ pressed }) => [styles.gameCard, pressed && styles.pressedCard, !g.route && styles.gameCardLocked]}
+                  onPress={() => handleGamePress(g)}
+                  disabled={!g.route}
                 >
                   <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
                   
@@ -138,8 +141,8 @@ export default function Home() {
 }
 
 const GAMES = [
-  { id: 'trivia', title: 'Trivia Royale', tag: 'PARTY', gradient: gradients.featured },
-  { id: 'spy', title: 'Find the Spy', tag: 'SOCIAL', gradient: gradients.button },
+  { id: 'pixel-rush', title: 'Pixel Rush', tag: '1v1', gradient: gradients.button, route: '/games/pixel-rush' },
+  { id: 'spy', title: 'Find the Spy', tag: 'COMING SOON', gradient: gradients.featured, route: null },
 ];
 
 const styles = StyleSheet.create({
@@ -248,6 +251,7 @@ const styles = StyleSheet.create({
   gameTag: { fontFamily: font.extrabold, fontSize: 10, color: colors.textFaint, letterSpacing: 0.5 },
   gameTitle: { fontFamily: font.bold, fontSize: 14, color: colors.text },
   
+  gameCardLocked: { opacity: 0.5 },
   gameArrowChip: {
     position: 'absolute',
     bottom: space.sm,
