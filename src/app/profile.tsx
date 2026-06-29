@@ -6,6 +6,7 @@ import { GradientFill } from '../components/GradientFill';
 import { goBackOr } from '../lib/navigation';
 import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
+import { usePresence } from '../lib/usePresence';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../theme';
 
 const MIN_LEN = 3;
@@ -22,6 +23,9 @@ export default function Profile() {
   const [errorMsg, setErrorMsg] = useState('');
   const [username, setUsername] = useState<string | null>(null);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
+
+  const { isOnline } = usePresence(session?.user?.id ?? null);
+  const online = !!session?.user && isOnline(session.user.id);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -170,6 +174,12 @@ export default function Profile() {
               <GradientFill colors={gradients.featured} />
               <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
             </View>
+            <View style={[styles.statusBadge, online ? styles.statusOnline : styles.statusOffline]}>
+              <View style={[styles.statusDot, { backgroundColor: online ? colors.success : colors.textMuted }]} />
+              <Text style={[styles.statusText, { color: online ? colors.success : colors.textMuted }]}>
+                {online ? 'Online' : 'Offline'}
+              </Text>
+            </View>
             {editing ? (
               <View style={styles.editWrap}>
                 <View
@@ -280,10 +290,22 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: space.lg,
+    marginBottom: space.sm,
     ...shadow.blueGlow,
   },
   avatarLetter: { fontFamily: font.extrabold, fontSize: 38, color: colors.white },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    marginBottom: space.md,
+  },
+  statusOnline: { backgroundColor: 'rgba(74,222,128,0.12)' },
+  statusOffline: { backgroundColor: 'rgba(147,155,167,0.10)' },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
   username: { marginBottom: space.xs },
   email: { marginBottom: space.xl },
 
