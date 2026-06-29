@@ -1,3 +1,6 @@
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -16,36 +19,43 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
+  withSpring,
+  withDelay,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FontAwesome } from '@expo/vector-icons';
 import { GradientFill } from '../components/GradientFill';
 import { supabase } from '../lib/supabase';
 import { colors, font, gradients, radius, shadow, space } from '../theme';
-import * as AppleAuthentication from 'expo-apple-authentication';
+
 
 export default function Login() {
   const router = useRouter();
 
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
 
-  // Logo entrance — short and snappy
+  // Improved Animations (Spring + Stagger)
   const logoIn = useSharedValue(0);
   const formIn = useSharedValue(0);
+  
   useEffect(() => {
-    logoIn.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) });
-    formIn.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
+    logoIn.value = withSpring(1, { damping: 14, stiffness: 90 });
+    formIn.value = withDelay(150, withSpring(1, { damping: 15, stiffness: 100 }));
   }, []);
+  
   const logoStyle = useAnimatedStyle(() => ({
-    opacity: logoIn.value,
-    transform: [{ translateY: (1 - logoIn.value) * -16 }],
+    opacity: withTiming(logoIn.value, { duration: 400 }),
+    transform: [{ translateY: (1 - logoIn.value) * -20 }, { scale: 0.95 + (logoIn.value * 0.05) }],
   }));
   const formStyle = useAnimatedStyle(() => ({
-    opacity: formIn.value,
-    transform: [{ translateY: (1 - formIn.value) * 24 }],
+    opacity: withTiming(formIn.value, { duration: 400 }),
+    transform: [{ translateY: (1 - formIn.value) * 30 }],
   }));
 
   const haptic = () => {}; // haptics deferred (native module — re-add expo-haptics in a native build)
@@ -57,24 +67,52 @@ export default function Login() {
     router.replace(profile?.username ? '/home' : '/onboarding');
   };
 
-  const signInWithEmail = async () => {
+  const sendOtp = async () => {
     haptic();
+    if (!email) { setErrorMsg('Please enter your email.'); return; }
     setLoading(true);
     setErrorMsg('');
-    const { error, data } = await supabase.auth.signInWithPassword({ email, password });
-    if (error?.message.includes('Invalid login credentials')) {
-      const { error: signUpError, data: signUpData } = await supabase.auth.signUp({ email, password });
-      setLoading(false);
-      if (signUpError) { setErrorMsg(signUpError.message); return; }
-      if (signUpData.user && signUpData.session === null) {
-        Alert.alert('Check your email', 'We sent you a confirmation link.');
-        return;
-      }
-      handleAuthResult(signUpError, signUpData);
+    setSuccessMsg('');
+
+    const { error } = await supabase.auth.signInWithOtp({ email });
+    setLoading(false);
+
+    if (error) {
+      setErrorMsg(error.message);
+    } else {
+      setSuccessMsg(`We sent a 6-digit code to ${email}`);
+      setIsVerifying(true);
+    }
+  };
+
+  const verifyOtp = async () => {
+    haptic();
+    if (!otp) { setErrorMsg('Please enter the 6-digit code.'); return; }
+    setLoading(true);
+    setErrorMsg('');
+
+    const { data, error } = await supabase.auth.verifyOtp({ email, token: otp, type: 'email' });
+    setLoading(false);
+
+    if (error) {
+      setErrorMsg(error.message);
       return;
     }
-    setLoading(false);
-    handleAuthResult(error, data);
+    
+    // Auth successful
+    handleAuthResult(null, data);
+  };
+
+  const signInWithGoogle = async () => {
+    haptic();
+    if (Platform.OS === 'web') {
+      await supabase.auth.signInWithOAuth({ 
+        provider: 'google', 
+        options: { redirectTo: window.location.origin + '/home' } 
+      });
+    } else {
+      Alert.alert('Google Auth', "Requires Victor's EAS dev build for native support.");
+    }
   };
 
   // Native Apple sign-in (iOS): get an identity token from Apple, hand it to
@@ -126,6 +164,11 @@ export default function Login() {
         {/* ── Auth card ────────────────────────────── */}
         <Animated.View style={[styles.card, formStyle]}>
 
+          {successMsg ? (
+            <View style={styles.successBox}>
+              <Text style={styles.successText}>{successMsg}</Text>
+            </View>
+          ) : null}
           {errorMsg ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{errorMsg}</Text>
@@ -135,7 +178,7 @@ export default function Login() {
           {/* Apple — native, iOS only */}
           {Platform.OS === 'ios' && (
             <SocialButton
-              chip={<Text style={styles.chipGlyph}>⌘</Text>}
+              icon={<FontAwesome name="apple" size={22} color={colors.text} />}
               chipBg={colors.surfaceAlt}
               label="Continue with Apple"
               onPress={signInWithApple}
@@ -144,10 +187,10 @@ export default function Login() {
 
           {/* Google */}
           <SocialButton
-            chip={<Text style={[styles.chipGlyph, { color: colors.cyan }]}>G</Text>}
+            icon={<FontAwesome name="google" size={20} color={colors.text} />}
             chipBg={colors.surfaceAlt}
             label="Continue with Google"
-            onPress={comingSoon('Google')}
+            onPress={signInWithGoogle}
           />
 
           {/* Divider */}
@@ -160,48 +203,68 @@ export default function Login() {
           {/* Email */}
           {!showEmailForm ? (
             <SocialButton
-              chip={<Text style={[styles.chipGlyph, { color: colors.blue }]}>@</Text>}
+              icon={<FontAwesome name="envelope" size={16} color={colors.blue} />}
               chipBg={colors.surfaceAlt}
               label="Continue with Email"
               onPress={() => { haptic(); setShowEmailForm(true); }}
             />
           ) : (
             <View style={styles.emailSection}>
-              {/* Both inputs in one floating card */}
-              <View style={styles.inputCard}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Email"
-                  placeholderTextColor={colors.textFaint}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  value={email}
-                  onChangeText={setEmail}
-                />
-                <View style={styles.inputSep} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Password"
-                  placeholderTextColor={colors.textFaint}
-                  secureTextEntry
-                  value={password}
-                  onChangeText={setPassword}
-                />
-              </View>
-
-              <Pressable
-                style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
-                onPress={signInWithEmail}
-                disabled={loading}
-              >
-                <View style={styles.ctaInner}>
-                  <GradientFill colors={gradients.button} />
-                  {loading
-                    ? <ActivityIndicator color={colors.white} />
-                    : <Text style={styles.ctaText}>Sign In / Sign Up</Text>
-                  }
-                </View>
-              </Pressable>
+              {!isVerifying ? (
+                <>
+                  <View style={styles.inputCard}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Email"
+                      placeholderTextColor={colors.textFaint}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      value={email}
+                      onChangeText={setEmail}
+                    />
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+                    onPress={sendOtp}
+                    disabled={loading}
+                  >
+                    <View style={styles.ctaInner}>
+                      <GradientFill colors={gradients.button} />
+                      {loading
+                        ? <ActivityIndicator color={colors.white} />
+                        : <Text style={styles.ctaText}>Send Code</Text>
+                      }
+                    </View>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <View style={styles.inputCard}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="6-digit code"
+                      placeholderTextColor={colors.textFaint}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      value={otp}
+                      onChangeText={setOtp}
+                    />
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+                    onPress={verifyOtp}
+                    disabled={loading}
+                  >
+                    <View style={styles.ctaInner}>
+                      <GradientFill colors={gradients.button} />
+                      {loading
+                        ? <ActivityIndicator color={colors.white} />
+                        : <Text style={styles.ctaText}>Verify & Sign In</Text>
+                      }
+                    </View>
+                  </Pressable>
+                </>
+              )}
             </View>
           )}
         </Animated.View>
@@ -213,9 +276,9 @@ export default function Login() {
 
 /** Reusable social button row with left icon chip */
 function SocialButton({
-  chip, chipBg, label, onPress,
+  icon, chipBg, label, onPress,
 }: {
-  chip: React.ReactNode;
+  icon: React.ReactNode;
   chipBg: string;
   label: string;
   onPress: () => void;
@@ -225,7 +288,7 @@ function SocialButton({
       style={({ pressed }) => [styles.socialBtn, pressed && styles.pressed]}
       onPress={onPress}
     >
-      <View style={[styles.iconChip, { backgroundColor: chipBg }]}>{chip}</View>
+      <View style={[styles.iconChip, { backgroundColor: chipBg }]}>{icon}</View>
       <Text style={styles.socialLabel}>{label}</Text>
     </Pressable>
   );
@@ -332,6 +395,16 @@ const styles = StyleSheet.create({
   ctaInner: { paddingVertical: 20, alignItems: 'center', justifyContent: 'center' },
   ctaText: { fontFamily: font.extrabold, fontSize: 17, color: colors.white, letterSpacing: 0.4 },
 
+  // Success banner
+  successBox: {
+    backgroundColor: 'rgba(74,222,128,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(74,222,128,0.30)',
+    borderRadius: radius.sm,
+    padding: space.md,
+  },
+  successText: { fontFamily: font.semibold, fontSize: 14, color: '#4ADE80', textAlign: 'center' },
+
   // Error
   errorBox: {
     backgroundColor: 'rgba(239,68,68,0.10)',
@@ -341,6 +414,5 @@ const styles = StyleSheet.create({
     padding: space.md,
   },
   errorText: { fontFamily: font.semibold, fontSize: 14, color: colors.danger, textAlign: 'center' },
-
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.88 },
 });
