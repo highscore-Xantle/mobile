@@ -9,11 +9,16 @@ const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 if (!url || !anonKey) {
-  // Surfaced early so a missing .env is obvious in dev.
-  console.warn('[supabase] EXPO_PUBLIC_SUPABASE_URL / ANON_KEY missing — copy .env.example to .env');
+  // Fail with a readable message instead of supabase-js's opaque "supabaseUrl is
+  // required." In a release build this means the EAS env wasn't set — see the
+  // `env` block in eas.json (these are EXPO_PUBLIC_* values, inlined at build time).
+  throw new Error(
+    '[supabase] Missing EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY. ' +
+      'Locally: copy .env.example to .env. In EAS builds: set them in eas.json -> build.<profile>.env.',
+  );
 }
 
-export const supabase = createClient(url ?? '', anonKey ?? '', {
+export const supabase = createClient(url, anonKey, {
   auth: {
     // AsyncStorage's web shim touches `window` even during Expo Router's
     // Node-side render pass, which has no `window` and crashes the server.
