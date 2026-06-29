@@ -1,11 +1,12 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../components/GradientFill';
 import { goBackOr } from '../lib/navigation';
 import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
+import { usePresence } from '../lib/usePresence';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../theme';
 
 const MIN_LEN = 3;
@@ -22,6 +23,12 @@ export default function Profile() {
   const [errorMsg, setErrorMsg] = useState('');
   const [username, setUsername] = useState<string | null>(null);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
+
+  const { isOnline } = usePresence(session?.user?.id ?? null);
+  const online = !!session?.user && isOnline(session.user.id);
+
+  type Stats = { matches: number; roundsWon: number; trophies: number; winRate: number };
+  const [stats, setStats] = useState<Stats | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -57,6 +64,24 @@ export default function Profile() {
       active = false;
     };
   }, [sessionLoading, session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user) return;
+    let active = true;
+    supabase
+      .from('game_players')
+      .select('score, trophies')
+      .eq('user_id', session.user.id)
+      .then(({ data }) => {
+        if (!active || !data) return;
+        const matches = data.length;
+        const roundsWon = data.reduce((s, r) => s + (r.score ?? 0), 0);
+        const trophies = data.reduce((s, r) => s + (r.trophies ?? 0), 0);
+        const winRate = matches > 0 ? Math.round((trophies / matches) * 100) : 0;
+        setStats({ matches, roundsWon, trophies, winRate });
+      });
+    return () => { active = false; };
+  }, [session?.user?.id]);
 
   const startEditing = () => {
     setDraft(username ?? '');
@@ -165,10 +190,19 @@ export default function Profile() {
             <Text style={themeText.body}>{errorMsg}</Text>
           </View>
         ) : (
-          <View style={styles.content}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.content}
+          >
             <View style={styles.avatar}>
               <GradientFill colors={gradients.featured} />
               <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
+            </View>
+            <View style={[styles.statusBadge, online ? styles.statusOnline : styles.statusOffline]}>
+              <View style={[styles.statusDot, { backgroundColor: online ? colors.success : colors.textMuted }]} />
+              <Text style={[styles.statusText, { color: online ? colors.success : colors.textMuted }]}>
+                {online ? 'Online' : 'Offline'}
+              </Text>
             </View>
             {editing ? (
               <View style={styles.editWrap}>
@@ -240,9 +274,45 @@ export default function Profile() {
                 </Text>
               </View>
             ) : null}
-          </View>
+
+            <Text style={[themeText.label, styles.statsLabel]}>GAME STATS</Text>
+            {stats ? (
+              <View style={styles.statsGrid}>
+                <StatCard emoji="🏆" value={stats.trophies} label="Trophies" accent={colors.warning} />
+                <StatCard emoji="🎮" value={stats.matches} label="Matches" />
+                <StatCard emoji="⚡" value={stats.roundsWon} label="Rounds won" accent={colors.blue} />
+                <StatCard emoji="🎯" value={`${stats.winRate}%`} label="Win rate" accent={colors.success} />
+              </View>
+            ) : (
+              <View style={styles.statsGrid}>
+                {[0, 1, 2, 3].map((i) => (
+                  <View key={i} style={[styles.statCard, styles.statCardSkeleton]} />
+                ))}
+              </View>
+            )}
+          </ScrollView>
         )}
       </SafeAreaView>
+    </View>
+  );
+}
+
+function StatCard({
+  emoji,
+  value,
+  label,
+  accent,
+}: {
+  emoji: string;
+  value: number | string;
+  label: string;
+  accent?: string;
+}) {
+  return (
+    <View style={styles.statCard}>
+      <Text style={styles.statEmoji}>{emoji}</Text>
+      <Text style={[styles.statValue, accent ? { color: accent } : undefined]}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
@@ -272,7 +342,7 @@ const styles = StyleSheet.create({
 
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  content: { flex: 1, alignItems: 'center', paddingTop: space.md },
+  content: { alignItems: 'center', paddingTop: space.md, paddingBottom: space.xl },
   avatar: {
     width: 96,
     height: 96,
@@ -280,10 +350,22 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: space.lg,
+    marginBottom: space.sm,
     ...shadow.blueGlow,
   },
   avatarLetter: { fontFamily: font.extrabold, fontSize: 38, color: colors.white },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    marginBottom: space.md,
+  },
+  statusOnline: { backgroundColor: 'rgba(74,222,128,0.12)' },
+  statusOffline: { backgroundColor: 'rgba(147,155,167,0.10)' },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
   username: { marginBottom: space.xs },
   email: { marginBottom: space.xl },
 
@@ -322,4 +404,36 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   cardValue: { color: colors.text },
+
+  statsLabel: { alignSelf: 'stretch', marginTop: space.lg, marginBottom: space.sm },
+  statsGrid: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.sm,
+  },
+  statCard: {
+    flex: 1,
+    minWidth: '45%',
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: space.lg,
+    alignItems: 'center',
+    gap: space.xs,
+    ...shadow.card,
+  },
+  statCardSkeleton: { height: 96, opacity: 0.4 },
+  statEmoji: { fontSize: 26 },
+  statValue: {
+    fontFamily: font.black,
+    fontSize: 28,
+    color: colors.text,
+    lineHeight: 32,
+  },
+  statLabel: {
+    fontFamily: font.semibold,
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
 });

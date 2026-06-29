@@ -1,35 +1,178 @@
-import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, ScrollView } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, View, ScrollView, RefreshControl, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import Animated, {
+  FadeInDown,
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSession } from '../lib/useSession';
+import { supabase } from '../lib/supabase';
 import { GradientFill } from '../components/GradientFill';
 import { RolloverReveal } from '../components/RolloverReveal';
 import { MenuDrawer } from '../components/MenuDrawer';
+import { JoinModal } from '../components/JoinModal';
 import {
-  colors,
-  font,
-  gradients,
-  radius,
-  shadow,
-  space,
-  text as themeText,
+  colors, font, gradients, radius, shadow, space, text as themeText,
 } from '../theme';
 
+// ─── Game catalogue ──────────────────────────────────────────────────────────
+// Add new games here. `route` = direct navigation; null = use setup flow (/setup/[id]).
+const GAMES = [
+  {
+    id: 'number-duel',
+    title: 'Number Duel',
+    tag: 'MIND GAME',
+    tagline: 'Pick a secret. Race to guess.',
+    gradient: ['#3B9DE7', '#4967E0'] as [string, string],
+    emoji: '🔢',
+    available: true,
+    route: null as string | null,
+  },
+  {
+    id: 'pixel-rush',
+    title: 'Pixel Rush',
+    tag: '1v1 ARCADE',
+    tagline: 'Fast. Frantic. Pixel-perfect.',
+    gradient: gradients.button as [string, string],
+    emoji: '🎮',
+    available: true,
+    route: '/games/pixel-rush' as string | null,
+  },
+  {
+    id: 'spy',
+    title: 'Find the Spy',
+    tag: 'STRATEGY',
+    tagline: 'Who among you is the spy?',
+    gradient: gradients.featured as [string, string],
+    emoji: '🕵️',
+    available: false,
+    route: null as string | null,
+  },
+];
+
+// ─── Live dot animation ──────────────────────────────────────────────────────
+function LiveDot() {
+  const scale = useSharedValue(1);
+  useEffect(() => {
+    scale.value = withRepeat(
+      withSequence(
+        withTiming(1.5, { duration: 600 }),
+        withTiming(1, { duration: 600 })
+      ),
+      -1,
+      true
+    );
+  }, []);
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  return (
+    <View style={liveDotStyles.wrap}>
+      <Animated.View style={[liveDotStyles.dot, style]} />
+    </View>
+  );
+}
+const liveDotStyles = StyleSheet.create({
+  wrap: { width: 10, height: 10, alignItems: 'center', justifyContent: 'center' },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
+});
+
+// ─── Home ────────────────────────────────────────────────────────────────────
 export default function Home() {
   const router = useRouter();
   const { session, loading } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [joinVisible, setJoinVisible] = useState(false);
+  const [liveCount, setLiveCount] = useState(0);
+  const [liveRooms, setLiveRooms] = useState<Record<string, boolean>>({});
+  const [refreshing, setRefreshing] = useState(false);
+  const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
+  // ── Auth guard
   useEffect(() => {
     if (!loading && !session) router.replace('/login');
   }, [session, loading]);
 
-  const handleMenuPress = () => setMenuOpen(true);
+  // ── Supabase Presence — global live player count
+  useEffect(() => {
+    if (!session) return;
 
-  const handleAvatarPress = () => router.push('/profile');
+    // Remove any lingering channel to avoid the "cannot add presence callbacks after subscribe()" error
+    const existing = supabase.getChannels().find(c => c.topic === 'realtime:global_presence');
+    if (existing) supabase.removeChannel(existing);
 
-  const handleGamePress = (id: string) => router.push(`/game/${id}`);
+    const channel = supabase.channel('global_presence', {
+      config: { presence: { key: session.user.id } },
+    });
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        setLiveCount(Object.keys(state).length);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({ user_id: session.user.id, online_at: Date.now() });
+        }
+      });
+
+    presenceChannelRef.current = channel;
+    return () => { supabase.removeChannel(channel); };
+  }, [session]);
+
+  // ── Fetch active rooms for LIVE badges
+  const fetchLiveRooms = useCallback(async () => {
+    const { data } = await supabase
+      .from('rooms')
+      .select('game_kind')
+      .eq('status', 'active');
+    if (data) {
+      const map: Record<string, boolean> = {};
+      data.forEach((r: any) => { map[r.game_kind] = true; });
+      setLiveRooms(map);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLiveRooms();
+    const interval = setInterval(fetchLiveRooms, 10_000);
+    return () => clearInterval(interval);
+  }, [fetchLiveRooms]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchLiveRooms();
+    setRefreshing(false);
+  }, [fetchLiveRooms]);
+
+  // ── Handlers
+  const handleMenuPress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setMenuOpen(true);
+  };
+
+  const handleGamePress = async (game: typeof GAMES[number]) => {
+    if (!game.available) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    await new Promise(resolve => setTimeout(resolve, 150));
+
+    if (game.route) {
+      // Direct route (e.g. Pixel Rush goes straight to its screen)
+      router.push(game.route as Parameters<typeof router.push>[0]);
+    } else {
+      // Setup flow (e.g. Number Duel — configure rules before creating room)
+      router.push(`/setup/${game.id}` as any);
+    }
+  };
+
+  const handleWatchLive = (gameId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push({ pathname: '/game/[id]', params: { id: `${gameId}-viewer` } });
+  };
 
   const avatarLetter =
     (session?.user?.user_metadata?.username as string)?.[0]?.toUpperCase() ??
@@ -40,31 +183,38 @@ export default function Home() {
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
-
       <MenuDrawer visible={menuOpen} onClose={() => setMenuOpen(false)} />
+      <JoinModal visible={joinVisible} onClose={() => setJoinVisible(false)} />
 
       <SafeAreaView style={styles.safe}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-
-          {/* ── Top Bar ─────────────────────────────── */}
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.blue}
+            />
+          }
+        >
+          {/* ── Top Bar ──────────────────────────────── */}
           <View style={styles.topBar}>
-            {/* Avatar chip with blue glow */}
             <Pressable
               style={({ pressed }) => [styles.avatarWrap, pressed && styles.pressed]}
-              onPress={handleAvatarPress}
+              onPress={() => router.push('/profile')}
             >
               <View style={styles.avatarInner}>
                 <Text style={styles.avatarLetter}>{avatarLetter}</Text>
               </View>
+              <View style={styles.onlineDot} />
             </Pressable>
 
-            {/* Wordmark */}
             <View style={styles.wordmarkRow}>
               <Text style={[styles.wordmark, { color: colors.blue }]}>X</Text>
               <Text style={styles.wordmark}>antle</Text>
             </View>
 
-            {/* Hamburger menu */}
             <Pressable
               style={({ pressed }) => [styles.menuBtn, pressed && styles.pressed]}
               onPress={handleMenuPress}
@@ -75,13 +225,20 @@ export default function Home() {
             </Pressable>
           </View>
 
-          {/* ── Hero Card ───────────────────────────── */}
+          {/* ── Live Players Banner ───────────────────── */}
+          <Animated.View entering={FadeInDown.springify().damping(14)} style={styles.liveBanner}>
+            <LiveDot />
+            <Text style={styles.liveBannerText}>
+              <Text style={styles.liveBannerCount}>{liveCount} </Text>
+              player{liveCount !== 1 ? 's' : ''} online right now
+            </Text>
+          </Animated.View>
+
+          {/* ── Hero Card ────────────────────────────── */}
           <RolloverReveal delay={100} duration={800} style={styles.heroSection}>
             <View style={styles.heroCard}>
               <GradientFill colors={gradients.featured} />
-              {/* Background watermark */}
               <Text style={styles.heroWatermark}>X</Text>
-              
               <View style={styles.heroContent}>
                 <Text style={styles.heroTitle}>Game Night{'\n'}Starts Here.</Text>
                 <Text style={styles.heroSub}>
@@ -91,45 +248,70 @@ export default function Home() {
             </View>
           </RolloverReveal>
 
-          {/* ── Game Grid (D2 Launcher) ─────────────── */}
-          <RolloverReveal delay={280} duration={800} style={styles.gamesSection}>
-            
-            <View style={styles.sectionHeader}>
-              <Text style={themeText.h2}>Pick a Game</Text>
-              <Pressable onPress={() => {}}>
-                <Text style={styles.seeAll}>SEE ALL →</Text>
-              </Pressable>
-            </View>
+          {/* ── Games Section ─────────────────────────── */}
+          <View style={styles.sectionHeader}>
+            <Text style={themeText.h2}>Games</Text>
+            <Pressable
+              style={styles.joinActionBtn}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setJoinVisible(true); }}
+            >
+              <Text style={styles.joinActionText}>JOIN ROOM →</Text>
+            </Pressable>
+          </View>
 
-            <View style={styles.gridRow}>
-              {GAMES.map((g) => (
-                <Pressable
+          <View style={styles.gamesList}>
+            {GAMES.map((g, i) => {
+              const isLive = liveRooms[g.id];
+              return (
+                <Animated.View
                   key={g.id}
-                  style={({ pressed }) => [styles.gameCard, pressed && styles.pressedCard]}
-                  onPress={() => handleGamePress(g.id)}
+                  entering={FadeInDown.springify().damping(14).stiffness(90).delay(i * 80)}
                 >
-                  <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
-                  
-                  {/* Image/Gradient band at top */}
-                  <View style={styles.gameImageBand}>
-                    <GradientFill colors={g.gradient} />
-                  </View>
+                  <Pressable
+                    style={({ pressed }) => [styles.gameCard, pressed && styles.pressedCard]}
+                    onPress={() => handleGamePress(g)}
+                    disabled={!g.available}
+                  >
+                    {/* Gradient banner */}
+                    <View style={styles.gameBanner}>
+                      <GradientFill colors={g.gradient} />
+                      <Text style={styles.gameEmoji}>{g.emoji}</Text>
 
-                  {/* Info area */}
-                  <View style={styles.gameInfo}>
-                    <Text style={styles.gameTag}>{g.tag}</Text>
-                    <Text style={styles.gameTitle}>{g.title}</Text>
-                  </View>
+                      {/* LIVE badge */}
+                      {isLive && (
+                        <Pressable
+                          style={styles.liveBadge}
+                          onPress={() => handleWatchLive(g.id)}
+                        >
+                          <LiveDot />
+                          <Text style={styles.liveBadgeText}>LIVE</Text>
+                        </Pressable>
+                      )}
 
-                  {/* Arrow chip */}
-                  <View style={styles.gameArrowChip}>
-                    <Text style={styles.gameArrow}>→</Text>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
+                      {/* Coming soon overlay */}
+                      {!g.available && (
+                        <View style={styles.soonOverlay}>
+                          <Text style={styles.soonText}>COMING SOON</Text>
+                        </View>
+                      )}
+                    </View>
 
-          </RolloverReveal>
+                    {/* Info row */}
+                    <View style={styles.gameInfo}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.gameTag}>{g.tag}</Text>
+                        <Text style={styles.gameTitle}>{g.title}</Text>
+                        <Text style={styles.gameTagline}>{g.tagline}</Text>
+                      </View>
+                      <View style={[styles.gameArrowChip, g.available && { backgroundColor: colors.blue }]}>
+                        <Text style={styles.gameArrow}>→</Text>
+                      </View>
+                    </View>
+                  </Pressable>
+                </Animated.View>
+              );
+            })}
+          </View>
 
         </ScrollView>
       </SafeAreaView>
@@ -137,129 +319,116 @@ export default function Home() {
   );
 }
 
-const GAMES = [
-  { id: 'trivia', title: 'Trivia Royale', tag: 'PARTY', gradient: gradients.featured },
-  { id: 'spy', title: 'Find the Spy', tag: 'SOCIAL', gradient: gradients.button },
-];
-
+// ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1 },
-  scrollContent: { paddingHorizontal: space.lg, paddingBottom: space.xl },
+  scrollContent: { paddingHorizontal: space.lg, paddingBottom: space.xl, gap: space.md },
 
-  // ── Top bar
+  // Top bar
   topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingTop: space.sm,
-    paddingBottom: space.md,
   },
   avatarWrap: {
-    width: 44, height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.blue,
-    ...shadow.blueGlow,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 46, height: 46, borderRadius: 23,
+    backgroundColor: colors.blue, ...shadow.blueGlow,
+    alignItems: 'center', justifyContent: 'center',
   },
   avatarInner: {
-    width: 40, height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
   },
   avatarLetter: { fontFamily: font.extrabold, fontSize: 17, color: colors.blue },
-  
+  onlineDot: {
+    position: 'absolute', bottom: 1, right: 1,
+    width: 12, height: 12, borderRadius: 6,
+    backgroundColor: colors.success,
+    borderWidth: 2, borderColor: colors.bg,
+  },
   wordmarkRow: { flexDirection: 'row', alignItems: 'center' },
   wordmark: { fontFamily: font.display, fontSize: 24, color: colors.text, letterSpacing: -0.5 },
-  
   menuBtn: {
-    width: 44, height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    borderWidth: 1, borderColor: colors.hairline,
-    ...shadow.card,
+    width: 44, height: 44, borderRadius: radius.md,
+    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
+    gap: 5, borderWidth: 1, borderColor: colors.hairline, ...shadow.card,
   },
   menuBar: { width: 22, height: 2.5, borderRadius: 2, backgroundColor: colors.text },
 
-  // ── Hero card
-  heroSection: { marginBottom: space.xl },
-  heroCard: {
-    borderRadius: radius.xl,
-    overflow: 'hidden',
-    minHeight: 200,
+  // Live banner
+  liveBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    backgroundColor: colors.surface,
+    paddingHorizontal: space.md, paddingVertical: 10,
+    borderRadius: radius.pill,
     borderWidth: 1, borderColor: colors.hairline,
-    ...shadow.card,
+    alignSelf: 'flex-start',
+  },
+  liveBannerText: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted },
+  liveBannerCount: { fontFamily: font.extrabold, color: colors.text },
+
+  // Hero
+  heroSection: { marginTop: space.sm },
+  heroCard: {
+    borderRadius: radius.xl, overflow: 'hidden', minHeight: 190,
+    borderWidth: 1, borderColor: colors.hairline, ...shadow.card,
   },
   heroWatermark: {
-    position: 'absolute',
-    right: -20, top: -40,
-    fontFamily: font.display,
-    fontSize: 220,
-    color: colors.white,
-    opacity: 0.07,
+    position: 'absolute', right: -20, top: -40,
+    fontFamily: font.display, fontSize: 220, color: colors.white, opacity: 0.07,
   },
   heroContent: {
-    flex: 1,
-    padding: space.lg,
-    paddingVertical: space.xl,
-    justifyContent: 'flex-end',
+    flex: 1, padding: space.lg, paddingVertical: space.xl, justifyContent: 'flex-end',
   },
-  heroTitle: {
-    fontFamily: font.black,
-    fontSize: 32,
-    color: colors.white,
-    lineHeight: 38,
-    marginBottom: space.sm,
-  },
-  heroSub: {
-    fontFamily: font.semibold,
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.85)',
-    lineHeight: 20,
-  },
+  heroTitle: { fontFamily: font.black, fontSize: 30, color: colors.white, lineHeight: 36, marginBottom: space.sm },
+  heroSub: { fontFamily: font.semibold, fontSize: 14, color: 'rgba(255,255,255,0.8)', lineHeight: 20 },
 
-  // ── Games Section
-  gamesSection: { flex: 1 },
+  // Section header
   sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    marginBottom: space.md,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
-  seeAll: { fontFamily: font.bold, fontSize: 12, color: colors.blue, letterSpacing: 0.5 },
-  
-  gridRow: { flexDirection: 'row', gap: space.md },
+  joinActionBtn: {
+    backgroundColor: 'rgba(46,126,240,0.15)', paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: radius.sm,
+  },
+  joinActionText: { fontFamily: font.bold, fontSize: 12, color: colors.blue, letterSpacing: 0.5 },
+
+  // Games list
+  gamesList: { gap: space.md },
   gameCard: {
-    flex: 1,
-    borderRadius: radius.xl,
-    overflow: 'hidden',
-    height: 160,
+    borderRadius: radius.xl, overflow: 'hidden',
+    backgroundColor: colors.surface,
     borderWidth: 1, borderColor: colors.hairline,
     ...shadow.card,
   },
-  gameImageBand: { height: '55%', width: '100%' },
-  gameInfo: { padding: space.sm, gap: 2 },
-  gameTag: { fontFamily: font.extrabold, fontSize: 10, color: colors.textFaint, letterSpacing: 0.5 },
-  gameTitle: { fontFamily: font.bold, fontSize: 14, color: colors.text },
-  
-  gameArrowChip: {
-    position: 'absolute',
-    bottom: space.sm,
-    right: space.sm,
-    width: 24, height: 24,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surfaceAlt,
-    alignItems: 'center',
-    justifyContent: 'center',
+  gameBanner: { height: 120, width: '100%', alignItems: 'center', justifyContent: 'center' },
+  gameEmoji: { fontSize: 52 },
+  soonOverlay: {
+    ...(StyleSheet.absoluteFill as ViewStyle),
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center', justifyContent: 'center',
   },
-  gameArrow: { fontFamily: font.bold, fontSize: 12, color: colors.blue },
+  soonText: { fontFamily: font.extrabold, fontSize: 13, color: colors.textMuted, letterSpacing: 2 },
+  liveBadge: {
+    position: 'absolute', top: space.sm, right: space.sm,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(239,68,68,0.85)',
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill,
+  },
+  liveBadgeText: { fontFamily: font.extrabold, fontSize: 11, color: colors.white, letterSpacing: 1 },
+  gameInfo: {
+    flexDirection: 'row', alignItems: 'center',
+    padding: space.md, gap: space.md,
+  },
+  gameTag: { fontFamily: font.extrabold, fontSize: 10, color: colors.textFaint, letterSpacing: 1, marginBottom: 2 },
+  gameTitle: { fontFamily: font.black, fontSize: 18, color: colors.text },
+  gameTagline: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  gameArrowChip: {
+    width: 36, height: 36, borderRadius: radius.sm,
+    backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center',
+  },
+  gameArrow: { fontFamily: font.bold, fontSize: 16, color: colors.white },
 
-  pressed: { opacity: 0.75, transform: [{ scale: 0.95 }] },
-  pressedCard: { transform: [{ scale: 0.97 }], opacity: 0.95 },
+  pressed: { opacity: 0.75, transform: [{ scale: 0.96 }] },
+  pressedCard: { transform: [{ scale: 0.98 }], opacity: 0.95 },
 });
