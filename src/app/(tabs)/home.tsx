@@ -1,557 +1,378 @@
+/**
+ * Home — Wins Feed
+ *
+ * The primary social experience. Contains:
+ *   1. Sticky header  — avatar (→ profile), wordmark, notification bell (→ alerts tab)
+ *   2. Live strip     — horizontally scrollable live games (data from existing poll)
+ *   3. Wins feed      — infinitely scrolling FlatList of WinCards
+ *
+ * Architecture:
+ *   • useWinsFeed   — pagination, optimistic likes, error/loading state
+ *   • useSession    — auth guard
+ *   • LiveStrip     — decoupled, receives pre-fetched rooms (existing 10-s poll)
+ *   • WinCard       — memoised, receives stable callbacks
+ *   • CommentSheet  — lazy-rendered modal; only mounted when a post is active
+ *
+ * Performance:
+ *   • FlatList with windowSize/maxToRenderPerBatch tuned for card feed
+ *   • renderItem + keyExtractor memoised with useCallback
+ *   • Header rendered as a sticky stickyHeaderIndices element so it stays
+ *     visible without a separate fixed-position View above the list
+ *   • No anonymous arrow functions inside renderItem
+ */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Modal,
+  ActivityIndicator,
+  FlatList,
   Pressable,
-  ScrollView,
+  RefreshControl,
   StyleSheet,
   Text,
   View,
-  RefreshControl,
-  ActivityIndicator,
-  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import Animated, {
-  FadeInDown,
-  FadeIn,
-  SlideInDown,
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withSequence,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { FontAwesome } from '@expo/vector-icons';
 import { useSession } from '../../lib/useSession';
 import { supabase } from '../../lib/supabase';
+import { useWinsFeed } from '../../lib/useWinsFeed';
+import type { WinPost } from '../../lib/useWinsFeed';
 import { GradientFill } from '../../components/GradientFill';
-import { RolloverReveal } from '../../components/RolloverReveal';
+import { Avatar } from '../../components/ui/Avatar';
+import { LiveStrip } from '../../components/Feed/LiveStrip';
+import type { LiveGame, ActiveRoom } from '../../components/Feed/LiveStrip';
+import { WinCard } from '../../components/Feed/WinCard';
+import { CommentSheet } from '../../components/CommentSheet';
 import { MenuDrawer } from '../../components/MenuDrawer';
-import { JoinModal } from '../../components/JoinModal';
-import {
-  colors, font, gradients, radius, shadow, space, text as themeText,
-} from '../../theme';
+import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface ActiveRoom {
-  code: string;
-  round: number;
-  playerNames: string[];
-}
+// ─── Feed skeleton card ───────────────────────────────────────────────────────
 
-// ─── Game catalogue ───────────────────────────────────────────────────────────
-const GAMES = [
-  {
-    id: 'number-duel',
-    title: 'Number Duel',
-    tag: 'MIND GAME',
-    tagline: 'Pick a secret. Race to guess.',
-    gradient: ['#3B9DE7', '#4967E0'] as [string, string],
-    emoji: '🔢',
-    available: true,
-    route: null as string | null,
-    hasViewer: true,
-  },
-  {
-    id: 'pixel-rush',
-    title: 'Pixel Rush',
-    tag: '1v1 ARCADE',
-    tagline: 'Fast. Frantic. Pixel-perfect.',
-    gradient: gradients.button as [string, string],
-    emoji: '🎮',
-    available: true,
-    route: '/games/pixel-rush' as string | null,
-    hasViewer: false,
-  },
-  {
-    id: 'spy',
-    title: 'Find the Spy',
-    tag: 'STRATEGY',
-    tagline: 'Who among you is the spy?',
-    gradient: gradients.featured as [string, string],
-    emoji: '🕵️',
-    available: false,
-    route: null as string | null,
-    hasViewer: false,
-  },
-];
-
-// ─── Live dot animation ───────────────────────────────────────────────────────
-function LiveDot({ color = colors.success }: { color?: string }) {
-  const scale = useSharedValue(1);
-  useEffect(() => {
-    scale.value = withRepeat(
-      withSequence(
-        withTiming(1.5, { duration: 600 }),
-        withTiming(1, { duration: 600 })
-      ),
-      -1,
-      true
-    );
-  }, []);
-  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+function SkeletonCard() {
   return (
-    <View style={liveDotStyles.wrap}>
-      <Animated.View style={[liveDotStyles.dot, { backgroundColor: color }, style]} />
+    <View style={skeletonStyles.card}>
+      <View style={skeletonStyles.authorRow}>
+        <View style={skeletonStyles.avatar} />
+        <View style={skeletonStyles.meta}>
+          <View style={[skeletonStyles.line, { width: '50%' }]} />
+          <View style={[skeletonStyles.line, { width: '30%', marginTop: 6 }]} />
+        </View>
+      </View>
+      <View style={[skeletonStyles.line, { width: '80%', marginBottom: 8 }]} />
+      <View style={[skeletonStyles.line, { width: '60%' }]} />
     </View>
   );
 }
-const liveDotStyles = StyleSheet.create({
-  wrap: { width: 10, height: 10, alignItems: 'center', justifyContent: 'center' },
-  dot: { width: 8, height: 8, borderRadius: 4 },
+
+const skeletonStyles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    padding: space.md,
+    gap: space.sm,
+  },
+  authorRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center', marginBottom: space.xs },
+  avatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.surfaceAlt },
+  meta: { flex: 1 },
+  line: { height: 12, borderRadius: 6, backgroundColor: colors.surfaceAlt },
 });
 
-// ─── Active Rooms Sheet ───────────────────────────────────────────────────────
-// Shows a bottom-sheet modal listing all active rooms for a given game.
-// Tapping a room navigates to the live viewer for that room.
-function ActiveRoomsSheet({
-  visible,
-  gameId,
-  gameTitle,
-  rooms,
-  loading,
-  onClose,
-  onSelectRoom,
-}: {
-  visible: boolean;
-  gameId: string;
-  gameTitle: string;
-  rooms: ActiveRoom[];
-  loading: boolean;
-  onClose: () => void;
-  onSelectRoom: (code: string) => void;
-}) {
-  const insets = useSafeAreaInsets();
+// ─── Empty / error states ─────────────────────────────────────────────────────
 
+function EmptyFeed() {
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      {/* Scrim */}
-      <Pressable style={sheetStyles.scrim} onPress={onClose} />
-
-      {/* Sheet */}
-      <Animated.View
-        entering={SlideInDown.springify().damping(18).stiffness(120)}
-        style={[sheetStyles.sheet, { paddingBottom: insets.bottom + space.lg }]}
-      >
-        <GradientFill colors={['#1E2435', colors.bg]} />
-
-        {/* Handle */}
-        <View style={sheetStyles.handle} />
-
-        {/* Header */}
-        <View style={sheetStyles.sheetHeader}>
-          <View style={sheetStyles.liveRow}>
-            <LiveDot color={colors.danger} />
-            <Text style={sheetStyles.liveLabel}>LIVE</Text>
-          </View>
-          <Text style={sheetStyles.sheetTitle}>{gameTitle}</Text>
-          <Text style={sheetStyles.sheetSub}>Active rooms you can watch</Text>
-        </View>
-
-        {/* Room list */}
-        {loading ? (
-          <ActivityIndicator color={colors.blue} style={{ marginTop: space.xl }} />
-        ) : rooms.length === 0 ? (
-          <View style={sheetStyles.emptyState}>
-            <Text style={sheetStyles.emptyEmoji}>🎮</Text>
-            <Text style={sheetStyles.emptyTitle}>No live games right now</Text>
-            <Text style={sheetStyles.emptySub}>Check back when someone starts a room</Text>
-          </View>
-        ) : (
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={sheetStyles.roomList}
-            showsVerticalScrollIndicator={false}
-          >
-            {rooms.map((room, i) => (
-              <Animated.View
-                key={room.code}
-                entering={FadeInDown.springify().damping(14).delay(i * 60)}
-              >
-                <Pressable
-                  style={({ pressed }) => [sheetStyles.roomCard, pressed && sheetStyles.roomCardPressed]}
-                  onPress={() => onSelectRoom(room.code)}
-                >
-                  <View style={sheetStyles.roomCardLeft}>
-                    <View style={sheetStyles.roomLivePill}>
-                      <LiveDot color={colors.danger} />
-                      <Text style={sheetStyles.roomLiveText}>LIVE</Text>
-                    </View>
-                    <Text style={sheetStyles.roomPlayers} numberOfLines={1}>
-                      {room.playerNames.join(' vs ')}
-                    </Text>
-                    <Text style={sheetStyles.roomRound}>Round {room.round}</Text>
-                  </View>
-                  <View style={sheetStyles.watchChip}>
-                    <Text style={sheetStyles.watchChipText}>Watch →</Text>
-                  </View>
-                </Pressable>
-              </Animated.View>
-            ))}
-          </ScrollView>
-        )}
-      </Animated.View>
-    </Modal>
+    <View style={stateStyles.wrap} accessibilityLabel="No posts yet">
+      <Text style={stateStyles.emoji}>🏆</Text>
+      <Text style={stateStyles.title}>No wins yet</Text>
+      <Text style={stateStyles.sub}>
+        Play a game, share your result, and it'll appear here.
+      </Text>
+    </View>
   );
 }
 
-const sheetStyles = StyleSheet.create({
-  scrim: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  sheet: {
-    position: 'absolute',
-    bottom: 0, left: 0, right: 0,
-    backgroundColor: colors.bg,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    borderTopWidth: 1,
-    borderColor: colors.hairline,
-    minHeight: 320,
-    maxHeight: '75%',
-    overflow: 'hidden',
+function ErrorFeed({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <View style={stateStyles.wrap} accessibilityLabel="Error loading feed">
+      <Text style={stateStyles.emoji}>⚠️</Text>
+      <Text style={stateStyles.title}>Couldn't load the feed</Text>
+      <Text style={stateStyles.sub}>{message}</Text>
+      <Pressable
+        style={stateStyles.retryBtn}
+        onPress={onRetry}
+        accessibilityLabel="Retry loading the feed"
+        accessibilityRole="button"
+      >
+        <Text style={stateStyles.retryText}>Try Again</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const stateStyles = StyleSheet.create({
+  wrap: {
+    alignItems: 'center',
+    paddingVertical: space.xl * 2,
     paddingHorizontal: space.lg,
-  },
-  handle: {
-    width: 40, height: 4, borderRadius: 2,
-    backgroundColor: colors.hairline,
-    alignSelf: 'center',
-    marginTop: space.md,
-    marginBottom: space.sm,
-  },
-  sheetHeader: { paddingVertical: space.md, gap: 4 },
-  liveRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  liveLabel: { fontFamily: font.extrabold, fontSize: 11, color: colors.danger, letterSpacing: 1 },
-  sheetTitle: { fontFamily: font.black, fontSize: 22, color: colors.text },
-  sheetSub: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted },
-  roomList: { gap: space.md, paddingBottom: space.md },
-  roomCard: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: space.md,
-    borderWidth: 1, borderColor: colors.hairline,
     gap: space.md,
-    ...shadow.card,
   },
-  roomCardPressed: { opacity: 0.85, transform: [{ scale: 0.98 }] },
-  roomCardLeft: { flex: 1, gap: 4 },
-  roomLivePill: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start' },
-  roomLiveText: { fontFamily: font.extrabold, fontSize: 10, color: colors.danger, letterSpacing: 1 },
-  roomPlayers: { fontFamily: font.black, fontSize: 16, color: colors.text },
-  roomRound: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted },
-  watchChip: {
-    backgroundColor: 'rgba(46,126,240,0.12)',
-    paddingHorizontal: 14, paddingVertical: 8,
+  emoji: { fontSize: 52 },
+  title: { fontFamily: font.black, fontSize: 20, color: colors.text, textAlign: 'center' },
+  sub: {
+    fontFamily: font.semibold,
+    fontSize: 14,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  retryBtn: {
+    marginTop: space.sm,
+    backgroundColor: colors.blue,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
     borderRadius: radius.pill,
-    borderWidth: 1, borderColor: 'rgba(46,126,240,0.25)',
   },
-  watchChipText: { fontFamily: font.bold, fontSize: 13, color: colors.blue },
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: space.xl, gap: space.sm },
-  emptyEmoji: { fontSize: 44 },
-  emptyTitle: { fontFamily: font.black, fontSize: 16, color: colors.text },
-  emptySub: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, textAlign: 'center' },
+  retryText: { fontFamily: font.bold, fontSize: 14, color: colors.white },
 });
 
+// ─── Pagination footer ────────────────────────────────────────────────────────
+
+function FeedFooter({ loading, hasNextPage }: { loading: boolean; hasNextPage: boolean }) {
+  if (!loading || !hasNextPage) return null;
+  return (
+    <View style={footerStyles.wrap} accessibilityLabel="Loading more posts">
+      <ActivityIndicator color={colors.blue} />
+    </View>
+  );
+}
+
+const footerStyles = StyleSheet.create({
+  wrap: { paddingVertical: space.xl, alignItems: 'center' },
+});
+
+// ─── GAMES catalogue (for the live strip data) ────────────────────────────────
+
+const GAMES_META: Record<string, { emoji: string; gradient: [string, string] }> = {
+  'number-duel': { emoji: '🔢', gradient: ['#3B9DE7', '#4967E0'] },
+  'pixel-rush': { emoji: '🎮', gradient: gradients.button },
+};
+
 // ─── Home ─────────────────────────────────────────────────────────────────────
+
 export default function Home() {
   const router = useRouter();
-  const { session, loading } = useSession();
+  const insets = useSafeAreaInsets();
+  const { session, loading: authLoading } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [joinVisible, setJoinVisible] = useState(false);
-  const [liveCount, setLiveCount] = useState(0);
-  // Map from game_id → list of active rooms with player data
+
+  // ── Auth guard ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!authLoading && !session) router.replace('/login');
+  }, [session, authLoading]);
+
+  // ── Live rooms (10-second poll, same pattern as old home.tsx) ────────────────
   const [liveRooms, setLiveRooms] = useState<Record<string, ActiveRoom[]>>({});
-  const [refreshing, setRefreshing] = useState(false);
-  const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const [liveLoading, setLiveLoading] = useState(true);
 
-  // Live rooms sheet state
-  const [sheetGame, setSheetGame] = useState<{ id: string; title: string } | null>(null);
-  const [sheetLoading, setSheetLoading] = useState(false);
-
-  // ── Auth guard
-  useEffect(() => {
-    if (!loading && !session) router.replace('/login');
-  }, [session, loading]);
-
-  // ── Supabase Presence — global live player count
-  useEffect(() => {
-    if (!session) return;
-
-    const existing = supabase.getChannels().find(c => c.topic === 'realtime:global_presence');
-    if (existing) supabase.removeChannel(existing);
-
-    const channel = supabase.channel('global_presence', {
-      config: { presence: { key: session.user.id } },
-    });
-
-    channel
-      .on('presence', { event: 'sync' }, () => {
-        const state = channel.presenceState();
-        setLiveCount(Object.keys(state).length);
-      })
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.track({ user_id: session.user.id, online_at: Date.now() });
-        }
-      });
-
-    presenceChannelRef.current = channel;
-    return () => { supabase.removeChannel(channel); };
-  }, [session]);
-
-  // ── Fetch active rooms for LIVE badges
-  // Queries rooms with status='active' + joins room_players for player names + round from state.
-  // Only Number Duel rooms go through this path (game_kind check handled in the badge render).
   const fetchLiveRooms = useCallback(async () => {
     const { data } = await supabase
       .from('rooms')
-      .select(`
-        code,
-        game_kind,
-        state,
-        room_players (
-          display_name,
-          profiles ( username )
-        )
-      `)
+      .select(`code, game_kind, state, room_players ( display_name, profiles ( username ) )`)
       .eq('status', 'active');
-
-    if (!data) return;
-
+    if (!data) { setLiveLoading(false); return; }
     const map: Record<string, ActiveRoom[]> = {};
     data.forEach((r: any) => {
       const names: string[] = (r.room_players ?? []).map((p: any) =>
-        p.display_name || p.profiles?.username || 'Player'
+        p.display_name || p.profiles?.username || 'Player',
       );
-      const room: ActiveRoom = {
-        code: r.code,
-        round: r.state?.round ?? 1,
-        playerNames: names,
-      };
+      const room: ActiveRoom = { code: r.code, round: r.state?.round ?? 1, playerNames: names };
       if (!map[r.game_kind]) map[r.game_kind] = [];
       map[r.game_kind].push(room);
     });
-
     setLiveRooms(map);
+    setLiveLoading(false);
   }, []);
 
   useEffect(() => {
+    if (!session) return;
     fetchLiveRooms();
     const interval = setInterval(fetchLiveRooms, 10_000);
     return () => clearInterval(interval);
-  }, [fetchLiveRooms]);
+  }, [session, fetchLiveRooms]);
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await fetchLiveRooms();
-    setRefreshing(false);
-  }, [fetchLiveRooms]);
+  // Build typed LiveGame array for the strip.
+  const liveGames: LiveGame[] = Object.entries(liveRooms)
+    .filter(([, rooms]) => rooms.length > 0)
+    .map(([gameId, rooms]) => ({
+      id: gameId,
+      title: gameId
+        .split('-')
+        .map((w) => w[0].toUpperCase() + w.slice(1))
+        .join(' '),
+      emoji: GAMES_META[gameId]?.emoji ?? '🎮',
+      gradient: GAMES_META[gameId]?.gradient ?? gradients.button,
+      rooms,
+    }));
 
-  // ── Handlers
-  const handleMenuPress = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setMenuOpen(true);
-  };
+  // ── Wins feed ────────────────────────────────────────────────────────────────
+  const { posts, loading: feedLoading, refreshing, hasNextPage, error, refresh, fetchNextPage, mutateLike } =
+    useWinsFeed(session?.user.id);
 
-  const handleGamePress = async (game: typeof GAMES[number]) => {
-    if (!game.available) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    await new Promise(resolve => setTimeout(resolve, 150));
+  // ── Comment sheet ────────────────────────────────────────────────────────────
+  const [activePostId, setActivePostId] = useState<string | null>(null);
 
-    if (game.route) {
-      router.push(game.route as Parameters<typeof router.push>[0]);
-    } else {
-      router.push(`/setup/${game.id}` as any);
-    }
-  };
+  const handleOpenComment = useCallback((postId: string) => {
+    Haptics.selectionAsync();
+    setActivePostId(postId);
+  }, []);
 
-  // Opens the bottom sheet showing all active rooms for this game
-  const handleLiveBadgePress = (game: typeof GAMES[number]) => {
-    if (!game.hasViewer) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSheetLoading(true);
-    setSheetGame({ id: game.id, title: game.title });
-    // Trigger a fresh fetch then clear loading
-    fetchLiveRooms().finally(() => setSheetLoading(false));
-  };
+  const handleCloseComment = useCallback(() => {
+    setActivePostId(null);
+  }, []);
 
-  // Navigate into the viewer for the selected room
-  const handleWatchRoom = (roomCode: string) => {
-    setSheetGame(null);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // number-duel-viewer lives at /game/[id] with id=number-duel-viewer
-    router.push({
-      pathname: '/game/[id]',
-      params: { id: 'number-duel-viewer', roomCode },
-    });
-  };
+  // ── Live tile press — navigate to viewer ─────────────────────────────────────
+  const handleLiveTilePress = useCallback(
+    (game: LiveGame) => {
+      if (game.id === 'number-duel' && game.rooms.length > 0) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        router.push({
+          pathname: '/game/[id]',
+          params: { id: 'number-duel-viewer', roomCode: game.rooms[0].code },
+        });
+      }
+    },
+    [router],
+  );
 
+  // ── FlatList callbacks (memoised to avoid re-renders) ────────────────────────
+  const keyExtractor = useCallback((item: WinPost) => item.id, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: WinPost }) => (
+      <WinCard post={item} onLike={mutateLike} onComment={handleOpenComment} />
+    ),
+    [mutateLike, handleOpenComment],
+  );
+
+  // ── Avatar letter ─────────────────────────────────────────────────────────────
   const avatarLetter =
     (session?.user?.user_metadata?.username as string)?.[0]?.toUpperCase() ??
-    session?.user?.email?.[0]?.toUpperCase() ?? '?';
+    session?.user?.email?.[0]?.toUpperCase() ??
+    '?';
 
-  if (loading || !session) return null;
+  // ── Render guards ─────────────────────────────────────────────────────────────
+  if (authLoading || !session) return null;
 
-  const sheetRooms = sheetGame ? (liveRooms[sheetGame.id] ?? []) : [];
+  // ─── Header (rendered via ListHeaderComponent to scroll with list) ──────────
+  const ListHeader = (
+    <View style={styles.listHeader}>
+      {/* Live strip */}
+      <LiveStrip games={liveGames} loading={liveLoading} onTilePress={handleLiveTilePress} />
+
+      {/* Feed section label */}
+      <Text style={styles.feedLabel}>WINS FEED</Text>
+
+      {/* Initial loading skeletons */}
+      {feedLoading && posts.length === 0 && (
+        <View style={styles.skeletonList}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Animated.View key={i} entering={FadeInDown.delay(i * 80).springify().damping(14)}>
+              <SkeletonCard />
+            </Animated.View>
+          ))}
+        </View>
+      )}
+
+      {/* Error state */}
+      {error && !feedLoading && (
+        <ErrorFeed message={error} onRetry={refresh} />
+      )}
+    </View>
+  );
 
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
       <MenuDrawer visible={menuOpen} onClose={() => setMenuOpen(false)} />
-      <JoinModal visible={joinVisible} onClose={() => setJoinVisible(false)} />
 
-      {/* Active Rooms Sheet */}
-      <ActiveRoomsSheet
-        visible={!!sheetGame}
-        gameId={sheetGame?.id ?? ''}
-        gameTitle={sheetGame?.title ?? ''}
-        rooms={sheetRooms}
-        loading={sheetLoading}
-        onClose={() => setSheetGame(null)}
-        onSelectRoom={handleWatchRoom}
-      />
+      {/* Comment sheet — only mounts when a post is active */}
+      {activePostId && (
+        <CommentSheet
+          postId={activePostId}
+          visible={!!activePostId}
+          currentUserId={session.user.id}
+          currentUsername={(session.user.user_metadata?.username as string) ?? null}
+          currentAvatarUrl={null}
+          onClose={handleCloseComment}
+        />
+      )}
 
-      <SafeAreaView style={styles.safe}>
-        <ScrollView
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        {/* ── Sticky header ───────────────────────────────────────────────── */}
+        <View style={[styles.header, { paddingTop: Math.max(insets.top > 0 ? 0 : space.sm) }]}>
+          {/* Left — user avatar */}
+          <Pressable
+            style={({ pressed }) => [styles.avatarBtn, pressed && styles.pressed]}
+            onPress={() => router.push('/profile')}
+            accessibilityLabel="Open profile"
+            accessibilityRole="button"
+          >
+            <Avatar letter={avatarLetter} size={38} showOnline />
+          </Pressable>
+
+          {/* Centre — wordmark */}
+          <View style={styles.wordmarkRow}>
+            <Text style={[styles.wordmark, { color: colors.blue }]}>X</Text>
+            <Text style={styles.wordmark}>antle</Text>
+          </View>
+
+          {/* Right — notifications */}
+          <Pressable
+            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
+            onPress={() => {
+              Haptics.selectionAsync();
+              router.push('/(tabs)/notifications');
+            }}
+            accessibilityLabel="Open notifications"
+            accessibilityRole="button"
+          >
+            <FontAwesome name="bell" size={18} color={colors.text} />
+          </Pressable>
+        </View>
+
+        {/* ── Feed list ───────────────────────────────────────────────────── */}
+        <FlatList
+          data={posts}
+          keyExtractor={keyExtractor}
+          renderItem={renderItem}
+          ListHeaderComponent={ListHeader}
+          ListEmptyComponent={!feedLoading && !error ? <EmptyFeed /> : null}
+          ListFooterComponent={
+            <FeedFooter loading={feedLoading && posts.length > 0} hasNextPage={hasNextPage} />
+          }
+          contentContainerStyle={styles.feedContent}
+          ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
+          onEndReached={fetchNextPage}
+          onEndReachedThreshold={0.4}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={onRefresh}
+              onRefresh={refresh}
               tintColor={colors.blue}
             />
           }
-        >
-          {/* ── Top Bar ──────────────────────────────── */}
-          <View style={styles.topBar}>
-            <Pressable
-              style={({ pressed }) => [styles.avatarWrap, pressed && styles.pressed]}
-              onPress={() => router.push('/profile')}
-            >
-              <View style={styles.avatarInner}>
-                <Text style={styles.avatarLetter}>{avatarLetter}</Text>
-              </View>
-              <View style={styles.onlineDot} />
-            </Pressable>
-
-            <View style={styles.wordmarkRow}>
-              <Text style={[styles.wordmark, { color: colors.blue }]}>X</Text>
-              <Text style={styles.wordmark}>antle</Text>
-            </View>
-
-            <Pressable
-              style={({ pressed }) => [styles.menuBtn, pressed && styles.pressed]}
-              onPress={handleMenuPress}
-            >
-              <View style={styles.menuBar} />
-              <View style={[styles.menuBar, { width: 18 }]} />
-              <View style={[styles.menuBar, { width: 14 }]} />
-            </Pressable>
-          </View>
-
-          {/* ── Live Players Banner ───────────────────── */}
-          <Animated.View entering={FadeInDown.springify().damping(14)} style={styles.liveBanner}>
-            <LiveDot />
-            <Text style={styles.liveBannerText}>
-              <Text style={styles.liveBannerCount}>{liveCount} </Text>
-              player{liveCount !== 1 ? 's' : ''} online right now
-            </Text>
-          </Animated.View>
-
-          {/* ── Hero Card ────────────────────────────── */}
-          <RolloverReveal delay={100} duration={800} style={styles.heroSection}>
-            <View style={styles.heroCard}>
-              <GradientFill colors={gradients.featured} />
-              <Text style={styles.heroWatermark}>X</Text>
-              <View style={styles.heroContent}>
-                <Text style={styles.heroTitle}>Game Night{'\n'}Starts Here.</Text>
-                <Text style={styles.heroSub}>
-                  Pick a game. Gather your crew.{'\n'}Let the chaos begin.
-                </Text>
-              </View>
-            </View>
-          </RolloverReveal>
-
-          {/* ── Games Section ─────────────────────────── */}
-          <View style={styles.sectionHeader}>
-            <Text style={themeText.h2}>Games</Text>
-            <Pressable
-              style={styles.joinActionBtn}
-              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setJoinVisible(true); }}
-            >
-              <Text style={styles.joinActionText}>JOIN ROOM →</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.gamesList}>
-            {GAMES.map((g, i) => {
-              const roomsForGame = liveRooms[g.id] ?? [];
-              const isLive = roomsForGame.length > 0;
-              return (
-                <Animated.View
-                  key={g.id}
-                  entering={FadeInDown.springify().damping(14).stiffness(90).delay(i * 80)}
-                >
-                  <Pressable
-                    style={({ pressed }) => [styles.gameCard, pressed && styles.pressedCard]}
-                    onPress={() => handleGamePress(g)}
-                    disabled={!g.available}
-                  >
-                    {/* Gradient banner */}
-                    <View style={styles.gameBanner}>
-                      <GradientFill colors={g.gradient} />
-                      <Text style={styles.gameEmoji}>{g.emoji}</Text>
-
-                      {/* LIVE badge — only shown when a game is actively being played */}
-                      {isLive && (
-                        <Pressable
-                          style={styles.liveBadge}
-                          onPress={() => handleLiveBadgePress(g)}
-                          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                        >
-                          <LiveDot color={colors.white} />
-                          <Text style={styles.liveBadgeText}>
-                            LIVE · {roomsForGame.length}
-                          </Text>
-                        </Pressable>
-                      )}
-
-                      {/* Coming soon overlay */}
-                      {!g.available && (
-                        <View style={styles.soonOverlay}>
-                          <Text style={styles.soonText}>COMING SOON</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    {/* Info row */}
-                    <View style={styles.gameInfo}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.gameTag}>{g.tag}</Text>
-                        <Text style={styles.gameTitle}>{g.title}</Text>
-                        <Text style={styles.gameTagline}>{g.tagline}</Text>
-                      </View>
-                      <View style={[styles.gameArrowChip, g.available && { backgroundColor: colors.blue }]}>
-                        <Text style={styles.gameArrow}>→</Text>
-                      </View>
-                    </View>
-                  </Pressable>
-                </Animated.View>
-              );
-            })}
-          </View>
-
-        </ScrollView>
+          // ── Performance knobs ─────────────────────────────────────────────
+          windowSize={7}
+          maxToRenderPerBatch={5}
+          initialNumToRender={6}
+          removeClippedSubviews
+          accessibilityLabel="Wins feed"
+        />
       </SafeAreaView>
     </View>
   );
@@ -561,107 +382,51 @@ export default function Home() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1 },
-  scrollContent: { paddingHorizontal: space.lg, paddingBottom: space.xl, gap: space.md },
 
-  topBar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingTop: space.sm,
+  // Sticky header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+    backgroundColor: colors.bg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.hairline,
+    zIndex: 10,
   },
-  avatarWrap: {
-    width: 46, height: 46, borderRadius: 23,
-    backgroundColor: colors.blue, ...shadow.blueGlow,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  avatarInner: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
-  },
-  avatarLetter: { fontFamily: font.extrabold, fontSize: 17, color: colors.blue },
-  onlineDot: {
-    position: 'absolute', bottom: 1, right: 1,
-    width: 12, height: 12, borderRadius: 6,
-    backgroundColor: colors.success,
-    borderWidth: 2, borderColor: colors.bg,
-  },
+  avatarBtn: { padding: 2 },
   wordmarkRow: { flexDirection: 'row', alignItems: 'center' },
   wordmark: { fontFamily: font.display, fontSize: 24, color: colors.text, letterSpacing: -0.5 },
-  menuBtn: {
-    width: 44, height: 44, borderRadius: radius.md,
-    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
-    gap: 5, borderWidth: 1, borderColor: colors.hairline, ...shadow.card,
-  },
-  menuBar: { width: 22, height: 2.5, borderRadius: 2, backgroundColor: colors.text },
-
-  liveBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
     backgroundColor: colors.surface,
-    paddingHorizontal: space.md, paddingVertical: 10,
-    borderRadius: radius.pill,
-    borderWidth: 1, borderColor: colors.hairline,
-    alignSelf: 'flex-start',
-  },
-  liveBannerText: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted },
-  liveBannerCount: { fontFamily: font.extrabold, color: colors.text },
-
-  heroSection: { marginTop: space.sm },
-  heroCard: {
-    borderRadius: radius.xl, overflow: 'hidden', minHeight: 190,
-    borderWidth: 1, borderColor: colors.hairline, ...shadow.card,
-  },
-  heroWatermark: {
-    position: 'absolute', right: -20, top: -40,
-    fontFamily: font.display, fontSize: 220, color: colors.white, opacity: 0.07,
-  },
-  heroContent: {
-    flex: 1, padding: space.lg, paddingVertical: space.xl, justifyContent: 'flex-end',
-  },
-  heroTitle: { fontFamily: font.black, fontSize: 30, color: colors.white, lineHeight: 36, marginBottom: space.sm },
-  heroSub: { fontFamily: font.semibold, fontSize: 14, color: 'rgba(255,255,255,0.8)', lineHeight: 20 },
-
-  sectionHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-  },
-  joinActionBtn: {
-    backgroundColor: 'rgba(46,126,240,0.15)', paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: radius.sm,
-  },
-  joinActionText: { fontFamily: font.bold, fontSize: 12, color: colors.blue, letterSpacing: 0.5 },
-
-  gamesList: { gap: space.md },
-  gameCard: {
-    borderRadius: radius.xl, overflow: 'hidden',
-    backgroundColor: colors.surface,
-    borderWidth: 1, borderColor: colors.hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.hairline,
     ...shadow.card,
   },
-  gameBanner: { height: 120, width: '100%', alignItems: 'center', justifyContent: 'center' },
-  gameEmoji: { fontSize: 52 },
-  soonOverlay: {
-    ...(StyleSheet.absoluteFill as ViewStyle),
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  soonText: { fontFamily: font.extrabold, fontSize: 13, color: colors.textMuted, letterSpacing: 2 },
-  liveBadge: {
-    position: 'absolute', top: space.sm, right: space.sm,
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: 'rgba(239,68,68,0.85)',
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill,
-  },
-  liveBadgeText: { fontFamily: font.extrabold, fontSize: 11, color: colors.white, letterSpacing: 1 },
-  gameInfo: {
-    flexDirection: 'row', alignItems: 'center',
-    padding: space.md, gap: space.md,
-  },
-  gameTag: { fontFamily: font.extrabold, fontSize: 10, color: colors.textFaint, letterSpacing: 1, marginBottom: 2 },
-  gameTitle: { fontFamily: font.black, fontSize: 18, color: colors.text },
-  gameTagline: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  gameArrowChip: {
-    width: 36, height: 36, borderRadius: radius.sm,
-    backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center',
-  },
-  gameArrow: { fontFamily: font.bold, fontSize: 16, color: colors.white },
+  pressed: { opacity: 0.7, transform: [{ scale: 0.94 }] },
 
-  pressed: { opacity: 0.75, transform: [{ scale: 0.96 }] },
-  pressedCard: { transform: [{ scale: 0.98 }], opacity: 0.95 },
+  // Feed
+  feedContent: {
+    paddingHorizontal: space.lg,
+    paddingBottom: space.xl,
+  },
+  listHeader: {
+    paddingTop: space.lg,
+    paddingBottom: space.md,
+    gap: space.md,
+  },
+  feedLabel: {
+    fontFamily: font.extrabold,
+    fontSize: 11,
+    color: colors.textFaint,
+    letterSpacing: 1.5,
+    marginTop: space.xs,
+  },
+  skeletonList: { gap: space.md },
 });

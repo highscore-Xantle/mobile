@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Pressable, ScrollView,
-  StyleSheet, Text, View,
+  ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, ScrollView,
+  StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -26,6 +26,14 @@ type Hint = 'higher' | 'lower' | 'correct' | 'hot' | 'warm' | 'cold' | 'timeout'
 
 interface GuessEntry { value: string; hint: Hint; }
 
+export interface RoundStat {
+  round: number;
+  winner: 'host' | 'guest' | 'draw';
+  winnerName: string;
+  secret: number | null;
+  guesses: number;
+}
+
 interface GameState {
   round: number;
   phase: Phase;
@@ -42,6 +50,7 @@ interface GameState {
   guessTimeSum: number;
   guessCount: number;
   closestMiss: number | null;
+  matchHistory: RoundStat[];
 }
 
 // ─── Screen shake ─────────────────────────────────────────────────────────────
@@ -125,7 +134,10 @@ export default function NumberDuel() {
   const [inputValue,    setInputValue]    = useState('');
   const [loading,       setLoading]       = useState(true);
   const [submitting,    setSubmitting]    = useState(false);
-  const [opponentReady, setOpponentReady] = useState(false); // opponent locked in
+  const [opponentReady, setOpponentReady] = useState(false);
+  const [shared,        setShared]        = useState(false); // post shared to feed
+  const [isEditingShare,setIsEditingShare]= useState(false);
+  const [shareText,     setShareText]     = useState('');
   const guessStartTimeRef = useRef<number>(0);
 
   const [gameRules, setGameRules] = useState({ rounds: 12, difficulty: 'auto', mode: 'classic' });
@@ -136,6 +148,7 @@ export default function NumberDuel() {
     myScore: 0, opponentScore: 0,
     roundWinner: null, opponentSecretReveal: null, winner: null,
     guessTimeSum: 0, guessCount: 0, closestMiss: null,
+    matchHistory: [],
   });
 
   const chRef   = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -378,14 +391,23 @@ export default function NumberDuel() {
     ch.on('broadcast', { event: 'next_round' }, ({ payload }) => {
       setOpponentReady(false);
       setInputValue('');
-      setGs(prev => ({
-        ...prev, phase: 'picking', round: payload.round, mySecret: null,
-        myGuesses: [], opponentGuesses: [], roundWinner: null, opponentSecretReveal: null,
-      }));
+      setGs(prev => {
+        const wRole = prev.roundWinner === 'me' ? (isHost ? 'host' : 'guest') : prev.roundWinner === 'opponent' ? (isHost ? 'guest' : 'host') : 'draw';
+        const wName = prev.roundWinner === 'me' ? myName : prev.roundWinner === 'opponent' ? opponentName : 'Timeout';
+        const sec = prev.roundWinner === 'me' ? prev.mySecret : prev.opponentSecretReveal;
+        const newHistory = [...prev.matchHistory, {
+          round: prev.round, winner: wRole as any, winnerName: wName, secret: sec, guesses: prev.myGuesses.length,
+        }];
+        return {
+          ...prev, phase: 'picking', round: payload.round, mySecret: null,
+          myGuesses: [], opponentGuesses: [], roundWinner: null, opponentSecretReveal: null,
+          matchHistory: newHistory,
+        };
+      });
     });
 
     ch.on('broadcast', { event: 'game_over' }, ({ payload }) => {
-      setGs(prev => ({ ...prev, phase: 'game_over', winner: payload.winner }));
+      setGs(prev => ({ ...prev, phase: 'game_over', winner: payload.winner, matchHistory: payload.finalHistory ?? prev.matchHistory }));
     });
 
     ch.on('broadcast', { event: 'rematch_requested' }, () => {
@@ -441,11 +463,31 @@ export default function NumberDuel() {
 
   const handleNextRound = () => {
     const next = gs.round + 1;
-    if (next > gameRules.rounds) {
+    const isGameOver = next > gameRules.rounds;
+    
+    // Construct history item for this round
+    const wRole = gs.roundWinner === 'me' ? (isHost ? 'host' : 'guest') : gs.roundWinner === 'opponent' ? (isHost ? 'guest' : 'host') : 'draw';
+    const wName = gs.roundWinner === 'me' ? myName : gs.roundWinner === 'opponent' ? opponentName : 'Timeout';
+    const sec = gs.roundWinner === 'me' ? gs.mySecret : gs.opponentSecretReveal;
+    const roundStat: RoundStat = { round: gs.round, winner: wRole as any, winnerName: wName, secret: sec, guesses: gs.myGuesses.length };
+    const newHistory = [...gs.matchHistory, roundStat];
+
+    if (isGameOver) {
       const w = gs.myScore > gs.opponentScore ? 'me'
               : gs.opponentScore > gs.myScore ? 'opponent' : 'draw';
-      chRef.current?.send({ type: 'broadcast', event: 'game_over', payload: { winner: w } });
-      setGs(prev => ({ ...prev, phase: 'game_over', winner: w }));
+      chRef.current?.send({ type: 'broadcast', event: 'game_over', payload: { winner: w, finalHistory: newHistory } });
+      
+      // Persist final history to DB
+      if (isHost && roomId) {
+        supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+          ...gameRules, round: gs.round,
+          hostScore: isHost ? gs.myScore : gs.opponentScore,
+          guestScore: isHost ? gs.opponentScore : gs.myScore,
+          matchHistory: newHistory,
+        }});
+      }
+
+      setGs(prev => ({ ...prev, phase: 'game_over', winner: w, matchHistory: newHistory }));
       return;
     }
     setOpponentReady(false);
@@ -454,6 +496,7 @@ export default function NumberDuel() {
     setGs(prev => ({
       ...prev, phase: 'picking', round: next, mySecret: null,
       myGuesses: [], opponentGuesses: [], roundWinner: null, opponentSecretReveal: null,
+      matchHistory: newHistory,
     }));
   };
 
@@ -463,6 +506,35 @@ export default function NumberDuel() {
     }
     chRef.current?.send({ type: 'broadcast', event: 'rematch_requested', payload: {} });
     router.replace({ pathname: '/room/[code]', params: { code: roomCode } });
+  };
+
+  // ── Share game result to the Wins Feed ───────────────────────────────────
+  const initShare = () => {
+    const defaultText = gs.winner === 'me'
+      ? `Won ${gs.myScore}–${gs.opponentScore} vs ${opponentName} in Number Duel! 🏆`
+      : gs.winner === 'draw'
+      ? `Tied ${gs.myScore}–${gs.opponentScore} with ${opponentName} in Number Duel! 🤝`
+      : `Lost ${gs.myScore}–${gs.opponentScore} to ${opponentName} in Number Duel 😤`;
+    setShareText(defaultText);
+    setIsEditingShare(true);
+  };
+
+  const handleShareWin = async () => {
+    if (shared || !shareText.trim() || submitting) return;
+    setSubmitting(true);
+    const { error } = await supabase.rpc('share_win', {
+      p_game_type: 'number-duel',
+      p_result_text: shareText.trim(),
+      p_match_id: roomId,
+    });
+    setSubmitting(false);
+    if (!error) {
+      setShared(true);
+      setIsEditingShare(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else {
+      Alert.alert('Error sharing', error.message);
+    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -606,6 +678,49 @@ export default function NumberDuel() {
 
     if (gs.phase === 'game_over') return (
       <View style={{ gap: space.md }}>
+        {/* Share to Wins Feed */}
+        {!shared ? (
+          isEditingShare ? (
+            <Animated.View entering={FadeIn} style={s.shareEditBox}>
+              <Text style={s.shareEditLabel}>Edit before posting:</Text>
+              <TextInput
+                style={s.shareInput}
+                value={shareText}
+                onChangeText={setShareText}
+                multiline
+                maxLength={200}
+                autoFocus
+              />
+              <View style={{ flexDirection: 'row', gap: space.sm }}>
+                <Pressable style={s.shareCancelBtn} onPress={() => setIsEditingShare(false)}>
+                  <Text style={s.shareCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[s.sharePostBtn, submitting && s.ctaDisabled]}
+                  onPress={handleShareWin}
+                  disabled={submitting}
+                >
+                  <Text style={s.sharePostText}>{submitting ? 'Posting…' : 'Post to Feed'}</Text>
+                </Pressable>
+              </View>
+            </Animated.View>
+          ) : (
+            <Pressable
+              style={({ pressed }) => [s.ctaShare, pressed && s.pressed]}
+              onPress={initShare}
+              accessibilityLabel="Share result to Wins Feed"
+              accessibilityRole="button"
+            >
+              <Text style={s.ctaShareText}>
+                {gs.winner === 'me' ? '🏆  Share Win to Feed' : '📣  Share Result to Feed'}
+              </Text>
+            </Pressable>
+          )
+        ) : (
+          <View style={s.sharedBadge}>
+            <Text style={s.sharedBadgeText}>✓  Shared to Feed!</Text>
+          </View>
+        )}
         <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={handleRematch}>
           <GradientFill colors={gradients.button} />
           <Text style={s.ctaText}>Rematch 🔄</Text>
@@ -620,7 +735,7 @@ export default function NumberDuel() {
   };
 
   return (
-    <View style={s.root}>
+    <KeyboardAvoidingView style={s.root} behavior="padding">
       <GradientFill colors={gradients.background} />
       <SafeAreaView style={s.safe}>
         <View style={s.header}>
@@ -634,13 +749,13 @@ export default function NumberDuel() {
           <RoundScoreboard round={gs.round} totalRounds={gameRules.rounds} scoreA={gs.myScore} scoreB={gs.opponentScore} nameA={myName} nameB={opponentName} difficulty={diffDisplay} />
         </View>
         <Animated.View style={[s.gameArea, shakeStyle]}>
-          <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+          <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {renderContent()}
           </ScrollView>
           <View style={s.ctaWrap}>{renderCTA()}</View>
         </Animated.View>
       </SafeAreaView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -687,4 +802,46 @@ const s = StyleSheet.create({
   waitingCta: { flexDirection: 'row', gap: space.sm, alignItems: 'center', justifyContent: 'center', paddingVertical: 18, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline },
   waitingRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
   waitingText: { fontFamily: font.semibold, fontSize: 15, color: colors.textMuted },
+  // Share to Feed
+  ctaShare: {
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    borderColor: colors.blue,
+    paddingVertical: 18,
+    alignItems: 'center',
+    backgroundColor: 'rgba(59,157,231,0.08)',
+  },
+  ctaShareText: { fontFamily: font.extrabold, fontSize: 16, color: colors.blue },
+  sharedBadge: {
+    borderRadius: radius.lg,
+    paddingVertical: 18,
+    alignItems: 'center',
+    backgroundColor: 'rgba(74,222,128,0.1)',
+    borderWidth: 1,
+    borderColor: colors.success,
+  },
+  sharedBadgeText: { fontFamily: font.extrabold, fontSize: 16, color: colors.success },
+  shareEditBox: {
+    backgroundColor: colors.surface,
+    padding: space.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    gap: space.sm,
+  },
+  shareEditLabel: { fontFamily: font.bold, fontSize: 12, color: colors.textMuted },
+  shareInput: {
+    backgroundColor: colors.bg,
+    color: colors.text,
+    fontFamily: font.semibold,
+    fontSize: 14,
+    padding: space.md,
+    borderRadius: radius.md,
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  shareCancelBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: radius.md, borderWidth: 1, borderColor: colors.hairline },
+  shareCancelText: { fontFamily: font.bold, color: colors.textMuted },
+  sharePostBtn: { flex: 2, paddingVertical: 12, alignItems: 'center', borderRadius: radius.md, backgroundColor: colors.blue },
+  sharePostText: { fontFamily: font.bold, color: colors.white },
 });
