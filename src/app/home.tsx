@@ -14,6 +14,7 @@ import Animated, {
 import { useSession } from '../lib/useSession';
 import { supabase } from '../lib/supabase';
 import { GradientFill } from '../components/GradientFill';
+import { HeaderAvatar } from '../components/HeaderAvatar';
 import { RolloverReveal } from '../components/RolloverReveal';
 import { MenuDrawer } from '../components/MenuDrawer';
 import { JoinModal } from '../components/JoinModal';
@@ -174,10 +175,6 @@ export default function Home() {
     router.push({ pathname: '/game/[id]', params: { id: `${gameId}-viewer` } });
   };
 
-  const avatarLetter =
-    (session?.user?.user_metadata?.username as string)?.[0]?.toUpperCase() ??
-    session?.user?.email?.[0]?.toUpperCase() ?? '?';
-
   if (loading || !session) return null;
 
   return (
@@ -200,15 +197,7 @@ export default function Home() {
         >
           {/* ── Top Bar ──────────────────────────────── */}
           <View style={styles.topBar}>
-            <Pressable
-              style={({ pressed }) => [styles.avatarWrap, pressed && styles.pressed]}
-              onPress={() => router.push('/profile')}
-            >
-              <View style={styles.avatarInner}>
-                <Text style={styles.avatarLetter}>{avatarLetter}</Text>
-              </View>
-              <View style={styles.onlineDot} />
-            </Pressable>
+            <HeaderAvatar showOnlineDot />
 
             <View style={styles.wordmarkRow}>
               <Text style={[styles.wordmark, { color: colors.blue }]}>X</Text>
@@ -329,22 +318,6 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingTop: space.sm,
-  },
-  avatarWrap: {
-    width: 46, height: 46, borderRadius: 23,
-    backgroundColor: colors.blue, ...shadow.blueGlow,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  avatarInner: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
-  },
-  avatarLetter: { fontFamily: font.extrabold, fontSize: 17, color: colors.blue },
-  onlineDot: {
-    position: 'absolute', bottom: 1, right: 1,
-    width: 12, height: 12, borderRadius: 6,
-    backgroundColor: colors.success,
-    borderWidth: 2, borderColor: colors.bg,
   },
   wordmarkRow: { flexDirection: 'row', alignItems: 'center' },
   wordmark: { fontFamily: font.display, fontSize: 24, color: colors.text, letterSpacing: -0.5 },

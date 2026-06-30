@@ -22,18 +22,40 @@ export function JoinModal({ visible, onClose }: JoinModalProps) {
       Alert.alert('Invalid Code', 'Room codes are exactly 5 letters.');
       return;
     }
-    
-    setLoading(true);
-    const { data, error } = await supabase.rpc('join_room', { p_code: code.toUpperCase() });
-    setLoading(false);
 
-    if (error) {
-      Alert.alert('Cannot Join Room', error.message);
-    } else {
+    const upper = code.toUpperCase();
+    setLoading(true);
+
+    // Try Pixel Rush (games table) first.
+    const { error: gameErr } = await supabase.rpc('join_game', { p_code: upper, p_guest_name: null });
+
+    if (!gameErr) {
+      setLoading(false);
       setCode('');
       onClose();
-      router.push(`/room/${code.toUpperCase()}`);
+      router.push(`/game/${upper}`);
+      return;
     }
+
+    // Only fall back to Number Duel if the code simply didn't exist in games.
+    // Any other error (full, already started) surfaces directly.
+    if (gameErr.message !== 'game not found') {
+      setLoading(false);
+      Alert.alert('Cannot Join', gameErr.message);
+      return;
+    }
+
+    const { error: roomErr } = await supabase.rpc('join_room', { p_code: upper });
+    setLoading(false);
+
+    if (roomErr) {
+      Alert.alert('Cannot Join', 'No game or room found with that code.');
+      return;
+    }
+
+    setCode('');
+    onClose();
+    router.push(`/room/${upper}`);
   };
 
   return (
