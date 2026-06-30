@@ -278,12 +278,18 @@ export default function NumberDuel() {
         payload: { username: payload.username, guess: payload.guess, hint } });
 
       if (hint === 'correct') {
+        // The opponent guessed OUR secret correctly → they won this round.
+        // We know our own secret (= `secret`) but NOT theirs — it will arrive
+        // via the `winner_reveals_secret` event the winner broadcasts.
+        // DO NOT set opponentSecretReveal here; leave it null until that arrives.
         setGs(prev => ({
           ...prev, opponentScore: prev.opponentScore + 1, roundWinner: 'opponent',
-          opponentSecretReveal: secret, phase: 'round_end',
+          opponentSecretReveal: null, phase: 'round_end',
         }));
+        // secretA = the loser's secret (ours), used by the WINNER to display "Their secret".
+        // secretB intentionally omitted — we don't know the winner's secret.
         ch.send({ type: 'broadcast', event: 'round_end',
-          payload: { winnerUserId: payload.userId, secretA: secret, secretB: gsRef.current.mySecret }
+          payload: { winnerUserId: payload.userId, secretA: secret }
         });
       }
     });
@@ -308,6 +314,16 @@ export default function NumberDuel() {
           ...(hint === 'correct' ? { myScore: prev.myScore + 1, roundWinner: 'me', phase: 'round_end' } : {}),
         };
       });
+
+      // We just won by guessing correctly. Broadcast OUR secret so the
+      // opponent can display the correct "Their secret" on their round-end screen.
+      if (hint === 'correct') {
+        ch.send({
+          type: 'broadcast', event: 'winner_reveals_secret',
+          payload: { userId: session?.user.id, secret: gsRef.current.mySecret },
+        });
+      }
+
       setSubmitting(false);
     });
 
@@ -327,7 +343,16 @@ export default function NumberDuel() {
 
     ch.on('broadcast', { event: 'round_end' }, ({ payload }) => {
       setGs(prev => {
-        const nextState = { ...prev, phase: 'round_end' as const, opponentSecretReveal: payload.secretA ?? null };
+        // secretA = the LOSER's secret (broadcast by the loser's device).
+        // If I am the winner (roundWinner === 'me'), secretA is the opponent's secret → use it.
+        // If I am the loser (roundWinner === 'opponent'), secretA is MY OWN secret → ignore;
+        //   the winner's secret will arrive shortly via `winner_reveals_secret`.
+        const iWon = prev.roundWinner === 'me';
+        const nextState = {
+          ...prev,
+          phase: 'round_end' as const,
+          opponentSecretReveal: iWon ? (payload.secretA ?? null) : prev.opponentSecretReveal,
+        };
         if (isHost && roomId) {
           supabase.rpc('update_room_state', { p_room: roomId, p_state: {
             ...gameRules, round: nextState.round,
@@ -336,6 +361,17 @@ export default function NumberDuel() {
           }});
         }
         return nextState;
+      });
+    });
+
+    // Winner broadcasts their own secret so the loser can reveal it correctly.
+    ch.on('broadcast', { event: 'winner_reveals_secret' }, ({ payload }) => {
+      // Filter out echoes from self (Supabase may echo broadcast to sender)
+      if (payload.userId === session?.user.id) return;
+      setGs(prev => {
+        // Only apply if we are the loser — winner already has the correct value from round_end
+        if (prev.roundWinner === 'me') return prev;
+        return { ...prev, opponentSecretReveal: payload.secret };
       });
     });
 

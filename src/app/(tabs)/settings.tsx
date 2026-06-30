@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
-import { goBackOr } from '../../lib/navigation';
 import {
   isPushSupported,
   registerForPushNotifications,
@@ -95,14 +94,7 @@ export default function Settings() {
       <GradientFill colors={gradients.background} />
       <SafeAreaView style={styles.safe}>
         <View style={styles.topBar}>
-          <Pressable
-            style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            onPress={() => goBackOr(router, '/home')}
-          >
-            <Text style={styles.backGlyph}>‹</Text>
-          </Pressable>
           <Text style={themeText.h2}>Settings</Text>
-          <View style={styles.backBtn} />
         </View>
 
         <View style={styles.card}>
@@ -206,23 +198,11 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1, paddingHorizontal: space.lg },
 
+  // Tabs are the back-navigation mechanism — no back button needed here
   topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     paddingTop: space.sm,
     paddingBottom: space.xl,
   },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadow.card,
-  },
-  backGlyph: { color: colors.text, fontSize: 22, marginTop: -2 },
   pressed: { opacity: 0.85, transform: [{ scale: 0.97 }] },
 
   card: {

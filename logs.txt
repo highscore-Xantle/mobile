@@ -1,0 +1,176 @@
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ eas build --profile development --platform android
+Command 'eas' not found, did you mean:
+  command 'as' from deb binutils (2.38-4ubuntu2.12)
+  command 'eus' from deb euslisp (9.27+dfsg-7)
+  command 'kas' from deb kas (2.6.3-2)
+  command 'eos' from deb elk-lapw (7.2.42-2)
+  command 'cas' from deb amule-utils (1:2.3.3-2)
+Try: sudo apt install <deb name>
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx eas-cli login
+(node:172952) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Waiting for browser login...
+If your browser doesn't automatically open, visit this link to log in: https://expo.dev/login?client_id=eas-cli&redirect_uri=http://localhost:33029/auth/callback&response_type=code&code_challenge=U1gZwbS6lY5R9CAoJWWq9FOdr4kQrDcVLDp_tdvMDIc&code_challenge_method=S256&state=L-6lMzvBL5mu23xMqFYriu9gmDg4gdzzkr59iPueIbY&confirm_account=true
+
+request to https://api.expo.dev/graphql failed, reason: 
+    Error: GraphQL request failed.
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx eas-cli build --profile development --platform android
+(node:174866) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+An Expo user account is required to proceed.
+
+Log in to EAS with email or username (exit and run eas login --help to see other login options)
+✔ Email or username … iamexcel
+✔ Password … 
+"password": String must contain at least 1 character(s).
+    Error: build command failed.
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx eas-cli login
+(node:175803) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Waiting for browser login...
+If your browser doesn't automatically open, visit this link to log in: https://expo.dev/login?client_id=eas-cli&redirect_uri=http://localhost:42675/auth/callback&response_type=code&code_challenge=R22Ivm_yEcF-kxFtnVCnme5bocYv7gOFc_V3P8Yc6G0&code_challenge_method=S256&state=Wy9kHqoMZoJvHM1C8B1KuAiLIRQoPkCwoFL361ZXAuI&confirm_account=true
+Logged in
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx eas-cli build --profile development --platform android
+(node:177271) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Resolved "development" environment for the build. Learn more
+Failed to pull env variables for environment development from EAS servers
+[Network] request to https://api.expo.dev/graphql failed, reason: 
+This can possibly be a bug in EAS/EAS CLI. Report it here: https://github.com/expo/eas-cli/issues
+
+request to https://api.expo.dev/graphql failed, reason: 
+    Error: GraphQL request failed.
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx eas-cli build --profile development --platform android
+(node:182046) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+request to https://api.expo.dev/graphql failed, reason: 
+    Error: GraphQL request failed.
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ eas whoami
+Command 'eas' not found, did you mean:
+  command 'cas' from deb amule-utils (1:2.3.3-2)
+  command 'kas' from deb kas (2.6.3-2)
+  command 'as' from deb binutils (2.38-4ubuntu2.12)
+  command 'eus' from deb euslisp (9.27+dfsg-7)
+  command 'eos' from deb elk-lapw (7.2.42-2)
+Try: sudo apt install <deb name>
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx eas whoami
+npm error could not determine executable to run
+npm error A complete log of this run can be found in: /home/excel/.npm/_logs/2026-06-29T14_02_06_377Z-debug-0.log
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npm install eas-cli
+npm warn deprecated lodash.get@4.4.2: This package is deprecated. Use the optional chaining (?.) operator instead.
+npm warn deprecated rimraf@2.4.5: Rimraf versions prior to v4 are no longer supported
+npm warn deprecated glob@6.0.4: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated @xmldom/xmldom@0.7.13: this version has critical issues, please update to the latest version
+npm warn deprecated @xmldom/xmldom@0.7.13: this version has critical issues, please update to the latest version
+npm warn deprecated uuid@8.3.2: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+npm warn deprecated uuid@8.3.2: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+npm warn deprecated uuid@9.0.1: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+npm warn deprecated uuid@9.0.1: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated tar@7.5.7: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+
+added 318 packages, removed 4 packages, and audited 1138 packages in 1m
+
+119 packages are looking for funding
+  run `npm fund` for details
+
+44 vulnerabilities (1 low, 37 moderate, 6 high)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx eas-cli build --profile development --platform android
+(node:202630) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Found eas-cli in your project dependencies.
+It's recommended to use the "cli.version" field in eas.json to enforce the eas-cli version for your project.
+Learn more
+
+Resolved "development" environment for the build. Learn more
+No environment variables with visibility "Plain text" and "Sensitive" found for the "development" environment on EAS.
+Environment variables loaded from the "development" build profile "env" configuration: EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY, EXPO_PUBLIC_SUPABASE_KEY.
+
+
+request to https://api.expo.dev/graphql failed, reason: 
+    Error: GraphQL request failed.
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ curl https://api.expo.dev/graphql
+Method Not Allowed[excel@Excel-Linux:~/Documents/highscore/mobile]$ ping api.expping api.expo.dev
+PING api.expo.dev (104.18.5.104) 56(84) bytes of data.
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=1 ttl=53 time=629 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=2 ttl=53 time=713 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=3 ttl=53 time=328 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=4 ttl=53 time=736 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=5 ttl=53 time=821 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=6 ttl=53 time=301 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=7 ttl=53 time=119 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=8 ttl=53 time=141 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=9 ttl=53 time=364 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=10 ttl=53 time=475 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=11 ttl=53 time=620 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=12 ttl=53 time=440 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=13 ttl=53 time=664 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=14 ttl=53 time=280 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=15 ttl=53 time=613 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=16 ttl=53 time=518 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=17 ttl=53 time=713 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=18 ttl=53 time=599 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=19 ttl=53 time=557 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=20 ttl=53 time=896 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=21 ttl=53 time=615 ms
+64 bytes from 104.18.5.104 (104.18.5.104): icmp_seq=22 ttl=53 time=226 ms
+^C64 bytes from 104.18.5.104: icmp_seq=23 ttl=53 time=1062 ms
+
+--- api.expo.dev ping statistics ---
+24 packets transmitted, 23 received, 4.16667% packet loss, time 25703ms
+rtt min/avg/max/mdev = 118.795/540.394/1062.126/235.212 ms, pipe 2
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ node -v
+v24.13.1
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx eas-cli --version
+eas-cli/20.4.0 linux-x64 node-v24.13.1
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx expo --version
+54.0.25
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ npx eas whoami
+(node:223885) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+iamexcel
+promise@highzcore.tech
+
+Accounts:
+• iamexcel (Role: Owner)
+• xantle-application (Role: Developer)
+[excel@Excel-Linux:~/Documents/highscore/mobile]$ EXPO_DEBUG=1 npx eas-cli build --profile development --platform android
+(node:224459) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+request to https://api.expo.dev/graphql failed, reason: 
+CombinedError: [Network] request to https://api.expo.dev/graphql failed, reason: 
+    at makeErrorResult (/home/excel/Documents/highscore/mobile/node_modules/eas-cli/node_modules/@urql/core/dist/urql-core-chunk.js:495:10)
+    at fetchOperation (/home/excel/Documents/highscore/mobile/node_modules/eas-cli/node_modules/@urql/core/dist/urql-core-chunk.js:756:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async /home/excel/Documents/highscore/mobile/node_modules/wonka/dist/wonka.js:346:20 {
+  graphQLErrors: [],
+  networkError: FetchError: request to https://api.expo.dev/graphql failed, reason: 
+      at ClientRequest.<anonymous> (/home/excel/Documents/highscore/mobile/node_modules/eas-cli/node_modules/node-fetch/lib/index.js:1491:11)
+      at ClientRequest.emit (node:events:508:28)
+      at ClientRequest.emit (node:domain:489:12)
+      at emitErrorEvent (node:_http_client:108:11)
+      at TLSSocket.socketErrorListener (node:_http_client:575:5)
+      at TLSSocket.emit (node:events:508:28)
+      at TLSSocket.emit (node:domain:489:12)
+      at emitErrorNT (node:internal/streams/destroy:170:8)
+      at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+      at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+    type: 'system',
+    errno: 'ETIMEDOUT',
+    code: 'ETIMEDOUT'
+  },
+  response: undefined
+}
+    Error: GraphQL request failed.

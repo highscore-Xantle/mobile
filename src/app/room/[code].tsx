@@ -1,6 +1,7 @@
 import { FontAwesome } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
+import * as Linking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
@@ -20,6 +21,7 @@ export default function RoomLobby() {
   const [loading, setLoading] = useState(true);
   const [room, setRoom] = useState<any>(null);
   const [players, setPlayers] = useState<any[]>([]);
+  const [copied, setCopied] = useState(false);
 
   // Hooks must all be declared before any early return (Rules of Hooks)
   const pulse = useSharedValue(0.5);
@@ -132,14 +134,12 @@ export default function RoomLobby() {
     if (!room || !canStart) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
-    // Host sets room active in DB via RPC to bypass RLS restrictions
     const { error } = await supabase.rpc('start_room', { p_room: room.id });
     if (error) {
       Alert.alert('Error starting game', error.message);
       return;
     }
 
-    // Host navigates
     router.replace({ pathname: '/game/[id]', params: { id: room.game_kind, roomCode: code } });
   };
 
@@ -150,18 +150,24 @@ export default function RoomLobby() {
     flipAnim.value = withTiming(nextState ? 1 : 0, { duration: 400 });
   };
 
+  // ── Copy: uses expo-clipboard (works on both iOS & Android) ───────────────
   const handleCopy = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await Clipboard.setStringAsync(code);
-    Alert.alert('Copied!', 'Room code copied to clipboard.');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
+  // ── Share: deep link + friendly message, opens native share sheet ─────────
   const handleShare = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // Generates xantle://room/<code> on native, https://... in Expo Go tunnel
+    const deepLink = Linking.createURL(`/room/${code}`);
     try {
       await Share.share({
-        message: `Join my Xantle game! The room code is: ${code}`,
-        title: 'Xantle Room Code',
+        title: 'Join my Xantle game 🎮',
+        message: `Hey! Join my Xantle game 🎮\n\nRoom code: ${code}\n\nTap to join → ${deepLink}`,
+        url: deepLink, // iOS: shown as a rich URL preview in the share sheet
       });
     } catch (err: any) {
       Alert.alert('Error sharing', err.message);
@@ -197,9 +203,23 @@ export default function RoomLobby() {
 
           {/* Flippable Room Code Banner */}
           <View style={styles.cardContainer}>
-            <Animated.View style={[styles.codeCard, frontAnimatedStyle]}>
-              <Pressable style={styles.shareBadge} onPress={handleShare}>
-                <FontAwesome name="share" size={12} color={colors.white} />
+            {/*
+              Fix: pointerEvents on the Animated.View controls the native hit-test.
+              The back face is absolutely positioned and would intercept all touches
+              on Android even when visually hidden via backfaceVisibility.
+              Setting pointerEvents="none" when not flipped prevents this.
+            */}
+            <Animated.View
+              style={[styles.codeCard, frontAnimatedStyle]}
+              pointerEvents={isFlipped ? 'none' : 'auto'}
+            >
+              {/* Share icon — top-right, opens native share sheet */}
+              <Pressable
+                style={styles.shareBadge}
+                onPress={handleShare}
+                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              >
+                <FontAwesome name="share" size={14} color={colors.white} />
               </Pressable>
 
               <Text style={styles.codeLabel}>ROOM CODE</Text>
@@ -207,8 +227,14 @@ export default function RoomLobby() {
 
               <View style={styles.cardActionsRow}>
                 <Pressable style={styles.cardBtn} onPress={handleCopy}>
-                  <FontAwesome name="copy" size={16} color={colors.blue} />
-                  <Text style={styles.cardBtnText}>Copy Code</Text>
+                  <FontAwesome
+                    name={copied ? 'check' : 'copy'}
+                    size={16}
+                    color={copied ? colors.success : colors.blue}
+                  />
+                  <Text style={[styles.cardBtnText, copied && { color: colors.success }]}>
+                    {copied ? 'Copied!' : 'Copy Code'}
+                  </Text>
                 </Pressable>
                 <Pressable style={styles.cardBtn} onPress={handleToggleFlip}>
                   <FontAwesome name="qrcode" size={16} color={colors.cyan} />
@@ -217,7 +243,10 @@ export default function RoomLobby() {
               </View>
             </Animated.View>
 
-            <Animated.View style={[styles.codeCard, styles.qrCard, backAnimatedStyle]}>
+            <Animated.View
+              style={[styles.codeCard, styles.qrCard, backAnimatedStyle]}
+              pointerEvents={isFlipped ? 'auto' : 'none'}
+            >
               <Pressable style={StyleSheet.absoluteFill} onPress={handleToggleFlip} />
               <Text style={styles.codeLabel}>SCAN TO JOIN</Text>
               <View style={styles.qrWrapper}>
@@ -330,17 +359,20 @@ const styles = StyleSheet.create({
   codeCard: {
     width: '100%', minHeight: 280, backgroundColor: colors.surface, padding: space.xl,
     borderRadius: radius.xl, alignItems: 'center', justifyContent: 'center', borderWidth: 1,
-    borderColor: 'rgba(59,157,231,0.2)'
+    borderColor: 'rgba(59,157,231,0.2)',
   },
   qrCard: { justifyContent: 'space-between', paddingVertical: space.xl },
-  shareBadge: { position: 'absolute', top: space.md, right: space.md, padding: 8, backgroundColor: 'rgba(59,157,231,0.1)', borderRadius: radius.pill },
+  shareBadge: {
+    position: 'absolute', top: space.md, right: space.md,
+    padding: 10, backgroundColor: 'rgba(59,157,231,0.15)', borderRadius: radius.pill,
+  },
   codeLabel: { fontFamily: font.black, fontSize: 13, color: colors.blue, textTransform: 'uppercase', letterSpacing: 2, marginBottom: space.xs },
   codeValue: { fontFamily: font.display, fontSize: 56, color: colors.text, letterSpacing: 8, marginBottom: space.lg },
   qrWrapper: { padding: space.md, backgroundColor: colors.white, borderRadius: radius.lg },
   qrFooterRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 'auto' },
   qrFooterText: { fontFamily: font.bold, fontSize: 12, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 1 },
   cardActionsRow: { flexDirection: 'row', gap: space.md, width: '100%', marginTop: 'auto' },
-  cardBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 16, backgroundColor: colors.surfaceAlt, borderRadius: radius.lg },
+  cardBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, paddingHorizontal: 16, backgroundColor: colors.surfaceAlt, borderRadius: radius.lg },
   cardBtnText: { fontFamily: font.bold, fontSize: 14, color: colors.text },
   playersSection: { gap: space.md },
   sectionHeader: { fontFamily: font.extrabold, fontSize: 16, color: colors.text, marginBottom: space.xs },
@@ -369,7 +401,6 @@ const styles = StyleSheet.create({
   ctaInner: { paddingVertical: 18, alignItems: 'center' },
   ctaText: { fontFamily: font.extrabold, fontSize: 18, color: colors.white, letterSpacing: 0.5 },
   pressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
-  pressedCard: { transform: [{ scale: 0.98 }], opacity: 0.95 },
 
   waitingBox: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
