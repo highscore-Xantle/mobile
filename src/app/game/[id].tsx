@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { GradientFill } from '../../components/GradientFill';
+import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
 import {
   DEFAULT_PUZZLE_IMAGE,
@@ -354,7 +355,7 @@ function Header({
         <Text style={themeText.h2}>{title}</Text>
         {subtitle ? <Text style={themeText.hint}>{subtitle}</Text> : null}
       </View>
-      <View style={styles.backBtn} />
+      <HeaderAvatar />
     </View>
   );
 }

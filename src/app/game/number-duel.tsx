@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
 import { GradientFill } from '../../components/GradientFill';
+import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { NumberKeypad } from '../../components/NumberKeypad';
 import { RoundScoreboard } from '../../components/RoundScoreboard';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
@@ -592,7 +593,7 @@ export default function NumberDuel() {
             <Text style={s.backText}>← Exit</Text>
           </Pressable>
           <Text style={s.headerTitle}>Number Duel</Text>
-          <View style={{ width: 60 }} />
+          <HeaderAvatar />
         </View>
         <View style={s.scoreboardWrap}>
           <RoundScoreboard round={gs.round} totalRounds={gameRules.rounds} scoreA={gs.myScore} scoreB={gs.opponentScore} nameA={myName} nameB={opponentName} difficulty={diffDisplay} />

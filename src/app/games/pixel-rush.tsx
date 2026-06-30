@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { GradientFill } from '../../components/GradientFill';
+import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
 import { goBackOr } from '../../lib/navigation';
 import {
@@ -83,7 +84,7 @@ export default function PixelRushScreen() {
               <Text style={styles.backGlyph}>‹</Text>
             </Pressable>
             <Text style={themeText.h2}>Solo Practice</Text>
-            <View style={styles.backBtn} />
+            <HeaderAvatar />
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.soloContent}>
@@ -137,7 +138,7 @@ export default function PixelRushScreen() {
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <Text style={themeText.h2}>🧩 Pixel Rush</Text>
-          <View style={styles.backBtn} />
+          <HeaderAvatar />
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.menuContent}>

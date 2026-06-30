@@ -8,6 +8,7 @@ import QRCode from 'react-native-qrcode-svg';
 import Animated, { Easing, FadeInDown, interpolate, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
+import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
@@ -190,7 +191,7 @@ export default function RoomLobby() {
             <Text style={styles.backText}>← Back</Text>
           </Pressable>
           <Text style={styles.gameKind}>{room.game_kind.toUpperCase()}</Text>
-          <View style={{ width: 60 }} />
+          <HeaderAvatar />
         </View>
 
         <ScrollView contentContainerStyle={styles.content}>

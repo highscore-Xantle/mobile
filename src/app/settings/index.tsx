@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
+import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { goBackOr } from '../../lib/navigation';
 import {
   isPushSupported,
@@ -102,7 +103,7 @@ export default function Settings() {
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <Text style={themeText.h2}>Settings</Text>
-          <View style={styles.backBtn} />
+          <HeaderAvatar />
         </View>
 
         <View style={styles.card}>

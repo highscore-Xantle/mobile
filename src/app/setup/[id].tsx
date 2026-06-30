@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 import { GradientFill } from '../../components/GradientFill';
+import { HeaderAvatar } from '../../components/HeaderAvatar';
 
 const GAME_RULES: Record<string, { title: string; desc: string }> = {
   'number-duel': {
@@ -65,7 +66,7 @@ export default function GameSetup() {
             <Text style={styles.backText}>← Back</Text>
           </Pressable>
           <Text style={styles.headerTitle}>GAME SETUP</Text>
-          <View style={{ width: 60 }} />
+          <HeaderAvatar />
         </View>
 
         <ScrollView contentContainerStyle={styles.content}>
