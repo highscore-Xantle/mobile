@@ -7,7 +7,6 @@
     "@expo-google-fonts/space-grotesk": "^0.4.1",
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@react-native-google-signin/google-signin": "^16.1.2",
     "@react-native-masked-view/masked-view": "0.3.2",
     "@supabase/supabase-js": "^2.108.2",
     "eas-cli": "^20.4.0",
