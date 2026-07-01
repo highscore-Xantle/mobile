@@ -1,6 +1,6 @@
 import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -9,50 +9,77 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { GradientFill } from '../components/GradientFill';
+import { supabase } from '../lib/supabase';
 import { colors, font, gradients, radius, shadow } from '../theme';
 
-const LINE_TUCK = 18; // how far the underline tucks left under the X's right leg
+const LINE_TUCK = 18;
 const LINE_H = 7;
-const ANTLE_LIFT = 8; // raise "antle" a touch above the X's vertical centre
+const ANTLE_LIFT = 8;
 
 export default function Landing() {
-  const [antleW, setAntleW] = useState(0); // measured width of "antle" so the line ends exactly at "e"
-  const [xW, setXW] = useState(0); // measured width of "X" so the line starts at its right leg
+  const router = useRouter();
+  const [antleW, setAntleW] = useState(0);
+  const [xW, setXW] = useState(0);
+  // Three states: 'checking' (session check in progress), 'show' (no session, show landing), 'redirect' (has session, navigate away)
+  const [authState, setAuthState] = useState<'checking' | 'show'>('checking');
 
-  // reveal beats
-  const antleIn = useSharedValue(0); // 1. "antle" rises in
-  const xIn = useSharedValue(0); // 2. big "X" slides in -> "Xantle"
-  const line = useSharedValue(0); // 3. right leg extends into the underline
-  const cta = useSharedValue(0); // 4. button + tagline arrive
-
+  // ── Session check — runs once on mount ─────────────────────────────────────
   useEffect(() => {
-    antleIn.value = withTiming(1, { duration: 1500, easing: Easing.out(Easing.cubic) });
-    xIn.value = withDelay(1700, withTiming(1, { duration: 1700, easing: Easing.out(Easing.back(1.3)) }));
-    line.value = withDelay(4000, withTiming(1, { duration: 2400, easing: Easing.inOut(Easing.cubic) }));
-    cta.value = withDelay(7000, withTiming(1, { duration: 1200, easing: Easing.out(Easing.cubic) }));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        // Valid session in AsyncStorage → skip landing entirely
+        router.replace('/home');
+      } else {
+        // No session → show landing animation
+        setAuthState('show');
+      }
+    });
   }, []);
 
-  const xStyle = useAnimatedStyle(() => ({
+  // ── Animation values — only used when 'show' ─────────────────────────────
+  const antleIn = useSharedValue(0);
+  const xIn     = useSharedValue(0);
+  const line    = useSharedValue(0);
+  const cta     = useSharedValue(0);
+
+  useEffect(() => {
+    if (authState !== 'show') return;
+    antleIn.value = withTiming(1, { duration: 1500, easing: Easing.out(Easing.cubic) });
+    xIn.value     = withDelay(1700, withTiming(1, { duration: 1700, easing: Easing.out(Easing.back(1.3)) }));
+    line.value    = withDelay(4000, withTiming(1, { duration: 2400, easing: Easing.inOut(Easing.cubic) }));
+    cta.value     = withDelay(7000, withTiming(1, { duration: 1200, easing: Easing.out(Easing.cubic) }));
+  }, [authState]);
+
+  const xStyle     = useAnimatedStyle(() => ({
     opacity: xIn.value,
     transform: [{ translateX: (1 - xIn.value) * -80 }, { scale: 0.9 + xIn.value * 0.1 }],
   }));
-
   const antleStyle = useAnimatedStyle(() => ({
     opacity: antleIn.value,
     transform: [{ translateY: (1 - antleIn.value) * 14 - ANTLE_LIFT }],
   }));
-
-  const lineStyle = useAnimatedStyle(() => ({
+  const lineStyle  = useAnimatedStyle(() => ({
     width: line.value * (antleW + LINE_TUCK),
     opacity: line.value,
   }));
-
-  const ctaStyle = useAnimatedStyle(() => ({
+  const ctaStyle   = useAnimatedStyle(() => ({
     opacity: cta.value,
     transform: [{ translateY: (1 - cta.value) * 18 }],
   }));
 
+  // ── Session check loading spinner ─────────────────────────────────────────
+  if (authState === 'checking') {
+    return (
+      <View style={styles.root}>
+        <GradientFill colors={gradients.background} />
+        <ActivityIndicator color={colors.blue} style={styles.spinner} />
+      </View>
+    );
+  }
+
+  // ── Landing animation ─────────────────────────────────────────────────────
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
@@ -100,9 +127,9 @@ export default function Landing() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg, overflow: 'hidden' },
   safe: { flex: 1, paddingHorizontal: 28, paddingBottom: 34 },
+  spinner: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  // logo row: full-height X with "antle" nested at its vertical middle
   logoBox: { flexDirection: 'row', alignItems: 'center', position: 'relative' },
   xBig: {
     fontFamily: font.display,
@@ -119,7 +146,6 @@ const styles = StyleSheet.create({
     letterSpacing: -1,
     includeFontPadding: false,
   },
-  // the X's right leg, extended: a white line along the bottom, joined to the leg tip
   legLine: {
     position: 'absolute',
     bottom: 28,
