@@ -63,8 +63,13 @@ export default function Login() {
   const handleAuthResult = async (error: any, data: any) => {
     if (error) { setErrorMsg(error.message); return; }
     const { data: profile } = await supabase
-      .from('profiles').select('username').eq('id', data.user.id).single();
-    router.replace(profile?.username ? '/home' : '/onboarding');
+      .from('profiles')
+      .select('username, avatar_url, country')
+      .eq('id', data.user.id)
+      .single();
+    const isComplete =
+      !!(profile?.username && profile?.avatar_url && profile?.country);
+    router.replace(isComplete ? '/home' : '/onboarding');
   };
 
   const sendOtp = async () => {

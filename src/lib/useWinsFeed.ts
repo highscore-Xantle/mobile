@@ -80,12 +80,10 @@ export function useWinsFeed(currentUserId: string | undefined) {
               result_text,
               media_url,
               created_at,
-              profiles:user_id ( username ),
+              profiles:user_id ( username, avatar_url ),
               post_likes ( user_id ),
               post_comments ( id )
             `,
-            // TODO(samuel): restore avatar_url in profiles select once the
-            // profiles.avatar_url column + Cloudinary migration has landed.
           )
           .order('created_at', { ascending: false })
           .limit(PAGE_SIZE);
@@ -110,7 +108,7 @@ export function useWinsFeed(currentUserId: string | undefined) {
           created_at: r.created_at,
           author: {
             username: r.profiles?.username ?? null,
-            avatar_url: null, // TODO(samuel): r.profiles?.avatar_url ?? null
+            avatar_url: r.profiles?.avatar_url ?? null,
           },
           like_count: (r.post_likes ?? []).length,
           comment_count: (r.post_comments ?? []).length,

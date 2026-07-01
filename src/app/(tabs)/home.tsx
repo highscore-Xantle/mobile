@@ -36,16 +36,18 @@ import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { FontAwesome } from '@expo/vector-icons';
 import { useSession } from '../../lib/useSession';
-import { supabase } from '../../lib/supabase';
 import { useWinsFeed } from '../../lib/useWinsFeed';
 import type { WinPost } from '../../lib/useWinsFeed';
+import { useLiveRooms } from '../../lib/useLiveRooms';
+import { useProfileCompletion } from '../../lib/useProfileCompletion';
 import { GradientFill } from '../../components/GradientFill';
 import { Avatar } from '../../components/ui/Avatar';
 import { LiveStrip } from '../../components/Feed/LiveStrip';
-import type { LiveGame, ActiveRoom } from '../../components/Feed/LiveStrip';
+import type { LiveGame } from '../../components/Feed/LiveStrip';
 import { WinCard } from '../../components/Feed/WinCard';
 import { CommentSheet } from '../../components/CommentSheet';
 import { MenuDrawer } from '../../components/MenuDrawer';
+import { ProfileCompletionBanner } from '../../components/ProfileCompletionBanner';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
 // ─── Feed skeleton card ───────────────────────────────────────────────────────
@@ -174,35 +176,11 @@ export default function Home() {
     if (!authLoading && !session) router.replace('/login');
   }, [session, authLoading]);
 
-  // ── Live rooms (10-second poll, same pattern as old home.tsx) ────────────────
-  const [liveRooms, setLiveRooms] = useState<Record<string, ActiveRoom[]>>({});
-  const [liveLoading, setLiveLoading] = useState(true);
+  // ── Live rooms — shared hook (same 10-s poll, no duplication) ──────────────
+  const { liveRooms, loading: liveLoading } = useLiveRooms();
 
-  const fetchLiveRooms = useCallback(async () => {
-    const { data } = await supabase
-      .from('rooms')
-      .select(`code, game_kind, state, room_players ( display_name, profiles ( username ) )`)
-      .eq('status', 'active');
-    if (!data) { setLiveLoading(false); return; }
-    const map: Record<string, ActiveRoom[]> = {};
-    data.forEach((r: any) => {
-      const names: string[] = (r.room_players ?? []).map((p: any) =>
-        p.display_name || p.profiles?.username || 'Player',
-      );
-      const room: ActiveRoom = { code: r.code, round: r.state?.round ?? 1, playerNames: names };
-      if (!map[r.game_kind]) map[r.game_kind] = [];
-      map[r.game_kind].push(room);
-    });
-    setLiveRooms(map);
-    setLiveLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (!session) return;
-    fetchLiveRooms();
-    const interval = setInterval(fetchLiveRooms, 10_000);
-    return () => clearInterval(interval);
-  }, [session, fetchLiveRooms]);
+  // ── Profile completion (for the dismissible banner) ───────────────────────
+  const profileCompletion = useProfileCompletion(session?.user?.id);
 
   // Build typed LiveGame array for the strip.
   const liveGames: LiveGame[] = Object.entries(liveRooms)
@@ -234,16 +212,11 @@ export default function Home() {
     setActivePostId(null);
   }, []);
 
-  // ── Live tile press — navigate to viewer ─────────────────────────────────────
+  // ── Live tile press — navigate to Live tab ────────────────────────────────
   const handleLiveTilePress = useCallback(
-    (game: LiveGame) => {
-      if (game.id === 'number-duel' && game.rooms.length > 0) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        router.push({
-          pathname: '/game/[id]',
-          params: { id: 'number-duel-viewer', roomCode: game.rooms[0].code },
-        });
-      }
+    (_game: LiveGame) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      router.push('/(tabs)/live' as any);
     },
     [router],
   );
@@ -270,6 +243,9 @@ export default function Home() {
   // ─── Header (rendered via ListHeaderComponent to scroll with list) ──────────
   const ListHeader = (
     <View style={styles.listHeader}>
+      {/* Profile completion banner (dismissible, only when incomplete) */}
+      <ProfileCompletionBanner completion={profileCompletion} />
+
       {/* Live strip */}
       <LiveStrip games={liveGames} loading={liveLoading} onTilePress={handleLiveTilePress} />
 

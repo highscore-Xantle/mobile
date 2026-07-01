@@ -11,6 +11,7 @@ import {
 } from '../../lib/pushNotifications';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
+import { useProfileCompletion } from '../../lib/useProfileCompletion';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
 export default function Settings() {
@@ -19,8 +20,10 @@ export default function Settings() {
 
   const pushSupported = isPushSupported();
   const [notifEnabled, setNotifEnabled] = useState(false);
-  const [notifBusy, setNotifBusy] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [notifBusy, setNotifBusy]       = useState(false);
+  const [deleting, setDeleting]         = useState(false);
+
+  const profileCompletion = useProfileCompletion(session?.user?.id);
 
   useEffect(() => {
     if (!pushSupported || !session?.user) return;
@@ -104,6 +107,24 @@ export default function Settings() {
 
         <Text style={[themeText.label, styles.sectionLabel]}>ACCOUNT</Text>
         <View style={styles.group}>
+          {/* Profile completion row — only shown when incomplete */}
+          {!profileCompletion.loading && !profileCompletion.isComplete && (
+            <Pressable
+              style={({ pressed }) => [styles.completionRow, pressed && { opacity: 0.8 }]}
+              onPress={() => router.push('/onboarding' as any)}
+              accessibilityLabel={`Complete your profile — ${profileCompletion.completionPercent}% done`}
+              accessibilityRole="button"
+            >
+              <View style={styles.completionLeft}>
+                <Text style={styles.completionTitle}>Complete your profile</Text>
+                <View style={styles.completionBarTrack}>
+                  <View style={[styles.completionBarFill, { width: `${profileCompletion.completionPercent}%` as any }]} />
+                </View>
+                <Text style={styles.completionHint}>{profileCompletion.completionPercent}% complete</Text>
+              </View>
+              <Text style={styles.completionArrow}>›</Text>
+            </Pressable>
+          )}
           <Row label="Change email" onPress={() => router.push('/settings/change-email')} />
           <Row label="Change password" onPress={() => router.push('/settings/change-password')} />
           <ToggleRow
@@ -252,6 +273,19 @@ const styles = StyleSheet.create({
 
   closeAccountBtn: { paddingVertical: space.md, alignItems: 'center' },
   closeAccountText: { fontFamily: font.semibold, fontSize: 14, color: colors.textFaint },
+
+  // Profile completion row
+  completionRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    paddingVertical: space.md, paddingHorizontal: space.md,
+    borderBottomWidth: 1, borderBottomColor: colors.hairline,
+  },
+  completionLeft: { flex: 1, gap: 6 },
+  completionTitle: { fontFamily: font.bold, fontSize: 14, color: colors.cyan },
+  completionBarTrack: { height: 4, backgroundColor: colors.hairline, borderRadius: 2 },
+  completionBarFill:  { height: 4, backgroundColor: colors.cyan, borderRadius: 2 },
+  completionHint:  { fontFamily: font.semibold, fontSize: 11, color: colors.textMuted },
+  completionArrow: { fontFamily: font.bold, fontSize: 22, color: colors.cyan },
 
   version: { marginTop: 'auto', alignSelf: 'center', paddingBottom: space.lg },
 });

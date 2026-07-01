@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -13,8 +13,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, SlideInDown } from 'react-native-reanimated';
-import { useSession } from '../../lib/useSession';
-import { supabase } from '../../lib/supabase';
+import { useLiveRooms, type ActiveRoom } from '../../lib/useLiveRooms';
 import { GradientFill } from '../../components/GradientFill';
 import { RolloverReveal } from '../../components/RolloverReveal';
 import { JoinModal } from '../../components/JoinModal';
@@ -22,13 +21,6 @@ import { LiveDot } from '../../components/Feed/LiveStrip';
 import {
   colors, font, gradients, radius, shadow, space, text as themeText,
 } from '../../theme';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface ActiveRoom {
-  code: string;
-  round: number;
-  playerNames: string[];
-}
 
 // ─── Game catalogue ───────────────────────────────────────────────────────────
 const GAMES = [
@@ -174,36 +166,11 @@ const sheetStyles = StyleSheet.create({
  */
 export default function GamesTab() {
   const router = useRouter();
-  const { session } = useSession();
   const [joinVisible, setJoinVisible] = useState(false);
-  const [liveRooms, setLiveRooms] = useState<Record<string, ActiveRoom[]>>({});
-  const [sheetGame, setSheetGame] = useState<{ id: string; title: string } | null>(null);
+  // ── Active rooms (shared hook — 10-second poll, same as home.tsx) ─────────────
+  const { liveRooms, refresh: refreshRooms } = useLiveRooms();
+  const [sheetGame, setSheetGame]     = useState<{ id: string; title: string } | null>(null);
   const [sheetLoading, setSheetLoading] = useState(false);
-
-  // ── Fetch active rooms (10-second poll) ─────────────────────────────────────
-  const fetchLiveRooms = useCallback(async () => {
-    const { data } = await supabase
-      .from('rooms')
-      .select(`code, game_kind, state, room_players ( display_name, profiles ( username ) )`)
-      .eq('status', 'active');
-    if (!data) return;
-    const map: Record<string, ActiveRoom[]> = {};
-    data.forEach((r: any) => {
-      const names: string[] = (r.room_players ?? []).map((p: any) =>
-        p.display_name || p.profiles?.username || 'Player'
-      );
-      const room: ActiveRoom = { code: r.code, round: r.state?.round ?? 1, playerNames: names };
-      if (!map[r.game_kind]) map[r.game_kind] = [];
-      map[r.game_kind].push(room);
-    });
-    setLiveRooms(map);
-  }, []);
-
-  useEffect(() => {
-    fetchLiveRooms();
-    const interval = setInterval(fetchLiveRooms, 10_000);
-    return () => clearInterval(interval);
-  }, [fetchLiveRooms]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
   const handleGamePress = async (game: typeof GAMES[number]) => {
@@ -222,7 +189,7 @@ export default function GamesTab() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSheetLoading(true);
     setSheetGame({ id: game.id, title: game.title });
-    fetchLiveRooms().finally(() => setSheetLoading(false));
+    refreshRooms().finally(() => setSheetLoading(false));
   };
 
   const handleWatchRoom = (roomCode: string) => {

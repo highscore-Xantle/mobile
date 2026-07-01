@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../components/GradientFill';
+import { Avatar } from '../components/ui/Avatar';
 import { goBackOr } from '../lib/navigation';
 import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
@@ -22,6 +23,8 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [username, setUsername] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [country,   setCountry]   = useState<string | null>(null);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
 
   const { isOnline } = usePresence(session?.user?.id ?? null);
@@ -47,7 +50,7 @@ export default function Profile() {
     let active = true;
     supabase
       .from('profiles')
-      .select('username, created_at')
+      .select('username, avatar_url, country, created_at')
       .eq('id', session.user.id)
       .single()
       .then(({ data, error }) => {
@@ -56,6 +59,8 @@ export default function Profile() {
           setErrorMsg('Could not load your profile.');
         } else {
           setUsername(data.username);
+          setAvatarUrl(data.avatar_url ?? null);
+          setCountry(data.country ?? null);
           setJoinedAt(data.created_at);
         }
         setLoading(false);
@@ -194,9 +199,14 @@ export default function Profile() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.content}
           >
-            <View style={styles.avatar}>
-              <GradientFill colors={gradients.featured} />
-              <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
+            {/* Avatar — shows uploaded photo or letter fallback */}
+            <View style={styles.avatarWrap}>
+              <Avatar
+                letter={(username ?? '?').charAt(0)}
+                imageUrl={avatarUrl}
+                size={96}
+                showOnline={online}
+              />
             </View>
             <View style={[styles.statusBadge, online ? styles.statusOnline : styles.statusOffline]}>
               <View style={[styles.statusDot, { backgroundColor: online ? colors.success : colors.textMuted }]} />
@@ -204,6 +214,11 @@ export default function Profile() {
                 {online ? 'Online' : 'Offline'}
               </Text>
             </View>
+            {country ? (
+              <View style={styles.countryBadge}>
+                <Text style={styles.countryText}>{country}</Text>
+              </View>
+            ) : null}
             {editing ? (
               <View style={styles.editWrap}>
                 <View
@@ -343,17 +358,9 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   content: { alignItems: 'center', paddingTop: space.md, paddingBottom: space.xl },
-  avatar: {
-    width: 96,
-    height: 96,
-    borderRadius: radius.pill,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
+  avatarWrap: {
     marginBottom: space.sm,
-    ...shadow.blueGlow,
   },
-  avatarLetter: { fontFamily: font.extrabold, fontSize: 38, color: colors.white },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -366,6 +373,16 @@ const styles = StyleSheet.create({
   statusOnline: { backgroundColor: 'rgba(74,222,128,0.12)' },
   statusOffline: { backgroundColor: 'rgba(147,155,167,0.10)' },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
+  countryBadge: {
+    backgroundColor: colors.surfaceAlt,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    marginBottom: space.md,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+  },
+  countryText: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted },
   username: { marginBottom: space.xs },
   email: { marginBottom: space.xl },
 

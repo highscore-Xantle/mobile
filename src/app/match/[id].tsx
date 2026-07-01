@@ -89,7 +89,37 @@ export default function MatchDetails() {
   const diff = match.state?.difficulty === 'hardcore' ? 'hard' : (match.state?.difficulty === 'auto' ? 'medium' : 'easy');
 
   const isNumberDuel = match.game_kind === 'number-duel';
-  const history = match.state?.matchHistory || [];
+  const history: any[] = match.state?.matchHistory || [];
+
+  // ── Compute per-player stats from match history ──────────────────────────
+  const hostWins  = history.filter((r) => r.winner === 'host').length;
+  const guestWins = history.filter((r) => r.winner === 'guest').length;
+
+  function avgGuesses(side: 'host' | 'guest') {
+    const won = history.filter((r) => r.winner === side);
+    if (won.length === 0) return 0;
+    return Math.round(won.reduce((s, r) => s + (r.guesses ?? 0), 0) / won.length);
+  }
+  function bestRound(side: 'host' | 'guest') {
+    const won = history.filter((r) => r.winner === side);
+    if (won.length === 0) return '—';
+    return String(Math.min(...won.map((r) => r.guesses ?? Infinity)));
+  }
+
+  // ── Match duration (minutes) from timestamps ─────────────────────────────
+  let durationText = '—';
+  if (match.started_at && match.finished_at) {
+    const ms = new Date(match.finished_at).getTime() - new Date(match.started_at).getTime();
+    const mins = Math.round(ms / 60_000);
+    durationText = `${mins} min`;
+  }
+
+  const overallWinner: 'host' | 'guest' | 'draw' =
+    scoreA > scoreB ? 'host' : scoreB > scoreA ? 'guest' : 'draw';
+  const winnerName = overallWinner === 'host' ? nameA : overallWinner === 'guest' ? nameB : null;
+  const matchDate = match.finished_at
+    ? new Date(match.finished_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+    : null;
 
   return (
     <View style={styles.root}>
@@ -110,6 +140,56 @@ export default function MatchDetails() {
             />
           </Animated.View>
 
+          {/* Winner banner */}
+          {isNumberDuel && history.length > 0 && (
+            <Animated.View entering={FadeInDown.springify().damping(15).delay(120)}>
+              <View style={[styles.winnerBanner, overallWinner !== 'draw' && styles.winnerBannerGold]}>
+                {overallWinner !== 'draw' && <GradientFill colors={['rgba(251,191,36,0.15)', 'rgba(251,191,36,0.04)']} />}
+                <Text style={styles.winnerEmoji}>
+                  {overallWinner === 'draw' ? '🤝' : '🏆'}
+                </Text>
+                <Text style={styles.winnerBannerText}>
+                  {overallWinner === 'draw'
+                    ? `It's a draw!`
+                    : `${winnerName} wins!`}
+                </Text>
+              </View>
+            </Animated.View>
+          )}
+
+          {/* Player stats */}
+          {isNumberDuel && history.length > 0 && (
+            <Animated.View entering={FadeInDown.springify().damping(15).delay(180)}>
+              <Text style={styles.sectionTitle}>Player Stats</Text>
+              <View style={styles.statsGrid}>
+                {[
+                  { name: nameA, wins: hostWins,  avg: avgGuesses('host'),  best: bestRound('host'),  side: 'host'  as const },
+                  { name: nameB, wins: guestWins, avg: avgGuesses('guest'), best: bestRound('guest'), side: 'guest' as const },
+                ].map(({ name, wins, avg, best, side }) => (
+                  <View key={side} style={styles.playerStatCard}>
+                    <Text style={styles.playerStatName} numberOfLines={1}>{name}</Text>
+                    <View style={styles.playerStatRow}>
+                      <View style={styles.playerStatItem}>
+                        <Text style={styles.playerStatNum}>{wins}</Text>
+                        <Text style={styles.playerStatLabel}>Rounds{`\n`}Won</Text>
+                      </View>
+                      <View style={styles.statDivider} />
+                      <View style={styles.playerStatItem}>
+                        <Text style={styles.playerStatNum}>{avg || '—'}</Text>
+                        <Text style={styles.playerStatLabel}>Avg{`\n`}Guesses</Text>
+                      </View>
+                      <View style={styles.statDivider} />
+                      <View style={styles.playerStatItem}>
+                        <Text style={styles.playerStatNum}>{best}</Text>
+                        <Text style={styles.playerStatLabel}>Best{`\n`}Round</Text>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </Animated.View>
+          )}
+
           <Text style={styles.sectionTitle}>Round Breakdown</Text>
 
           {isNumberDuel ? (
@@ -117,7 +197,7 @@ export default function MatchDetails() {
               <View style={styles.historyList}>
                 {history.map((r: any, i: number) => (
                   <Animated.View key={i} entering={FadeInDown.springify().damping(15).delay(i * 50)}>
-                    <View style={styles.historyCard}>
+                    <View style={[styles.historyCard, r.winner === 'host' && styles.historyCardWinnerA, r.winner === 'guest' && styles.historyCardWinnerB]}>
                       <View style={styles.historyHeader}>
                         <View style={styles.roundPill}>
                           <Text style={styles.roundPillText}>R{r.round}</Text>
@@ -129,6 +209,8 @@ export default function MatchDetails() {
                             <Text style={{ color: r.winner === 'host' ? colors.cyan : colors.text }}>{r.winnerName}</Text> won
                           </Text>
                         )}
+                        <View style={{ flex: 1 }} />
+                        <Text style={styles.guessBadge}>{r.guesses ?? 0} guess{r.guesses !== 1 ? 'es' : ''}</Text>
                       </View>
                       
                       <View style={styles.historyStats}>
@@ -158,7 +240,36 @@ export default function MatchDetails() {
               <Text style={styles.emptyText}>Stats for {match.game_kind} coming soon.</Text>
             </View>
           )}
-          
+
+          {/* Match info footer */}
+          {(matchDate || durationText !== '—') && (
+            <Animated.View entering={FadeInDown.springify().damping(15).delay(300)}>
+              <View style={styles.matchInfoCard}>
+                <View style={styles.matchInfoRow}>
+                  <FontAwesome name="gamepad" size={13} color={colors.textFaint} />
+                  <Text style={styles.matchInfoLabel}>Game</Text>
+                  <Text style={styles.matchInfoValue}>
+                    {match.game_kind === 'number-duel' ? 'Number Duel 🔢' : match.game_kind}
+                  </Text>
+                </View>
+                {matchDate && (
+                  <View style={styles.matchInfoRow}>
+                    <FontAwesome name="calendar" size={13} color={colors.textFaint} />
+                    <Text style={styles.matchInfoLabel}>Date</Text>
+                    <Text style={styles.matchInfoValue}>{matchDate}</Text>
+                  </View>
+                )}
+                {durationText !== '—' && (
+                  <View style={styles.matchInfoRow}>
+                    <FontAwesome name="clock-o" size={13} color={colors.textFaint} />
+                    <Text style={styles.matchInfoLabel}>Duration</Text>
+                    <Text style={styles.matchInfoValue}>{durationText}</Text>
+                  </View>
+                )}
+              </View>
+            </Animated.View>
+          )}
+
           <View style={{ height: 40 }} />
         </ScrollView>
       </SafeAreaView>
@@ -318,5 +429,71 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textAlign: 'center',
     lineHeight: 20,
+  },
+
+  // Winner banner
+  winnerBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    padding: space.lg,
+    overflow: 'hidden',
+  },
+  winnerBannerGold: { borderColor: 'rgba(251,191,36,0.5)' },
+  winnerEmoji:      { fontSize: 36 },
+  winnerBannerText: { fontFamily: font.black, fontSize: 20, color: colors.text },
+
+  // Player stats
+  statsGrid: { gap: space.md, marginTop: space.sm },
+  playerStatCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    padding: space.md,
+    gap: space.sm,
+    ...shadow.card,
+  },
+  playerStatName: { fontFamily: font.black, fontSize: 15, color: colors.text },
+  playerStatRow:  { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  playerStatItem: { flex: 1, alignItems: 'center', gap: 2 },
+  playerStatNum:  { fontFamily: font.black, fontSize: 22, color: colors.blue },
+  playerStatLabel:{ fontFamily: font.semibold, fontSize: 11, color: colors.textMuted, textAlign: 'center' },
+
+  // History card extras
+  historyCardWinnerA: { borderColor: `${colors.cyan}40` },
+  historyCardWinnerB: { borderColor: `${colors.text}20` },
+  guessBadge: {
+    fontFamily: font.bold, fontSize: 11,
+    color: colors.textMuted,
+    backgroundColor: colors.surfaceAlt,
+    paddingHorizontal: 7, paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+
+  // Match info
+  matchInfoCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    padding: space.md,
+    gap: space.sm,
+    ...shadow.card,
+  },
+  matchInfoRow: {
+    flexDirection: 'row', alignItems: 'center',
+    gap: space.sm,
+  },
+  matchInfoLabel: {
+    fontFamily: font.bold, fontSize: 13, color: colors.textMuted,
+    width: 70,
+  },
+  matchInfoValue: {
+    fontFamily: font.semibold, fontSize: 13, color: colors.text, flex: 1,
   },
 });
