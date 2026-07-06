@@ -1,11 +1,12 @@
 
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Haptics from 'expo-haptics';
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -29,6 +30,9 @@ import { supabase } from '../lib/supabase';
 import { colors, font, gradients, radius, shadow, space } from '../theme';
 
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const RESEND_COOLDOWN_S = 30;
+
 export default function Login() {
   const router = useRouter();
 
@@ -39,6 +43,12 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [resendIn, setResendIn] = useState(0);
+  const [oauthLoading, setOauthLoading] = useState<'google' | 'apple' | null>(null);
+
+  const emailInputRef = useRef<TextInput>(null);
+  const otpInputRef = useRef<TextInput>(null);
+  const emailValid = EMAIL_RE.test(email.trim());
 
   // Improved Animations (Spring + Stagger)
   const logoIn = useSharedValue(0);
@@ -48,7 +58,23 @@ export default function Login() {
     logoIn.value = withSpring(1, { damping: 14, stiffness: 90 });
     formIn.value = withDelay(150, withSpring(1, { damping: 15, stiffness: 100 }));
   }, []);
-  
+
+  // Resend-code cooldown ticker
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const id = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendIn]);
+
+  // Auto-verify as soon as the 6th digit lands — no extra tap needed
+  useEffect(() => {
+    if (isVerifying && otp.length === 6 && !loading) {
+      verifyOtp();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otp]);
+
+
   const logoStyle = useAnimatedStyle(() => ({
     opacity: withTiming(logoIn.value, { duration: 400 }),
     transform: [{ translateY: (1 - logoIn.value) * -20 }, { scale: 0.95 + (logoIn.value * 0.05) }],
@@ -69,36 +95,51 @@ export default function Login() {
 
   const sendOtp = async () => {
     haptic();
-    if (!email) { setErrorMsg('Please enter your email.'); return; }
+    const trimmed = email.trim();
+    if (!trimmed) { setErrorMsg('Please enter your email.'); return; }
+    if (!EMAIL_RE.test(trimmed)) { setErrorMsg('That email address doesn’t look right.'); return; }
     setLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
 
-    const { error } = await supabase.auth.signInWithOtp({ email });
+    const { error } = await supabase.auth.signInWithOtp({ email: trimmed });
     setLoading(false);
 
     if (error) {
       setErrorMsg(error.message);
     } else {
-      setSuccessMsg(`We sent a 6-digit code to ${email}`);
+      setSuccessMsg(`We sent a 6-digit code to ${trimmed}`);
       setIsVerifying(true);
+      setResendIn(RESEND_COOLDOWN_S);
+      setTimeout(() => otpInputRef.current?.focus(), 50);
     }
+  };
+
+  const changeEmail = () => {
+    haptic();
+    setIsVerifying(false);
+    setOtp('');
+    setErrorMsg('');
+    setSuccessMsg('');
+    setResendIn(0);
+    setTimeout(() => emailInputRef.current?.focus(), 50);
   };
 
   const verifyOtp = async () => {
     haptic();
-    if (!otp) { setErrorMsg('Please enter the 6-digit code.'); return; }
+    if (otp.length !== 6) { setErrorMsg('Please enter the 6-digit code.'); return; }
     setLoading(true);
     setErrorMsg('');
 
-    const { data, error } = await supabase.auth.verifyOtp({ email, token: otp, type: 'email' });
+    const { data, error } = await supabase.auth.verifyOtp({ email: email.trim(), token: otp, type: 'email' });
     setLoading(false);
 
     if (error) {
       setErrorMsg(error.message);
+      setOtp('');
       return;
     }
-    
+
     // Auth successful
     handleAuthResult(null, data);
   };
@@ -110,6 +151,7 @@ export default function Login() {
   // expo-apple-authentication (the current SDK-54 build must be rebuilt).
   const signInWithApple = async () => {
     setErrorMsg('');
+    setOauthLoading('apple');
     try {
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
@@ -128,13 +170,50 @@ export default function Login() {
       handleAuthResult(error, data);
     } catch (e: any) {
       if (e.code !== 'ERR_REQUEST_CANCELED') setErrorMsg('Apple sign-in failed. Please try again.');
+    } finally {
+      setOauthLoading(null);
     }
   };
 
-  // Google sign-in is Promise's task (native @react-native-google-signin). Until
-  // that native build lands, the Google button shows "coming soon".
-  const comingSoon = (provider: string) => () =>
-    Alert.alert('Coming soon', `${provider} sign-in arrives in a later update — use email for now.`);
+  // Google sign-in: Supabase OAuth (PKCE) opened in an in-app browser tab via
+  // expo-web-browser, then redirected back to the app's `xantle://` scheme.
+  // Requires the Google provider to be enabled in the Supabase dashboard.
+  const signInWithGoogle = async () => {
+    haptic();
+    setErrorMsg('');
+    setOauthLoading('google');
+    try {
+      const redirectTo = Linking.createURL('auth/callback');
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo, skipBrowserRedirect: true },
+      });
+      if (error || !data?.url) {
+        setErrorMsg(error?.message ?? 'Could not start Google sign-in.');
+        return;
+      }
+
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type !== 'success') {
+        // User cancelled/dismissed the browser — not an error worth surfacing.
+        return;
+      }
+
+      const { queryParams } = Linking.parse(result.url);
+      const code = queryParams?.code;
+      if (typeof code !== 'string') {
+        setErrorMsg('Google sign-in did not return a valid code.');
+        return;
+      }
+
+      const { data: sessionData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+      handleAuthResult(exchangeError, sessionData);
+    } catch {
+      setErrorMsg('Google sign-in failed. Please try again.');
+    } finally {
+      setOauthLoading(null);
+    }
+  };
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -172,15 +251,19 @@ export default function Login() {
               chipBg={colors.surfaceAlt}
               label="Continue with Apple"
               onPress={signInWithApple}
+              loading={oauthLoading === 'apple'}
+              disabled={oauthLoading !== null}
             />
           )}
 
-          {/* Google — coming soon, wired by Valiant */}
+          {/* Google — Supabase OAuth via in-app browser */}
           <SocialButton
             icon={<FontAwesome name="google" size={20} color={colors.text} />}
             chipBg={colors.surfaceAlt}
             label="Continue with Google"
-            onPress={comingSoon('Google')}
+            onPress={signInWithGoogle}
+            loading={oauthLoading === 'google'}
+            disabled={oauthLoading !== null}
           />
 
           {/* Divider */}
@@ -204,19 +287,26 @@ export default function Login() {
                 <>
                   <View style={styles.inputCard}>
                     <TextInput
+                      ref={emailInputRef}
                       style={styles.input}
                       placeholder="Email"
                       placeholderTextColor={colors.textFaint}
                       autoCapitalize="none"
+                      autoCorrect={false}
                       keyboardType="email-address"
+                      textContentType="emailAddress"
+                      autoComplete="email"
+                      autoFocus
+                      returnKeyType="send"
+                      onSubmitEditing={sendOtp}
                       value={email}
-                      onChangeText={setEmail}
+                      onChangeText={(v) => { setEmail(v); if (errorMsg) setErrorMsg(''); }}
                     />
                   </View>
                   <Pressable
-                    style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+                    style={({ pressed }) => [styles.cta, pressed && styles.pressed, (!emailValid || loading) && styles.ctaDisabled]}
                     onPress={sendOtp}
-                    disabled={loading}
+                    disabled={loading || !emailValid}
                   >
                     <View style={styles.ctaInner}>
                       <GradientFill colors={gradients.button} />
@@ -231,19 +321,25 @@ export default function Login() {
                 <>
                   <View style={styles.inputCard}>
                     <TextInput
+                      ref={otpInputRef}
                       style={styles.input}
                       placeholder="6-digit code"
                       placeholderTextColor={colors.textFaint}
                       keyboardType="number-pad"
+                      textContentType="oneTimeCode"
+                      autoComplete="one-time-code"
+                      autoFocus
                       maxLength={6}
+                      returnKeyType="done"
+                      onSubmitEditing={verifyOtp}
                       value={otp}
-                      onChangeText={setOtp}
+                      onChangeText={(v) => { setOtp(v.replace(/[^0-9]/g, '')); if (errorMsg) setErrorMsg(''); }}
                     />
                   </View>
                   <Pressable
-                    style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+                    style={({ pressed }) => [styles.cta, pressed && styles.pressed, (otp.length !== 6 || loading) && styles.ctaDisabled]}
                     onPress={verifyOtp}
-                    disabled={loading}
+                    disabled={loading || otp.length !== 6}
                   >
                     <View style={styles.ctaInner}>
                       <GradientFill colors={gradients.button} />
@@ -253,6 +349,16 @@ export default function Login() {
                       }
                     </View>
                   </Pressable>
+                  <View style={styles.otpFooter}>
+                    <Pressable onPress={changeEmail} hitSlop={8}>
+                      <Text style={styles.linkText}>Change email</Text>
+                    </Pressable>
+                    <Pressable onPress={sendOtp} disabled={resendIn > 0 || loading} hitSlop={8}>
+                      <Text style={[styles.linkText, resendIn > 0 && styles.linkTextDim]}>
+                        {resendIn > 0 ? `Resend code (${resendIn}s)` : 'Resend code'}
+                      </Text>
+                    </Pressable>
+                  </View>
                 </>
               )}
             </View>
@@ -266,19 +372,24 @@ export default function Login() {
 
 /** Reusable social button row with left icon chip */
 function SocialButton({
-  icon, chipBg, label, onPress,
+  icon, chipBg, label, onPress, loading, disabled,
 }: {
   icon: React.ReactNode;
   chipBg: string;
   label: string;
   onPress: () => void;
+  loading?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
-      style={({ pressed }) => [styles.socialBtn, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.socialBtn, pressed && !disabled && styles.pressed, disabled && styles.socialBtnDisabled]}
       onPress={onPress}
+      disabled={disabled}
     >
-      <View style={[styles.iconChip, { backgroundColor: chipBg }]}>{icon}</View>
+      <View style={[styles.iconChip, { backgroundColor: chipBg }]}>
+        {loading ? <ActivityIndicator size="small" color={colors.text} /> : icon}
+      </View>
       <Text style={styles.socialLabel}>{label}</Text>
     </Pressable>
   );
@@ -338,6 +449,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.hairline,
   },
+  socialBtnDisabled: { opacity: 0.5 },
   iconChip: {
     width: 44,
     height: 44,
@@ -382,8 +494,14 @@ const styles = StyleSheet.create({
 
   // CTA
   cta: { borderRadius: radius.lg, overflow: 'hidden', ...shadow.blueGlow },
+  ctaDisabled: { opacity: 0.5, shadowOpacity: 0, elevation: 0 },
   ctaInner: { paddingVertical: 20, alignItems: 'center', justifyContent: 'center' },
   ctaText: { fontFamily: font.extrabold, fontSize: 17, color: colors.white, letterSpacing: 0.4 },
+
+  // OTP footer links
+  otpFooter: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: space.xs },
+  linkText: { fontFamily: font.bold, fontSize: 13, color: colors.blue },
+  linkTextDim: { color: colors.textFaint },
 
   // Success banner
   successBox: {

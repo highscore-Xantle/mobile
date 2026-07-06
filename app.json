@@ -48,6 +48,12 @@
         {
           "color": "#3B9DE7"
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Xantle uses your location to fill in your city, state, and country on your profile."
+        }
       ]
     ],
     "experiments": {
