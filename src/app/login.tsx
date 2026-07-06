@@ -5,7 +5,6 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -26,6 +25,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome } from '@expo/vector-icons';
 import { GradientFill } from '../components/GradientFill';
 import { supabase } from '../lib/supabase';
+import { signInWithGoogle, statusCodes } from '../lib/googleAuth';
 import { colors, font, gradients, radius, shadow, space } from '../theme';
 
 
@@ -131,10 +131,23 @@ export default function Login() {
     }
   };
 
-  // Google sign-in is Promise's task (native @react-native-google-signin). Until
-  // that native build lands, the Google button shows "coming soon".
-  const comingSoon = (provider: string) => () =>
-    Alert.alert('Coming soon', `${provider} sign-in arrives in a later update — use email for now.`);
+  // Native Google sign-in → our google-verify Edge Function → Supabase session.
+  // Needs a dev build that includes @react-native-google-signin (rebuild the
+  // SDK-54 dev client). Cancels are silent; other failures surface an error.
+  const signInWithGoogle_ = async () => {
+    setErrorMsg('');
+    setLoading(true);
+    try {
+      const data = await signInWithGoogle();
+      await handleAuthResult(null, data);
+    } catch (e: any) {
+      if (e?.code !== statusCodes.SIGN_IN_CANCELLED) {
+        setErrorMsg(e?.message ?? 'Google sign-in failed. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -175,12 +188,12 @@ export default function Login() {
             />
           )}
 
-          {/* Google — coming soon, wired by Valiant */}
+          {/* Google — native sign-in verified through our Edge Function */}
           <SocialButton
             icon={<FontAwesome name="google" size={20} color={colors.text} />}
             chipBg={colors.surfaceAlt}
             label="Continue with Google"
-            onPress={comingSoon('Google')}
+            onPress={signInWithGoogle_}
           />
 
           {/* Divider */}
