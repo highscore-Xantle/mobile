@@ -11,19 +11,25 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Linking from 'expo-linking';
+import QRCode from 'react-native-qrcode-svg';
+import { supabase } from '../../lib/supabase';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
+import { computeBotSolveDelayMs, getRecentWinRate } from '../../lib/botOpponent';
 import {
   DEFAULT_PUZZLE_IMAGE,
   autoAdvanceRound,
   gridForRound,
+  joinGame,
   leaveGame,
   playerLabel,
   requestRematch,
   seedFor,
   setRoundImage,
   startGame,
+  submitBotSolve,
   submitSolve,
   useGame,
   type GamePlayer,
@@ -39,13 +45,27 @@ export default function GameScreen() {
 
   const { game, players, round, loading, error } = useGame(code);
   const isHost = game?.host_id === myId;
+  const botPlayer = players.find((p) => p.is_bot) ?? null;
 
   // Track whether this client has submitted a solve for the current round.
   const [mySolved, setMySolved] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [winRate, setWinRate] = useState(0);
+  const [shareState, setShareState] = useState<'idle' | 'busy' | 'done'>('idle');
+  const botTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset solved flag when a new round starts.
   useEffect(() => { setMySolved(false); }, [round?.round_no]);
+
+  // Auto-join: landing here via a QR scan / deep link seats the scanner as a
+  // player instead of leaving them as a bystander.
+  useEffect(() => {
+    if (!game || !code || !myId) return;
+    if (game.status !== 'lobby') return;
+    if (players.some((p) => p.user_id === myId)) return;
+    if (players.length >= game.max_players) return;
+    joinGame(code).catch(console.warn);
+  }, [game?.id, game?.status, game?.max_players, code, myId, players]);
 
   // Host: automatically set the round image when a new round needs one.
   useEffect(() => {
@@ -61,6 +81,27 @@ export default function GameScreen() {
     if (round.status !== 'done') return;
     autoAdvanceRound(game.id, round.round_no).catch(console.warn);
   }, [game?.id, round?.status, round?.round_no]);
+
+  // Bot matches: look up the human's win rate once, to scale the bot's pace.
+  useEffect(() => {
+    if (!botPlayer || !myId) return;
+    getRecentWinRate(myId).then(setWinRate).catch(() => setWinRate(0));
+  }, [botPlayer?.id, myId]);
+
+  // Bot matches: schedule the bot's "solve" for the current round at a
+  // deterministic, skill-scaled delay. A late submit after the human already
+  // won is a harmless no-op (same atomic guard as a human's submit_solve).
+  useEffect(() => {
+    if (botTimerRef.current) { clearTimeout(botTimerRef.current); botTimerRef.current = null; }
+    if (!game || !round || !botPlayer) return;
+    if (round.status !== 'racing') return;
+    const grid = gridForRound(game.current_round);
+    const delay = computeBotSolveDelayMs(game.id, round.round_no, grid, winRate);
+    botTimerRef.current = setTimeout(() => {
+      submitBotSolve(game.id, round.round_no, delay).catch(console.warn);
+    }, delay);
+    return () => { if (botTimerRef.current) clearTimeout(botTimerRef.current); };
+  }, [game?.id, game?.current_round, round?.status, round?.round_no, botPlayer?.id, winRate]);
 
   async function handleStart() {
     if (!game || actionBusy) return;
@@ -110,10 +151,34 @@ export default function GameScreen() {
 
   async function shareCode() {
     if (!game) return;
+    const link = Linking.createURL(`/game/${game.invite_code}`);
     await Share.share({
-      message: `Join my Pixel Rush game on Xantle! Code: ${game.invite_code}`,
+      message: `Join my Pixel Rush game on Xantle! Code: ${game.invite_code}\n${link}`,
       title: 'Join Pixel Rush',
     });
+  }
+
+  async function handleShareToHome() {
+    if (!game || shareState !== 'idle') return;
+    setShareState('busy');
+    try {
+      const me = players.find((p) => p.user_id === myId);
+      const opponent = players.find((p) => p.user_id !== myId);
+      const oppLabel = opponent ? (opponent.is_bot ? 'the machine' : `@${playerLabel(opponent)}`) : 'an opponent';
+      const resultText = iWon
+        ? `Won ${me?.score ?? 0}–${opponent?.score ?? 0} vs ${oppLabel} in Pixel Rush`
+        : `Played Pixel Rush vs ${oppLabel} (${me?.score ?? 0}–${opponent?.score ?? 0})`;
+      const { error: shareError } = await supabase.rpc('share_win', {
+        p_game_type: 'pixel_rush',
+        p_result_text: resultText,
+        p_match_id: game.id,
+      });
+      if (shareError) throw shareError;
+      setShareState('done');
+    } catch (e) {
+      setShareState('idle');
+      Alert.alert('Could not share', (e as Error).message);
+    }
   }
 
   // ── Loading / error shells ──────────────────────────────────
@@ -157,6 +222,15 @@ export default function GameScreen() {
               <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
               <Text style={styles.codeLabel}>INVITE CODE</Text>
               <Text style={styles.codeText}>{game.invite_code}</Text>
+              <View style={styles.qrWrap}>
+                <QRCode
+                  value={Linking.createURL(`/game/${game.invite_code}`)}
+                  size={140}
+                  backgroundColor={colors.white}
+                  color={colors.bg}
+                />
+              </View>
+              <Text style={styles.qrHint}>Scan to join</Text>
               <Pressable
                 style={({ pressed }) => [styles.shareBtn, pressed && styles.pressed]}
                 onPress={shareCode}
@@ -213,9 +287,11 @@ export default function GameScreen() {
     const startedAt = round?.started_at ? new Date(round.started_at).getTime() : Date.now();
     const imageUrl = round?.image_url ?? DEFAULT_PUZZLE_IMAGE;
     const isRacing = round?.status === 'racing';
-    const winnerPlayer = round?.winner_player
-      ? players.find(p => p.user_id === round.winner_player)
-      : null;
+    const winnerPlayer = round?.winner_is_bot
+      ? botPlayer
+      : round?.winner_player
+        ? players.find(p => p.user_id === round.winner_player)
+        : null;
 
     return (
       <View style={styles.root}>
@@ -277,10 +353,13 @@ export default function GameScreen() {
 
   // ── Finished ────────────────────────────────────────────────
 
-  const overallWinner = game.winner_player
-    ? players.find(p => p.user_id === game.winner_player)
-    : null;
-  const iWon = overallWinner?.user_id === myId;
+  const overallWinner = game.winner_is_bot
+    ? botPlayer
+    : game.winner_player
+      ? players.find(p => p.user_id === game.winner_player)
+      : null;
+  const iWon = !!overallWinner && overallWinner.user_id === myId;
+  const hasBot = !!botPlayer;
 
   return (
     <View style={styles.root}>
@@ -310,13 +389,24 @@ export default function GameScreen() {
 
           <Pressable
             style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
-            onPress={handleRematch}
+            onPress={hasBot ? () => router.replace('/games/pixel-rush') : handleRematch}
             disabled={actionBusy}
           >
             <GradientFill colors={gradients.button} />
             {actionBusy
               ? <ActivityIndicator color={colors.white} />
-              : <Text style={styles.primaryBtnText}>Rematch</Text>
+              : <Text style={styles.primaryBtnText}>{hasBot ? 'Find another match' : 'Rematch'}</Text>
+            }
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.outlineBtn, { marginTop: space.sm }, pressed && styles.pressed]}
+            onPress={handleShareToHome}
+            disabled={shareState !== 'idle'}
+          >
+            {shareState === 'busy'
+              ? <ActivityIndicator color={colors.textMuted} />
+              : <Text style={styles.outlineBtnText}>{shareState === 'done' ? 'Shared ✓' : 'Share to Home'}</Text>
             }
           </Pressable>
 
@@ -448,6 +538,8 @@ const styles = StyleSheet.create({
     borderColor: colors.hairline,
   },
   shareBtnText: { fontFamily: font.bold, fontSize: 14, color: colors.text },
+  qrWrap: { marginTop: space.sm, padding: space.sm, backgroundColor: colors.white, borderRadius: radius.md },
+  qrHint: { fontFamily: font.semibold, fontSize: 12, color: colors.textFaint },
 
   playerList: {
     backgroundColor: colors.surface,

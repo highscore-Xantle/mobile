@@ -14,6 +14,7 @@ export type Game = {
   current_round: number;
   rounds_total: number;
   winner_player: string | null;
+  winner_is_bot: boolean;
   started_at: string | null;
   finished_at: string | null;
 };
@@ -21,9 +22,10 @@ export type Game = {
 export type GamePlayer = {
   id: string;
   game_id: string;
-  user_id: string;
+  user_id: string | null;
   guest_name: string | null;
   is_host: boolean;
+  is_bot: boolean;
   score: number;
   trophies: number;
   joined_at: string;
@@ -37,6 +39,7 @@ export type GameRound = {
   status: 'awaiting_image' | 'racing' | 'done';
   started_at: string | null;
   winner_player: string | null;
+  winner_is_bot: boolean;
   winner_time_ms: number | null;
 };
 
@@ -150,9 +153,9 @@ export function useGame(code: string | undefined) {
   return { game, players, round, loading, error };
 }
 
-export async function createPixelRushGame(): Promise<Game> {
+export async function createPixelRushGame(max: number = 2): Promise<Game> {
   const { data, error } = await supabase
-    .rpc('create_game', { p_kind: '1v1', p_max: 2, p_type: 'pixel_rush' })
+    .rpc('create_game', { p_kind: max > 2 ? 'group' : '1v1', p_max: max, p_type: 'pixel_rush' })
     .select()
     .single();
   if (error) throw error;
@@ -203,5 +206,43 @@ export async function requestRematch(gameId: string): Promise<void> {
 
 export async function leaveGame(gameId: string): Promise<void> {
   const { error } = await supabase.rpc('leave_game', { p_game_id: gameId });
+  if (error) throw error;
+}
+
+/**
+ * Pairs with another open-matchmaking player if one's waiting; otherwise
+ * queues the caller. Idempotent — safe (and expected) to call repeatedly
+ * while waiting, since two players who queue moments apart won't discover
+ * each other until one of them polls again.
+ */
+export async function enqueueOrMatch(type: string = 'pixel_rush'): Promise<Game | null> {
+  const { data, error } = await supabase
+    .rpc('enqueue_or_match', { p_type: type })
+    .select()
+    .maybeSingle();
+  if (error) throw error;
+  return (data as Game) ?? null;
+}
+
+export async function leaveQueue(type: string = 'pixel_rush'): Promise<void> {
+  const { error } = await supabase.rpc('leave_queue', { p_type: type });
+  if (error) throw error;
+}
+
+export async function createBotMatch(type: string = 'pixel_rush'): Promise<Game> {
+  const { data, error } = await supabase
+    .rpc('create_bot_match', { p_type: type })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Game;
+}
+
+export async function submitBotSolve(gameId: string, round: number, timeMs: number): Promise<void> {
+  const { error } = await supabase.rpc('submit_bot_solve', {
+    p_game_id: gameId,
+    p_round: round,
+    p_time_ms: timeMs,
+  });
   if (error) throw error;
 }

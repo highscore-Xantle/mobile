@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
+import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { colors, font, gradients, space } from '../../theme';
 
 /**
@@ -14,6 +15,7 @@ export default function NotificationsTab() {
       <SafeAreaView style={styles.safe}>
         <View style={styles.topBar}>
           <Text style={styles.title}>Alerts</Text>
+          <HeaderAvatar />
         </View>
         <View style={styles.center}>
           <Text style={styles.emoji}>🔔</Text>
@@ -28,7 +30,7 @@ export default function NotificationsTab() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1, paddingHorizontal: space.lg },
-  topBar: { paddingTop: space.sm, paddingBottom: space.lg },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: space.sm, paddingBottom: space.lg },
   title: { fontFamily: font.black, fontSize: 28, color: colors.text },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.sm },
   emoji: { fontSize: 56, marginBottom: space.sm },

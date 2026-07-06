@@ -6,13 +6,34 @@ import { FontAwesome } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { GradientFill } from '../../components/GradientFill';
 import { RoundScoreboard } from '../../components/RoundScoreboard';
+import { gridForRound } from '../../lib/usePixelGame';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 import { goBackOr } from '../../lib/navigation';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
+// Normalizes a Pixel Rush `games` row into the same shape the rest of this
+// screen expects from a Number Duel `rooms` row, so the scoreboard/JSX below
+// doesn't need to branch beyond the round-breakdown section.
+function normalizePixelRushMatch(data: any) {
+  const players = (data.game_players ?? []).map((p: any) => ({
+    user_id: p.user_id,
+    display_name: p.guest_name,
+    is_host: p.is_host,
+    score: p.score,
+    profiles: { username: p.profile?.username ?? null },
+  }));
+  const rounds = [...(data.game_rounds ?? [])].sort((a: any, b: any) => a.round_no - b.round_no);
+  return {
+    game_kind: 'pixel_rush',
+    room_players: players,
+    state: { rounds: data.rounds_total, round: data.current_round },
+    pixelRounds: rounds,
+  };
+}
+
 export default function MatchDetails() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, gameType } = useLocalSearchParams<{ id: string; gameType?: string }>();
 
   const [loading, setLoading] = useState(true);
   const [match, setMatch] = useState<any>(null);
@@ -21,6 +42,28 @@ export default function MatchDetails() {
   useEffect(() => {
     async function fetchMatch() {
       setLoading(true);
+
+      if (gameType === 'pixel_rush') {
+        const { data, error: dbError } = await supabase
+          .from('games')
+          .select(`
+            *,
+            game_players ( user_id, guest_name, is_host, is_bot, score, profile:user_id ( username ) ),
+            game_rounds ( round_no, winner_player, winner_is_bot, winner_time_ms, status )
+          `)
+          .eq('id', id)
+          .single();
+
+        if (dbError) {
+          console.error('Match fetch error:', dbError);
+          setError(`Failed to load match details. ${dbError.message || JSON.stringify(dbError)}`);
+        } else if (data) {
+          setMatch(normalizePixelRushMatch(data));
+        }
+        setLoading(false);
+        return;
+      }
+
       const { data, error: dbError } = await supabase
         .from('rooms')
         .select(`
@@ -45,7 +88,7 @@ export default function MatchDetails() {
       setLoading(false);
     }
     if (id) fetchMatch();
-  }, [id]);
+  }, [id, gameType]);
 
   if (loading) {
     return (
@@ -86,10 +129,14 @@ export default function MatchDetails() {
   const scoreB = match.state?.guestScore ?? guestPlayer?.score ?? 0;
   const totalRounds = match.state?.rounds ?? 12;
   const round = match.state?.round ?? 1;
-  const diff = match.state?.difficulty === 'hardcore' ? 'hard' : (match.state?.difficulty === 'auto' ? 'medium' : 'easy');
 
   const isNumberDuel = match.game_kind === 'number-duel';
+  const isPixelRush = match.game_kind === 'pixel_rush';
   const history = match.state?.matchHistory || [];
+  const pixelHistory: any[] = match.pixelRounds || [];
+  const diff = isPixelRush
+    ? (gridForRound(round) <= 3 ? 'easy' : gridForRound(round) >= 5 ? 'hard' : 'medium')
+    : (match.state?.difficulty === 'hardcore' ? 'hard' : (match.state?.difficulty === 'auto' ? 'medium' : 'easy'));
 
   return (
     <View style={styles.root}>
@@ -151,6 +198,49 @@ export default function MatchDetails() {
                 <FontAwesome name="history" size={24} color={colors.textMuted} />
                 <Text style={styles.emptyText}>No round history available for this match.</Text>
                 <Text style={styles.emptySub}>Matches played before history tracking was added won't show breakdowns.</Text>
+              </View>
+            )
+          ) : isPixelRush ? (
+            pixelHistory.length > 0 ? (
+              <View style={styles.historyList}>
+                {pixelHistory.map((r: any, i: number) => {
+                  const winnerRow = r.winner_is_bot
+                    ? match.room_players?.find((p: any) => !p.is_host)
+                    : r.winner_player
+                      ? match.room_players?.find((p: any) => p.user_id === r.winner_player)
+                      : null;
+                  const winnerName = winnerRow?.display_name || winnerRow?.profiles?.username || null;
+                  return (
+                    <Animated.View key={r.round_no} entering={FadeInDown.springify().damping(15).delay(i * 50)}>
+                      <View style={styles.historyCard}>
+                        <View style={styles.historyHeader}>
+                          <View style={styles.roundPill}>
+                            <Text style={styles.roundPillText}>R{r.round_no}</Text>
+                          </View>
+                          {winnerName ? (
+                            <Text style={styles.winnerText}>{winnerName} won</Text>
+                          ) : (
+                            <Text style={styles.winnerText}>No solve</Text>
+                          )}
+                        </View>
+
+                        <View style={styles.historyStats}>
+                          <View style={styles.statBox}>
+                            <Text style={styles.statLabel}>SOLVE TIME</Text>
+                            <Text style={styles.statValue}>
+                              {r.winner_time_ms ? `${(r.winner_time_ms / 1000).toFixed(1)}s` : '—'}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    </Animated.View>
+                  );
+                })}
+              </View>
+            ) : (
+              <View style={styles.emptyCard}>
+                <FontAwesome name="history" size={24} color={colors.textMuted} />
+                <Text style={styles.emptyText}>No round history available for this match.</Text>
               </View>
             )
           ) : (

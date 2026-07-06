@@ -175,9 +175,9 @@ export const WinCard = memo(function WinCard({ post, onLike, onComment }: WinCar
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (post.match_id) {
       // Cast required until Expo Router regenerates its typed routes map after prebuild.
-      router.push({ pathname: '/match/[id]' as any, params: { id: post.match_id } });
+      router.push({ pathname: '/match/[id]' as any, params: { id: post.match_id, gameType: post.game_type } });
     }
-  }, [router, post.match_id]);
+  }, [router, post.match_id, post.game_type]);
 
   // ── Share ────────────────────────────────────────────────────────────────────
   const handleShare = useCallback(() => {

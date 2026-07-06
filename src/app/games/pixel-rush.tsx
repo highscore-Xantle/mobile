@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
   ScrollView,
   Share,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -17,12 +18,19 @@ import PixelBoard from '../../components/PixelBoard';
 import { goBackOr } from '../../lib/navigation';
 import {
   DEFAULT_PUZZLE_IMAGE,
+  createBotMatch,
   createPixelRushGame,
+  enqueueOrMatch,
   joinGame,
+  leaveQueue,
 } from '../../lib/usePixelGame';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
-type Screen = 'menu' | 'solo';
+type Screen = 'menu' | 'solo' | 'mode' | 'group-size' | 'onevone' | 'searching';
+
+const SEARCH_SECONDS = 30;
+const MIN_GROUP = 3;
+const MAX_GROUP = 8;
 
 export default function PixelRushScreen() {
   const router = useRouter();
@@ -30,6 +38,14 @@ export default function PixelRushScreen() {
   const [joinCode, setJoinCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+
+  // Group + 1v1 setup
+  const [groupSize, setGroupSize] = useState(4);
+  const [anyoneCanJoin, setAnyoneCanJoin] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(SEARCH_SECONDS);
+
+  const searchTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cancelledRef = useRef(false);
 
   // Solo puzzle state
   const [soloSeed, setSoloSeed] = useState(0);
@@ -43,17 +59,114 @@ export default function PixelRushScreen() {
     setScreen('solo');
   }
 
-  async function handleCreate() {
+  function stopSearching() {
+    if (searchTimerRef.current) { clearInterval(searchTimerRef.current); searchTimerRef.current = null; }
+  }
+
+  useEffect(() => stopSearching, []);
+
+  async function handleCreateGroup() {
     setBusy(true);
     setErr('');
     try {
-      const game = await createPixelRushGame();
+      const game = await createPixelRushGame(groupSize);
       router.push(`/game/${game.invite_code}`);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleContinueOneVOne() {
+    if (!anyoneCanJoin) {
+      setBusy(true);
+      setErr('');
+      try {
+        const game = await createPixelRushGame(2);
+        router.push(`/game/${game.invite_code}`);
+      } catch (e) {
+        setErr((e as Error).message);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    await startMatchmaking();
+  }
+
+  // Polls enqueue_or_match every few seconds instead of matching only once —
+  // two players who tap "anyone can join" moments apart won't see each other
+  // on their first call, so whoever polls next is what actually pairs them.
+  // The RPC is idempotent for an already-matched caller, so repeat calls are safe.
+  async function pollForMatch() {
+    if (cancelledRef.current) return;
+    try {
+      const game = await enqueueOrMatch('pixel_rush');
+      if (cancelledRef.current) return;
+      if (game) {
+        stopSearching();
+        router.push(`/game/${game.invite_code}`);
+      }
+    } catch (e) {
+      stopSearching();
+      setErr((e as Error).message);
+      setScreen('onevone');
+    }
+  }
+
+  async function startMatchmaking() {
+    setBusy(true);
+    setErr('');
+    cancelledRef.current = false;
+    try {
+      const game = await enqueueOrMatch('pixel_rush');
+      if (cancelledRef.current) return;
+      if (game) {
+        router.push(`/game/${game.invite_code}`);
+        return;
+      }
+
+      setScreen('searching');
+      setSecondsLeft(SEARCH_SECONDS);
+      setBusy(false);
+
+      let tick = 0;
+      searchTimerRef.current = setInterval(() => {
+        tick += 1;
+        if (tick % 3 === 0) pollForMatch();
+        setSecondsLeft((s) => {
+          if (s <= 1) {
+            handleSearchTimeout();
+            return 0;
+          }
+          return s - 1;
+        });
+      }, 1000);
+    } catch (e) {
+      setBusy(false);
+      setErr((e as Error).message);
+      setScreen('onevone');
+    }
+  }
+
+  async function handleSearchTimeout() {
+    stopSearching();
+    try {
+      await leaveQueue('pixel_rush');
+      const game = await createBotMatch('pixel_rush');
+      router.push(`/game/${game.invite_code}`);
+    } catch (e) {
+      setErr((e as Error).message);
+      setScreen('onevone');
+    }
+  }
+
+  function cancelSearching() {
+    cancelledRef.current = true;
+    stopSearching();
+    leaveQueue('pixel_rush').catch(() => {});
+    setScreen('onevone');
   }
 
   async function handleJoin() {
@@ -70,6 +183,8 @@ export default function PixelRushScreen() {
       setBusy(false);
     }
   }
+
+  // ── Solo ──────────────────────────────────────────────────────
 
   if (screen === 'solo') {
     return (
@@ -126,6 +241,202 @@ export default function PixelRushScreen() {
     );
   }
 
+  // ── Mode choice: Group vs 1v1 ──────────────────────────────────
+
+  if (screen === 'mode') {
+    return (
+      <View style={styles.root}>
+        <GradientFill colors={gradients.background} />
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.topBar}>
+            <Pressable
+              style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
+              onPress={() => { setErr(''); setScreen('menu'); }}
+            >
+              <Text style={styles.backGlyph}>‹</Text>
+            </Pressable>
+            <Text style={themeText.h2}>Play Multiplayer</Text>
+            <HeaderAvatar />
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.menuContent}>
+            <Pressable
+              style={({ pressed }) => [styles.modeCard, pressed && styles.pressed]}
+              onPress={() => setScreen('group-size')}
+            >
+              <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
+              <View style={styles.modeCardInner}>
+                <View style={styles.modeText}>
+                  <Text style={styles.modeTitle}>Group</Text>
+                  <Text style={styles.modeSub}>Pick a size, get a QR code, link, and join code to send out.</Text>
+                </View>
+                <Text style={styles.modeChevron}>›</Text>
+              </View>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [styles.modeCard, styles.modeCardBlue, pressed && styles.pressed]}
+              onPress={() => setScreen('onevone')}
+            >
+              <GradientFill colors={gradients.button} />
+              <View style={styles.modeCardInner}>
+                <View style={styles.modeText}>
+                  <Text style={[styles.modeTitle, styles.modeTitleWhite]}>Continue (1v1)</Text>
+                  <Text style={[styles.modeSub, styles.modeSubWhite]}>Just you and one opponent.</Text>
+                </View>
+                <Text style={[styles.modeChevron, { color: colors.white }]}>›</Text>
+              </View>
+            </Pressable>
+
+            {!!err && <Text style={styles.errText}>{err}</Text>}
+          </ScrollView>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  // ── Group size picker ───────────────────────────────────────────
+
+  if (screen === 'group-size') {
+    return (
+      <View style={styles.root}>
+        <GradientFill colors={gradients.background} />
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.topBar}>
+            <Pressable
+              style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
+              onPress={() => { setErr(''); setScreen('mode'); }}
+            >
+              <Text style={styles.backGlyph}>‹</Text>
+            </Pressable>
+            <Text style={themeText.h2}>Group size</Text>
+            <HeaderAvatar />
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.menuContent}>
+            <View style={styles.stepperCard}>
+              <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
+              <Text style={styles.stepperLabel}>PLAYERS</Text>
+              <View style={styles.stepperRow}>
+                <Pressable
+                  style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
+                  onPress={() => setGroupSize((n) => Math.max(MIN_GROUP, n - 1))}
+                  disabled={groupSize <= MIN_GROUP}
+                >
+                  <Text style={styles.stepperBtnText}>−</Text>
+                </Pressable>
+                <Text style={styles.stepperValue}>{groupSize}</Text>
+                <Pressable
+                  style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
+                  onPress={() => setGroupSize((n) => Math.min(MAX_GROUP, n + 1))}
+                  disabled={groupSize >= MAX_GROUP}
+                >
+                  <Text style={styles.stepperBtnText}>+</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.stepperHint}>Group play is a Premium feature.</Text>
+            </View>
+
+            <Pressable
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+              onPress={handleCreateGroup}
+              disabled={busy}
+            >
+              <GradientFill colors={gradients.button} />
+              {busy
+                ? <ActivityIndicator color={colors.white} />
+                : <Text style={styles.primaryBtnText}>Create group →</Text>}
+            </Pressable>
+
+            {!!err && <Text style={styles.errText}>{err}</Text>}
+          </ScrollView>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  // ── 1v1: anyone-can-join toggle ─────────────────────────────────
+
+  if (screen === 'onevone') {
+    return (
+      <View style={styles.root}>
+        <GradientFill colors={gradients.background} />
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.topBar}>
+            <Pressable
+              style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
+              onPress={() => { setErr(''); setScreen('mode'); }}
+            >
+              <Text style={styles.backGlyph}>‹</Text>
+            </Pressable>
+            <Text style={themeText.h2}>1v1</Text>
+            <HeaderAvatar />
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.menuContent}>
+            <View style={styles.toggleCard}>
+              <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
+              <View style={styles.toggleRow}>
+                <View style={styles.modeText}>
+                  <Text style={styles.modeTitle}>Let anyone join?</Text>
+                  <Text style={styles.modeSub}>
+                    {anyoneCanJoin
+                      ? 'We’ll match you with a real opponent for 30s, then a machine if nobody joins.'
+                      : 'Off — get a private code, link, and QR to invite a friend.'}
+                  </Text>
+                </View>
+                <Switch
+                  value={anyoneCanJoin}
+                  onValueChange={setAnyoneCanJoin}
+                  trackColor={{ false: colors.hairline, true: colors.blue }}
+                  thumbColor={colors.white}
+                />
+              </View>
+            </View>
+
+            <Pressable
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+              onPress={handleContinueOneVOne}
+              disabled={busy}
+            >
+              <GradientFill colors={gradients.button} />
+              {busy
+                ? <ActivityIndicator color={colors.white} />
+                : <Text style={styles.primaryBtnText}>Continue →</Text>}
+            </Pressable>
+
+            {!!err && <Text style={styles.errText}>{err}</Text>}
+          </ScrollView>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  // ── Searching: 30s wait for a real opponent ─────────────────────
+
+  if (screen === 'searching') {
+    return (
+      <View style={styles.root}>
+        <GradientFill colors={gradients.background} />
+        <SafeAreaView style={[styles.safe, styles.center]}>
+          <ActivityIndicator color={colors.blue} size="large" />
+          <Text style={styles.searchingTitle}>Finding an opponent…</Text>
+          <Text style={styles.searchingSub}>
+            Starting a match against the machine in {secondsLeft}s if nobody joins.
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.outlineBtn, { marginTop: space.xl }, pressed && styles.pressed]}
+            onPress={cancelSearching}
+          >
+            <Text style={styles.outlineBtnText}>Cancel</Text>
+          </Pressable>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  // ── Menu ──────────────────────────────────────────────────────
+
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
@@ -171,24 +482,17 @@ export default function PixelRushScreen() {
           <Text style={[themeText.label, styles.sectionLabel]}>MULTIPLAYER</Text>
           <Pressable
             style={({ pressed }) => [styles.modeCard, styles.modeCardBlue, pressed && styles.pressed]}
-            onPress={handleCreate}
-            disabled={busy}
+            onPress={() => { setErr(''); setScreen('mode'); }}
           >
             <GradientFill colors={gradients.button} />
             <View style={styles.modeCardInner}>
-              {busy ? (
-                <ActivityIndicator color={colors.white} />
-              ) : (
-                <>
-                  <View style={styles.modeText}>
-                    <Text style={[styles.modeTitle, styles.modeTitleWhite]}>Create 1v1 match</Text>
-                    <Text style={[styles.modeSub, styles.modeSubWhite]}>
-                      Get an invite code — opponent can join on web or mobile.
-                    </Text>
-                  </View>
-                  <Text style={[styles.modeChevron, { color: colors.white }]}>›</Text>
-                </>
-              )}
+              <View style={styles.modeText}>
+                <Text style={[styles.modeTitle, styles.modeTitleWhite]}>Play Multiplayer</Text>
+                <Text style={[styles.modeSub, styles.modeSubWhite]}>
+                  Group with a QR/link/code, or a quick 1v1.
+                </Text>
+              </View>
+              <Text style={[styles.modeChevron, { color: colors.white }]}>›</Text>
             </View>
           </Pressable>
 
@@ -249,6 +553,7 @@ const styles = StyleSheet.create({
   },
   backGlyph: { color: colors.text, fontSize: 22, marginTop: -2 },
   pressed: { opacity: 0.85, transform: [{ scale: 0.97 }] },
+  center: { alignItems: 'center', justifyContent: 'center' },
 
   // ── Solo layout
   soloContent: { paddingBottom: space.xl, gap: space.lg, alignItems: 'center' },
@@ -351,5 +656,56 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.danger,
     textAlign: 'center',
+  },
+
+  // ── Group size stepper
+  stepperCard: {
+    borderRadius: radius.xl,
+    overflow: 'hidden',
+    padding: space.lg,
+    alignItems: 'center',
+    gap: space.sm,
+    ...shadow.card,
+  },
+  stepperLabel: { fontFamily: font.bold, fontSize: 12, color: colors.textFaint, letterSpacing: 1 },
+  stepperRow: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
+  stepperBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperBtnText: { fontFamily: font.extrabold, fontSize: 22, color: colors.text },
+  stepperValue: { fontFamily: font.black, fontSize: 40, color: colors.blue, minWidth: 60, textAlign: 'center' },
+  stepperHint: { fontFamily: font.semibold, fontSize: 12, color: colors.textFaint },
+
+  // ── 1v1 toggle
+  toggleCard: {
+    borderRadius: radius.xl,
+    overflow: 'hidden',
+    padding: space.lg,
+    ...shadow.card,
+  },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+
+  // ── Searching
+  searchingTitle: {
+    fontFamily: font.extrabold,
+    fontSize: 20,
+    color: colors.text,
+    marginTop: space.lg,
+    textAlign: 'center',
+  },
+  searchingSub: {
+    fontFamily: font.semibold,
+    fontSize: 14,
+    color: colors.textMuted,
+    marginTop: space.sm,
+    textAlign: 'center',
+    paddingHorizontal: space.lg,
   },
 });

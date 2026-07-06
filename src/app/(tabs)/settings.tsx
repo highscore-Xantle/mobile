@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
+import { HeaderAvatar } from '../../components/HeaderAvatar';
 import {
   isPushSupported,
   registerForPushNotifications,
@@ -95,6 +96,7 @@ export default function Settings() {
       <SafeAreaView style={styles.safe}>
         <View style={styles.topBar}>
           <Text style={themeText.h2}>Settings</Text>
+          <HeaderAvatar />
         </View>
 
         <View style={styles.card}>
@@ -200,6 +202,9 @@ const styles = StyleSheet.create({
 
   // Tabs are the back-navigation mechanism — no back button needed here
   topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingTop: space.sm,
     paddingBottom: space.xl,
   },

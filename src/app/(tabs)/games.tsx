@@ -16,6 +16,7 @@ import Animated, { FadeInDown, SlideInDown } from 'react-native-reanimated';
 import { useSession } from '../../lib/useSession';
 import { supabase } from '../../lib/supabase';
 import { GradientFill } from '../../components/GradientFill';
+import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { RolloverReveal } from '../../components/RolloverReveal';
 import { JoinModal } from '../../components/JoinModal';
 import { LiveDot } from '../../components/Feed/LiveStrip';
@@ -52,7 +53,7 @@ const GAMES = [
     emoji: '🎮',
     available: true,
     route: '/games/pixel-rush' as string | null,
-    hasViewer: false,
+    hasViewer: true,
   },
   {
     id: 'spy',
@@ -182,19 +183,33 @@ export default function GamesTab() {
 
   // ── Fetch active rooms (10-second poll) ─────────────────────────────────────
   const fetchLiveRooms = useCallback(async () => {
-    const { data } = await supabase
-      .from('rooms')
-      .select(`code, game_kind, state, room_players ( display_name, profiles ( username ) )`)
-      .eq('status', 'active');
-    if (!data) return;
+    const [{ data: rooms }, { data: games }] = await Promise.all([
+      supabase
+        .from('rooms')
+        .select(`code, game_kind, state, room_players ( display_name, profiles ( username ) )`)
+        .eq('status', 'active'),
+      supabase
+        .from('games')
+        .select(`invite_code, current_round, game_players ( guest_name, profile:user_id ( username ) )`)
+        .eq('status', 'active')
+        .eq('game_type', 'pixel_rush'),
+    ]);
     const map: Record<string, ActiveRoom[]> = {};
-    data.forEach((r: any) => {
+    (rooms ?? []).forEach((r: any) => {
       const names: string[] = (r.room_players ?? []).map((p: any) =>
         p.display_name || p.profiles?.username || 'Player'
       );
       const room: ActiveRoom = { code: r.code, round: r.state?.round ?? 1, playerNames: names };
       if (!map[r.game_kind]) map[r.game_kind] = [];
       map[r.game_kind].push(room);
+    });
+    (games ?? []).forEach((g: any) => {
+      const names: string[] = (g.game_players ?? []).map((p: any) =>
+        p.guest_name || p.profile?.username || 'Player'
+      );
+      const room: ActiveRoom = { code: g.invite_code, round: g.current_round ?? 1, playerNames: names };
+      if (!map['pixel-rush']) map['pixel-rush'] = [];
+      map['pixel-rush'].push(room);
     });
     setLiveRooms(map);
   }, []);
@@ -226,9 +241,10 @@ export default function GamesTab() {
   };
 
   const handleWatchRoom = (roomCode: string) => {
+    const viewerId = sheetGame?.id === 'pixel-rush' ? 'pixel-rush-viewer' : 'number-duel-viewer';
     setSheetGame(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push({ pathname: '/game/[id]', params: { id: 'number-duel-viewer', roomCode } });
+    router.push({ pathname: '/game/[id]', params: { id: viewerId, roomCode } });
   };
 
   const sheetRooms = sheetGame ? (liveRooms[sheetGame.id] ?? []) : [];
@@ -255,14 +271,17 @@ export default function GamesTab() {
           {/* Header */}
           <View style={styles.topBar}>
             <Text style={themeText.h1}>Games</Text>
-            <Pressable
-              style={styles.joinActionBtn}
-              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setJoinVisible(true); }}
-              accessibilityLabel="Join a room"
-              accessibilityRole="button"
-            >
-              <Text style={styles.joinActionText}>JOIN ROOM →</Text>
-            </Pressable>
+            <View style={styles.topBarActions}>
+              <Pressable
+                style={styles.joinActionBtn}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setJoinVisible(true); }}
+                accessibilityLabel="Join a room"
+                accessibilityRole="button"
+              >
+                <Text style={styles.joinActionText}>JOIN ROOM →</Text>
+              </Pressable>
+              <HeaderAvatar />
+            </View>
           </View>
 
           {/* Hero card */}
@@ -341,6 +360,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   scrollContent: { paddingHorizontal: space.lg, paddingBottom: space.xl, gap: space.md },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: space.sm },
+  topBarActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   joinActionBtn: { backgroundColor: 'rgba(46,126,240,0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.sm },
   joinActionText: { fontFamily: font.bold, fontSize: 12, color: colors.blue, letterSpacing: 0.5 },
   heroSection: { marginTop: space.xs },
