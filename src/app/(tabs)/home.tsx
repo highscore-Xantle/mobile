@@ -258,6 +258,17 @@ export default function Home() {
     [mutateLike, handleOpenComment],
   );
 
+  // ── Profile avatar (photo set during onboarding / carried from Google) ────────
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!session?.user) return;
+    let active = true;
+    supabase
+      .from('profiles').select('avatar_url').eq('id', session.user.id).maybeSingle()
+      .then(({ data }) => { if (active && data?.avatar_url) setAvatarUrl(data.avatar_url); });
+    return () => { active = false; };
+  }, [session?.user?.id]);
+
   // ── Avatar letter ─────────────────────────────────────────────────────────────
   const avatarLetter =
     (session?.user?.user_metadata?.username as string)?.[0]?.toUpperCase() ??
@@ -306,7 +317,7 @@ export default function Home() {
           visible={!!activePostId}
           currentUserId={session.user.id}
           currentUsername={(session.user.user_metadata?.username as string) ?? null}
-          currentAvatarUrl={null}
+          currentAvatarUrl={avatarUrl}
           onClose={handleCloseComment}
         />
       )}
@@ -321,7 +332,7 @@ export default function Home() {
             accessibilityLabel="Open profile"
             accessibilityRole="button"
           >
-            <Avatar letter={avatarLetter} size={38} showOnline />
+            <Avatar letter={avatarLetter} imageUrl={avatarUrl} size={38} showOnline />
           </Pressable>
 
           {/* Centre — wordmark */}

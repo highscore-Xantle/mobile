@@ -68,6 +68,12 @@
             "useFrameworks": "static"
           }
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Xantle needs access to your photos so you can set a profile picture."
+        }
       ]
     ],
     "experiments": {

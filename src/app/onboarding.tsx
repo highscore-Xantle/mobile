@@ -138,7 +138,8 @@ export default function Onboarding() {
       }
       return;
     }
-    router.replace('/home');
+    // Username + location saved — send them to the profile-photo step.
+    router.replace('/onboarding-photo');
   };
 
   const confirmLocation = () => finishOnboarding({
