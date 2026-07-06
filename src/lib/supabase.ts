@@ -27,8 +27,5 @@ export const supabase = createClient(url, anonKey, {
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: Platform.OS === 'web', // Web reads the token from the URL hash after email confirmation; native doesn't use URLs
-    // PKCE puts the OAuth result in a plain `?code=` query param instead of a
-    // URL hash fragment, so native (Linking.parse) can read it directly.
-    flowType: 'pkce',
   },
 });

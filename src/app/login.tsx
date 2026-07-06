@@ -1,12 +1,11 @@
 
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Haptics from 'expo-haptics';
-import * as Linking from 'expo-linking';
-import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -44,7 +43,7 @@ export default function Login() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [resendIn, setResendIn] = useState(0);
-  const [oauthLoading, setOauthLoading] = useState<'google' | 'apple' | null>(null);
+  const [appleLoading, setAppleLoading] = useState(false);
 
   const emailInputRef = useRef<TextInput>(null);
   const otpInputRef = useRef<TextInput>(null);
@@ -151,7 +150,7 @@ export default function Login() {
   // expo-apple-authentication (the current SDK-54 build must be rebuilt).
   const signInWithApple = async () => {
     setErrorMsg('');
-    setOauthLoading('apple');
+    setAppleLoading(true);
     try {
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
@@ -171,49 +170,14 @@ export default function Login() {
     } catch (e: any) {
       if (e.code !== 'ERR_REQUEST_CANCELED') setErrorMsg('Apple sign-in failed. Please try again.');
     } finally {
-      setOauthLoading(null);
+      setAppleLoading(false);
     }
   };
 
-  // Google sign-in: Supabase OAuth (PKCE) opened in an in-app browser tab via
-  // expo-web-browser, then redirected back to the app's `xantle://` scheme.
-  // Requires the Google provider to be enabled in the Supabase dashboard.
-  const signInWithGoogle = async () => {
-    haptic();
-    setErrorMsg('');
-    setOauthLoading('google');
-    try {
-      const redirectTo = Linking.createURL('auth/callback');
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo, skipBrowserRedirect: true },
-      });
-      if (error || !data?.url) {
-        setErrorMsg(error?.message ?? 'Could not start Google sign-in.');
-        return;
-      }
-
-      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-      if (result.type !== 'success') {
-        // User cancelled/dismissed the browser — not an error worth surfacing.
-        return;
-      }
-
-      const { queryParams } = Linking.parse(result.url);
-      const code = queryParams?.code;
-      if (typeof code !== 'string') {
-        setErrorMsg('Google sign-in did not return a valid code.');
-        return;
-      }
-
-      const { data: sessionData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-      handleAuthResult(exchangeError, sessionData);
-    } catch {
-      setErrorMsg('Google sign-in failed. Please try again.');
-    } finally {
-      setOauthLoading(null);
-    }
-  };
+  // Google sign-in is being handled separately (native, custom-branded) —
+  // not wired up here yet.
+  const comingSoon = (provider: string) => () =>
+    Alert.alert('Coming soon', `${provider} sign-in arrives in a later update — use email for now.`);
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -251,19 +215,17 @@ export default function Login() {
               chipBg={colors.surfaceAlt}
               label="Continue with Apple"
               onPress={signInWithApple}
-              loading={oauthLoading === 'apple'}
-              disabled={oauthLoading !== null}
+              loading={appleLoading}
+              disabled={appleLoading}
             />
           )}
 
-          {/* Google — Supabase OAuth via in-app browser */}
+          {/* Google — coming soon */}
           <SocialButton
             icon={<FontAwesome name="google" size={20} color={colors.text} />}
             chipBg={colors.surfaceAlt}
             label="Continue with Google"
-            onPress={signInWithGoogle}
-            loading={oauthLoading === 'google'}
-            disabled={oauthLoading !== null}
+            onPress={comingSoon('Google')}
           />
 
           {/* Divider */}
