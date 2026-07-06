@@ -54,6 +54,12 @@
         {
           "iosUrlScheme": "com.googleusercontent.apps.320434998275-d5b3u4ofb1bk0p70bl0b0oju722qcvts"
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Xantle uses your location to fill in your city, state, and country on your profile."
+        }
       ]
     ],
     "experiments": {
