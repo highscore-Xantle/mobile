@@ -60,6 +60,14 @@
         {
           "locationWhenInUsePermission": "Xantle uses your location to fill in your city, state, and country on your profile."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
       ]
     ],
     "experiments": {
