@@ -197,6 +197,7 @@ export default function Home() {
           decelerationRate="fast"
           onScroll={onScroll}
           scrollEventThrottle={16}
+          style={styles.carousel}
           contentContainerStyle={styles.cardRow}
         >
           {GAMES.map((g, i) => (
@@ -248,8 +249,11 @@ const styles = StyleSheet.create({
   },
   catChipActive: { backgroundColor: colors.blue, ...shadow.blueGlow },
 
+  // Carousel breaks out to the full device width so the peek reaches the edge…
+  carousel: { marginHorizontal: -space.lg },
+  // …and the content padding re-aligns the first card with the title.
   // paddingTop gives the lifted active card headroom; paddingBottom clears the nav
-  cardRow: { gap: GAP, paddingTop: 28, paddingBottom: space.md, paddingRight: space.lg },
+  cardRow: { gap: GAP, paddingTop: 28, paddingBottom: space.md, paddingLeft: space.lg, paddingRight: space.lg },
   cardArt: {
     position: 'absolute', top: SLANT, left: 0, right: 0,
     alignItems: 'center', justifyContent: 'center',
