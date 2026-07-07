@@ -1,19 +1,17 @@
 /**
  * Home — "Home of Fun" games showcase.
  *
- * Redesigned to the reference layout: no logo; round menu + cart icons in the
- * header; a big two-line title; a diagonal blue sweep on the upper-right that
- * fades before the bottom; a row of category chips (first is active); and large
- * game cards. Content is intentionally minimal — iterating on the design live.
- *
- * (The previous wins-feed lives in useWinsFeed/WinCard and can be moved to the
- * Live tab if we want to keep it.)
+ * Reference layout: no logo; round menu + cart header; two-line title; a
+ * diagonal blue sweep upper-right; category chips; and a peeking carousel of
+ * game cards. Each card is a custom shape — straight bottom, slanted-up top —
+ * drawn with react-native-svg (already in the native build).
  */
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
+import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import { useSession } from '../../lib/useSession';
 import { GradientFill } from '../../components/GradientFill';
 import { MenuDrawer } from '../../components/MenuDrawer';
@@ -22,13 +20,78 @@ import { colors, font, radius, shadow, space } from '../../theme';
 
 type FAIcon = React.ComponentProps<typeof FontAwesome>['name'];
 
-// Category chips — first one is the active (blue) state, like the sample.
 const CATEGORIES: { icon: FAIcon; key: string }[] = [
   { icon: 'gamepad', key: 'all' },
   { icon: 'users', key: 'party' },
   { icon: 'bolt', key: 'arcade' },
   { icon: 'trophy', key: 'ranked' },
 ];
+
+const SCREEN_W = Dimensions.get('window').width;
+const CARD_W = Math.round(SCREEN_W * 0.64);   // one prominent card…
+const CARD_H = Math.round(CARD_W * 1.46);
+const GAP = 18;
+const SLANT = 24;   // top-right sits this much higher than top-left
+
+// Rounded path through a set of points — used to draw the slanted-top card.
+function roundedPath(pts: number[][], r: number): string {
+  const n = pts.length;
+  const len = (a: number[], b: number[]) => Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  let d = '';
+  for (let i = 0; i < n; i++) {
+    const curr = pts[i];
+    const prev = pts[(i - 1 + n) % n];
+    const next = pts[(i + 1) % n];
+    const rp = Math.min(r, len(curr, prev) / 2, len(curr, next) / 2);
+    const up = [(prev[0] - curr[0]) / len(curr, prev), (prev[1] - curr[1]) / len(curr, prev)];
+    const un = [(next[0] - curr[0]) / len(curr, next), (next[1] - curr[1]) / len(curr, next)];
+    const p1 = [curr[0] + up[0] * rp, curr[1] + up[1] * rp];
+    const p2 = [curr[0] + un[0] * rp, curr[1] + un[1] * rp];
+    d += `${i === 0 ? 'M' : 'L'} ${p1[0].toFixed(1)} ${p1[1].toFixed(1)} `;
+    d += `Q ${curr[0].toFixed(1)} ${curr[1].toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)} `;
+  }
+  return d + 'Z';
+}
+
+const CARD_PATH = roundedPath(
+  [[0, SLANT], [CARD_W, 0], [CARD_W, CARD_H], [0, CARD_H]],
+  24,
+);
+
+function GameCard({ game, onPress }: { game: typeof GAMES[number]; onPress: () => void }) {
+  const gid = `gc-${game.id}`;
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [{ width: CARD_W, height: CARD_H }, pressed && game.available && styles.pressed]}
+    >
+      <Svg width={CARD_W} height={CARD_H} style={StyleSheet.absoluteFill}>
+        <Defs>
+          <SvgLinearGradient id={gid} x1="0%" y1="0%" x2="0%" y2="100%">
+            <Stop offset="0" stopColor="#2F3745" />
+            <Stop offset="1" stopColor="#20262E" />
+          </SvgLinearGradient>
+        </Defs>
+        <Path d={CARD_PATH} fill={`url(#${gid})`} />
+      </Svg>
+
+      {/* Art (emoji stand-in for the game image) */}
+      <View style={[styles.cardArt, { height: CARD_H * 0.6 }]}>
+        <Text style={styles.cardEmoji}>{game.emoji}</Text>
+      </View>
+
+      {/* Title + subtitle bottom-left */}
+      <View style={styles.cardText}>
+        <Text style={styles.cardTitle}>{game.title}</Text>
+        <Text style={styles.cardSub} numberOfLines={1}>{game.tagline}</Text>
+      </View>
+
+      {!game.available && (
+        <View style={styles.soonBadge}><Text style={styles.soonText}>SOON</Text></View>
+      )}
+    </Pressable>
+  );
+}
 
 export default function Home() {
   const router = useRouter();
@@ -48,7 +111,6 @@ export default function Home() {
 
   return (
     <View style={styles.root}>
-      {/* Base background */}
       <GradientFill colors={[colors.bgTop, colors.bgBottom]} />
 
       {/* Diagonal blue sweep — upper-right, fades before the bottom */}
@@ -61,7 +123,7 @@ export default function Home() {
       <MenuDrawer visible={menuOpen} onClose={() => setMenuOpen(false)} />
 
       <SafeAreaView style={styles.safe} edges={['top']}>
-        {/* ── Header: round menu (left) + cart (right), no logo ── */}
+        {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top > 0 ? space.xs : space.md }]}>
           <Pressable
             style={({ pressed }) => [styles.roundBtn, pressed && styles.pressed]}
@@ -79,13 +141,13 @@ export default function Home() {
           </Pressable>
         </View>
 
-        {/* ── Title ── */}
+        {/* Title */}
         <View style={styles.titleBlock}>
           <Text style={styles.titleSolid}>Home of</Text>
           <Text style={styles.titleOutline}>Fun</Text>
         </View>
 
-        {/* ── Category chips ── */}
+        {/* Category chips */}
         <View style={styles.catRow}>
           {CATEGORIES.map((c, i) => {
             const active = i === activeCat;
@@ -93,11 +155,7 @@ export default function Home() {
               <Pressable
                 key={c.key}
                 onPress={() => setActiveCat(i)}
-                style={({ pressed }) => [
-                  styles.catChip,
-                  active && styles.catChipActive,
-                  pressed && styles.pressed,
-                ]}
+                style={({ pressed }) => [styles.catChip, active && styles.catChipActive, pressed && styles.pressed]}
                 accessibilityLabel={c.key}
               >
                 <FontAwesome name={c.icon} size={20} color={active ? colors.white : colors.textMuted} />
@@ -106,35 +164,19 @@ export default function Home() {
           })}
         </View>
 
-        {/* Push the cards down toward the nav, like the sample */}
+        {/* Push cards down toward the nav */}
         <View style={{ flex: 1 }} />
 
-        {/* ── Game cards ── */}
+        {/* Peeking carousel — one prominent card, next peeks in */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          snapToInterval={CARD_W + GAP}
+          decelerationRate="fast"
           contentContainerStyle={styles.cardRow}
-          style={styles.cardScroll}
         >
           {GAMES.map((g) => (
-            <Pressable
-              key={g.id}
-              onPress={() => openGame(g)}
-              style={({ pressed }) => [styles.card, pressed && g.available && styles.pressed]}
-            >
-              {/* Product image area (gradient + emoji stand-in) */}
-              <View style={styles.cardImage}>
-                <GradientFill colors={g.gradient} />
-                <Text style={styles.cardEmoji}>{g.emoji}</Text>
-                {!g.available && (
-                  <View style={styles.soonBadge}>
-                    <Text style={styles.soonText}>SOON</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.cardTitle}>{g.title}</Text>
-              <Text style={styles.cardSub} numberOfLines={1}>{g.tagline}</Text>
-            </Pressable>
+            <GameCard key={g.id} game={g} onPress={() => openGame(g)} />
           ))}
         </ScrollView>
       </SafeAreaView>
@@ -142,26 +184,21 @@ export default function Home() {
   );
 }
 
-const CARD_W = 172;
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1, paddingHorizontal: space.lg },
 
-  // Diagonal blue sweep
   diagonalClip: { ...StyleSheet.absoluteFillObject, overflow: 'hidden' },
   diagonalPanel: {
     position: 'absolute',
-    top: -160,
-    right: -150,
-    width: 330,
-    height: 620,
+    top: -160, right: -150,
+    width: 330, height: 620,
     borderRadius: 80,
     overflow: 'hidden',
     opacity: 0.9,
     transform: [{ rotate: '24deg' }],
   },
 
-  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -169,73 +206,39 @@ const styles = StyleSheet.create({
     paddingBottom: space.lg,
   },
   roundBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 44, height: 44, borderRadius: 22,
     backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center',
     ...shadow.card,
   },
 
-  // Title
   titleBlock: { marginBottom: space.xl },
-  titleSolid: {
-    fontFamily: font.display,
-    fontSize: 40,
-    lineHeight: 44,
-    color: colors.text,
-  },
-  titleOutline: {
-    fontFamily: font.display,
-    fontSize: 40,
-    lineHeight: 44,
-    color: 'rgba(234,240,250,0.28)',
-  },
+  titleSolid: { fontFamily: font.display, fontSize: 40, lineHeight: 44, color: colors.text },
+  titleOutline: { fontFamily: font.display, fontSize: 40, lineHeight: 44, color: 'rgba(234,240,250,0.28)' },
 
-  // Category chips
   catRow: { flexDirection: 'row', gap: space.md, marginBottom: space.xl },
   catChip: {
-    width: 52,
-    height: 52,
-    borderRadius: radius.lg,
+    width: 52, height: 52, borderRadius: radius.lg,
     backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center',
   },
   catChipActive: { backgroundColor: colors.blue, ...shadow.blueGlow },
 
-  // Game cards
-  cardScroll: { flexGrow: 0 },
-  cardRow: { gap: space.lg, paddingBottom: space.md, paddingRight: space.lg },
-  card: {
-    width: CARD_W,
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: space.md,
-    ...shadow.card,
+  cardRow: { gap: GAP, paddingBottom: space.md, paddingRight: space.lg },
+  cardArt: {
+    position: 'absolute', top: SLANT, left: 0, right: 0,
+    alignItems: 'center', justifyContent: 'center',
   },
-  cardImage: {
-    height: 268,
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: space.md,
-  },
-  cardEmoji: { fontSize: 72 },
+  cardEmoji: { fontSize: 76 },
+  cardText: { position: 'absolute', left: space.lg, bottom: space.lg },
+  cardTitle: { fontFamily: font.extrabold, fontSize: 20, color: colors.text },
+  cardSub: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted, marginTop: 3 },
   soonBadge: {
-    position: 'absolute',
-    top: space.sm,
-    right: space.sm,
+    position: 'absolute', top: SLANT + space.sm, right: space.sm,
     backgroundColor: 'rgba(0,0,0,0.45)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.sm,
   },
   soonText: { fontFamily: font.bold, fontSize: 10, color: colors.white, letterSpacing: 1 },
-  cardTitle: { fontFamily: font.extrabold, fontSize: 18, color: colors.text },
-  cardSub: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted, marginTop: 2 },
 
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
 });
