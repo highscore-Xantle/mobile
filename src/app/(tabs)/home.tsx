@@ -37,8 +37,8 @@ const CATEGORIES: { icon: FAIcon; key: string }[] = [
 ];
 
 const SCREEN_W = Dimensions.get('window').width;
-const CARD_W = Math.round(SCREEN_W * 0.56);   // smaller — one prominent + peek
-const CARD_H = Math.round(CARD_W * 1.5);
+const CARD_W = Math.round(SCREEN_W * 0.75);   // active ~75%, next peeks ~25%
+const CARD_H = Math.round(CARD_W * 1.28);
 const GAP = 16;
 const ITEM = CARD_W + GAP;
 const SLANT = 22;   // top-right sits this much higher than top-left
