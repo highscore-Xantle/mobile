@@ -36,10 +36,12 @@ const CATEGORIES: { icon: FAIcon; key: string }[] = [
 ];
 
 const SCREEN_W = Dimensions.get('window').width;
-const CARD_W = Math.round(SCREEN_W * 0.66);   // active dominant, next peeks
-const CARD_H = Math.round(CARD_W * 1.24);
+const BASE_W = Math.round(SCREEN_W * 0.66);
+const CARD_W = BASE_W - 6;                        // trim width slightly (height unchanged)
+const CARD_H = Math.round(BASE_W * 1.24);
 const GAP = 16;
 const ITEM = CARD_W + GAP;
+const CARD_INSET = Math.round((SCREEN_W - CARD_W) / 2); // centers the active card
 const SLANT = 22;   // top-right sits this much higher than top-left
 
 // Rounded path through a set of points — draws the slanted-top card.
@@ -78,8 +80,8 @@ function GameCard({
   const aStyle = useAnimatedStyle(() => {
     const dist = index - scrollX.value / ITEM;
     const input = [-1, 0, 1];
+    // No opacity fade — cards stay fully solid; recede via scale + lift only.
     return {
-      opacity: interpolate(dist, input, [0.72, 1, 0.72], Extrapolation.CLAMP),
       transform: [
         { scale: interpolate(dist, input, [0.84, 1, 0.84], Extrapolation.CLAMP) },
         { translateY: interpolate(dist, input, [34, -8, 34], Extrapolation.CLAMP) },
@@ -243,7 +245,7 @@ const styles = StyleSheet.create({
   // Full-bleed: break out of the safe-area padding so cards use the device width,
   // first card flush to the edge (no margin).
   carousel: { marginHorizontal: -space.lg, marginBottom: 24 },
-  cardRow: { gap: GAP, paddingTop: 8, paddingBottom: space.sm, paddingLeft: 0, paddingRight: space.lg },
+  cardRow: { gap: GAP, paddingTop: 8, paddingBottom: space.sm, paddingLeft: CARD_INSET, paddingRight: CARD_INSET },
   // Thick 3D drop shadow under each card.
   cardShadow: {
     shadowColor: '#000',
