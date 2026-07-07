@@ -141,10 +141,9 @@ export default function Home() {
     <View style={styles.root}>
       <GradientFill colors={[colors.bgTop, colors.bgBottom]} />
 
-      <View style={styles.diagonalClip} pointerEvents="none">
-        <View style={styles.diagonalPanel}>
-          <GradientFill colors={[colors.blueBright, colors.blueDeep]} />
-        </View>
+      {/* Blue band — straight vertical on the right, top to near the nav */}
+      <View style={styles.rightBand} pointerEvents="none">
+        <GradientFill colors={[colors.blueBright, colors.blueDeep]} />
       </View>
 
       <MenuDrawer visible={menuOpen} onClose={() => setMenuOpen(false)} />
@@ -213,15 +212,13 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1, paddingHorizontal: space.lg },
 
-  diagonalClip: { ...StyleSheet.absoluteFillObject, overflow: 'hidden' },
-  diagonalPanel: {
+  rightBand: {
     position: 'absolute',
-    top: -120, right: -150,
-    width: 340, height: 1000,   // taller so the sweep comes down near the nav
-    borderRadius: 70,
+    top: 0, bottom: 0, right: 0,
+    width: Math.round(SCREEN_W * 0.34),   // ~30–35% of the width
     overflow: 'hidden',
-    opacity: 0.9,
-    transform: [{ rotate: '22deg' }],
+    borderTopLeftRadius: 44,
+    borderBottomLeftRadius: 120,          // soft curve near the nav, like the sample
   },
 
   header: {
