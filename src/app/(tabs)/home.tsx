@@ -106,6 +106,9 @@ export default function Home() {
           })}
         </View>
 
+        {/* Push the cards down toward the nav, like the sample */}
+        <View style={{ flex: 1 }} />
+
         {/* ── Game cards ── */}
         <ScrollView
           horizontal
@@ -139,7 +142,7 @@ export default function Home() {
   );
 }
 
-const CARD_W = 190;
+const CARD_W = 172;
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1, paddingHorizontal: space.lg },
@@ -204,7 +207,7 @@ const styles = StyleSheet.create({
 
   // Game cards
   cardScroll: { flexGrow: 0 },
-  cardRow: { gap: space.lg, paddingBottom: space.xl, paddingRight: space.lg },
+  cardRow: { gap: space.lg, paddingBottom: space.md, paddingRight: space.lg },
   card: {
     width: CARD_W,
     backgroundColor: colors.surface,
@@ -213,7 +216,7 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   cardImage: {
-    height: 200,
+    height: 268,
     borderRadius: radius.lg,
     overflow: 'hidden',
     alignItems: 'center',
