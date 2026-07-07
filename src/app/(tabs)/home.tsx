@@ -37,8 +37,8 @@ const CATEGORIES: { icon: FAIcon; key: string }[] = [
 ];
 
 const SCREEN_W = Dimensions.get('window').width;
-const CARD_W = Math.round(SCREEN_W * 0.75);   // active ~75%, next peeks ~25%
-const CARD_H = Math.round(CARD_W * 1.28);
+const CARD_W = Math.round(SCREEN_W * 0.66);   // active dominant, next peeks
+const CARD_H = Math.round(CARD_W * 1.24);
 const GAP = 16;
 const ITEM = CARD_W + GAP;
 const SLANT = 22;   // top-right sits this much higher than top-left
@@ -216,12 +216,12 @@ const styles = StyleSheet.create({
   diagonalClip: { ...StyleSheet.absoluteFillObject, overflow: 'hidden' },
   diagonalPanel: {
     position: 'absolute',
-    top: -160, right: -150,
-    width: 330, height: 620,
-    borderRadius: 80,
+    top: -120, right: -150,
+    width: 340, height: 1000,   // taller so the sweep comes down near the nav
+    borderRadius: 70,
     overflow: 'hidden',
     opacity: 0.9,
-    transform: [{ rotate: '24deg' }],
+    transform: [{ rotate: '22deg' }],
   },
 
   header: {
