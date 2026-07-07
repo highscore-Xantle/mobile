@@ -50,6 +50,22 @@ export default function GameSetup() {
     router.replace(`/room/${room.code}`);
   };
 
+  const handlePlayBot = async () => {
+    if (creating) return;
+    setCreating(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+    const { data: room, error } = await supabase.rpc('create_bot_room', { p_state: settings });
+
+    if (error) {
+      Alert.alert('Error starting match', error.message);
+      setCreating(false);
+      return;
+    }
+
+    router.replace({ pathname: '/game/[id]', params: { id: room.game_kind, roomCode: room.code } });
+  };
+
   const updateSetting = (key: keyof typeof settings, value: string | number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -152,6 +168,16 @@ export default function GameSetup() {
               <Text style={styles.ctaText}>Create Room & Invite →</Text>
             )}
           </Pressable>
+
+          {id === 'number-duel' && (
+            <Pressable
+              style={({ pressed }) => [styles.outlineBtn, creating && styles.ctaDisabled, pressed && styles.pressed]}
+              onPress={handlePlayBot}
+              disabled={creating}
+            >
+              <Text style={styles.outlineBtnText}>Practice vs Bot</Text>
+            </Pressable>
+          )}
         </View>
 
       </SafeAreaView>
@@ -180,9 +206,14 @@ const styles = StyleSheet.create({
   segmentActive: { backgroundColor: colors.surface, ...shadow.card },
   segmentText: { fontFamily: font.semibold, fontSize: 13, color: colors.textFaint },
   segmentTextActive: { color: colors.text, fontFamily: font.bold },
-  footer: { padding: space.lg, paddingTop: 0, paddingBottom: space.xl },
+  footer: { padding: space.lg, paddingTop: 0, paddingBottom: space.xl, gap: space.sm },
   cta: { borderRadius: radius.xl, overflow: 'hidden', ...shadow.blueGlow },
   ctaDisabled: { opacity: 0.7 },
   ctaText: { fontFamily: font.extrabold, fontSize: 17, color: colors.white, textAlign: 'center', paddingVertical: 18 },
+  outlineBtn: {
+    borderRadius: radius.xl, borderWidth: 1, borderColor: colors.hairline,
+    paddingVertical: 16, alignItems: 'center', backgroundColor: colors.surface,
+  },
+  outlineBtnText: { fontFamily: font.bold, fontSize: 15, color: colors.textMuted },
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.88 },
 });

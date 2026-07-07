@@ -13,6 +13,8 @@ interface NumberKeypadProps {
   maxLength?: number;
   allowDecimal?: boolean;
   disabled?: boolean;
+  /** Reject keypresses that would push the numeric value outside [0, max]. */
+  max?: number;
 }
 
 const KEYS = [
@@ -88,7 +90,10 @@ export function NumberKeypad({
   maxLength = 6,
   allowDecimal = false,
   disabled = false,
+  max,
 }: NumberKeypadProps) {
+  const withinMax = (candidate: string) => max === undefined || parseFloat(candidate) <= max;
+
   const handleKey = (key: string) => {
     if (disabled) return;
 
@@ -112,7 +117,9 @@ export function NumberKeypad({
       return;
     }
 
-    onChange(value + key);
+    const next = value + key;
+    if (!withinMax(next)) return;
+    onChange(next);
   };
 
   return (

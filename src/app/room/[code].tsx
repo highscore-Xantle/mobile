@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { supabase } from '../../lib/supabase';
+import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
@@ -18,6 +19,7 @@ export default function RoomLobby() {
   const { code } = useLocalSearchParams<{ code: string }>();
   const router = useRouter();
   const { session } = useSession();
+  const { isOnline } = usePresence();
 
   const [loading, setLoading] = useState(true);
   const [room, setRoom] = useState<any>(null);
@@ -295,6 +297,7 @@ export default function RoomLobby() {
             {players.map((p, i) => {
               const displayName = p.display_name || p.profiles?.username || 'Guest';
               const isMe = p.user_id === session?.user.id;
+              const online = isMe || isOnline(p.user_id);
               return (
                 <Animated.View
                   key={p.id}
@@ -303,6 +306,9 @@ export default function RoomLobby() {
                 >
                   <View style={styles.playerAvatar}>
                     <Text style={styles.playerAvatarLetter}>{displayName[0].toUpperCase()}</Text>
+                    {!!p.user_id && (
+                      <View style={[styles.presenceDot, { backgroundColor: online ? colors.success : colors.textFaint }]} />
+                    )}
                   </View>
                   <Text style={styles.playerName}>{displayName} {isMe ? '(You)' : ''}</Text>
                   {p.is_host && <Text style={styles.hostBadge}>HOST</Text>}
@@ -383,6 +389,10 @@ const styles = StyleSheet.create({
   },
   playerRowMe: { borderColor: colors.blue, backgroundColor: 'rgba(46,126,240,0.05)' },
   playerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center' },
+  presenceDot: {
+    position: 'absolute', bottom: -1, right: -1, width: 11, height: 11,
+    borderRadius: 6, borderWidth: 2, borderColor: colors.bg,
+  },
   playerAvatarLetter: { fontFamily: font.bold, fontSize: 16, color: colors.textMuted },
   playerName: { flex: 1, fontFamily: font.semibold, fontSize: 15, color: colors.text },
   hostBadge: { fontFamily: font.bold, fontSize: 10, color: colors.blue, letterSpacing: 1, backgroundColor: 'rgba(46,126,240,0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },

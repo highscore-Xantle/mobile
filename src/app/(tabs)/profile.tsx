@@ -24,7 +24,7 @@ export default function Profile() {
   const [username, setUsername] = useState<string | null>(null);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
 
-  const { isOnline } = usePresence(session?.user?.id ?? null);
+  const { isOnline } = usePresence();
   const online = !!session?.user && isOnline(session.user.id);
 
   type Stats = { matches: number; roundsWon: number; trophies: number; winRate: number };

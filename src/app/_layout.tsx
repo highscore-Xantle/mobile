@@ -12,6 +12,7 @@ import {
   Nunito_900Black,
 } from '@expo-google-fonts/nunito';
 import { SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts/space-grotesk';
+import { PresenceProvider } from '../lib/usePresence';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -37,13 +38,15 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#181C25' }}>
       <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: '#181C25' },
-          animation: 'fade',
-        }}
-      />
+      <PresenceProvider>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: '#181C25' },
+            animation: 'fade',
+          }}
+        />
+      </PresenceProvider>
     </GestureHandlerRootView>
   );
 }
