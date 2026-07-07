@@ -2,12 +2,12 @@ import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { GradientFill } from '../components/GradientFill';
-import { goBackOr } from '../lib/navigation';
-import { supabase } from '../lib/supabase';
-import { useSession } from '../lib/useSession';
-import { usePresence } from '../lib/usePresence';
-import { colors, font, gradients, radius, shadow, space, text as themeText } from '../theme';
+import { GradientFill } from '../../components/GradientFill';
+import { goBackOr } from '../../lib/navigation';
+import { supabase } from '../../lib/supabase';
+import { useSession } from '../../lib/useSession';
+import { usePresence } from '../../lib/usePresence';
+import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
 const MIN_LEN = 3;
 const MAX_LEN = 20;

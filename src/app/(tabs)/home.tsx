@@ -159,10 +159,10 @@ export default function Home() {
           </Pressable>
           <Pressable
             style={({ pressed }) => [styles.roundBtn, pressed && styles.pressed]}
-            onPress={() => {}}
-            accessibilityLabel="Store (coming soon)"
+            onPress={() => router.push('/notifications')}
+            accessibilityLabel="Notifications"
           >
-            <FontAwesome name="shopping-bag" size={16} color={colors.text} />
+            <FontAwesome name="bell" size={17} color={colors.text} />
           </Pressable>
         </View>
 
@@ -247,10 +247,10 @@ const styles = StyleSheet.create({
   catChipActive: { backgroundColor: colors.blue, ...shadow.blueGlow },
 
   // Carousel breaks out to the full device width so the peek reaches the edge…
-  carousel: { marginHorizontal: -space.lg },
+  carousel: { marginHorizontal: -space.sm },
   // …and the content padding re-aligns the first card with the title.
   // paddingTop gives the lifted active card headroom; paddingBottom clears the nav
-  cardRow: { gap: GAP, paddingTop: 28, paddingBottom: space.md, paddingLeft: space.lg, paddingRight: space.lg },
+  cardRow: { gap: GAP, paddingTop: 8, paddingBottom: space.sm, paddingLeft: space.lg, paddingRight: space.lg },
   cardArt: {
     position: 'absolute', top: SLANT, left: 0, right: 0,
     alignItems: 'center', justifyContent: 'center',
