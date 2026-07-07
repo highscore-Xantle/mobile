@@ -23,7 +23,6 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSession } from '../../lib/useSession';
 import { GradientFill } from '../../components/GradientFill';
-import { MenuDrawer } from '../../components/MenuDrawer';
 import { GAMES } from './games';
 import { colors, font, radius, shadow, space } from '../../theme';
 
@@ -80,7 +79,7 @@ function GameCard({
     const dist = index - scrollX.value / ITEM;
     const input = [-1, 0, 1];
     return {
-      opacity: interpolate(dist, input, [0.5, 1, 0.5], Extrapolation.CLAMP),
+      opacity: interpolate(dist, input, [0.72, 1, 0.72], Extrapolation.CLAMP),
       transform: [
         { scale: interpolate(dist, input, [0.84, 1, 0.84], Extrapolation.CLAMP) },
         { translateY: interpolate(dist, input, [34, -8, 34], Extrapolation.CLAMP) },
@@ -89,7 +88,7 @@ function GameCard({
   });
 
   return (
-    <Animated.View style={[{ width: CARD_W, height: CARD_H }, aStyle]}>
+    <Animated.View style={[{ width: CARD_W, height: CARD_H }, styles.cardShadow, aStyle]}>
       <Pressable onPress={onPress} style={StyleSheet.absoluteFill}>
         <Svg width={CARD_W} height={CARD_H} style={StyleSheet.absoluteFill}>
           <Defs>
@@ -123,7 +122,6 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const { session } = useSession();
 
-  const [menuOpen, setMenuOpen] = useState(false);
   const [activeCat, setActiveCat] = useState(0);
 
   const scrollX = useSharedValue(0);
@@ -146,19 +144,10 @@ export default function Home() {
         <GradientFill colors={[colors.blueBright, colors.blueDeep]} />
       </View>
 
-      <MenuDrawer visible={menuOpen} onClose={() => setMenuOpen(false)} />
-
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={[styles.header, { paddingTop: insets.top > 0 ? space.xs : space.md }]}>
           <Pressable
-            style={({ pressed }) => [styles.roundBtn, pressed && styles.pressed]}
-            onPress={() => setMenuOpen(true)}
-            accessibilityLabel="Menu"
-          >
-            <FontAwesome name="bars" size={18} color={colors.text} />
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.roundBtn, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
             onPress={() => router.push('/notifications')}
             accessibilityLabel="Notifications"
           >
@@ -214,7 +203,7 @@ const styles = StyleSheet.create({
 
   rightBand: {
     position: 'absolute',
-    top: 0, bottom: 72, right: 0,          // stops a bit above the nav (almost, not flush)
+    top: 28, bottom: 72, right: 0,         // sits a bit down from the top; stops above the nav
     width: Math.round(SCREEN_W * 0.34),   // ~30–35% of the width
     overflow: 'hidden',
     borderTopLeftRadius: 0,
@@ -224,14 +213,16 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     paddingBottom: space.lg,
   },
-  roundBtn: {
-    width: 44, height: 44, borderRadius: 22,
+  iconBtn: {
+    width: 46, height: 46, borderRadius: 12,   // box shape, small radius
     backgroundColor: colors.surface,
     alignItems: 'center', justifyContent: 'center',
-    ...shadow.card,
+    borderWidth: 1, borderColor: colors.hairline,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4, shadowRadius: 10, elevation: 8,
   },
 
   titleBlock: { marginBottom: space.xl },
@@ -240,17 +231,27 @@ const styles = StyleSheet.create({
 
   catRow: { flexDirection: 'row', gap: space.md, marginBottom: space.xl },
   catChip: {
-    width: 52, height: 52, borderRadius: radius.lg,
+    width: 54, height: 54, borderRadius: 14,   // box shape, small radius
     backgroundColor: colors.surface,
     alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.hairline,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.38, shadowRadius: 10, elevation: 8,
   },
-  catChipActive: { backgroundColor: colors.blue, ...shadow.blueGlow },
+  catChipActive: { backgroundColor: colors.blue, borderColor: colors.blue, ...shadow.blueGlow },
 
-  // Carousel breaks out to the full device width so the peek reaches the edge…
-  carousel: { marginHorizontal: -space.sm },
-  // …and the content padding re-aligns the first card with the title.
-  // paddingTop gives the lifted active card headroom; paddingBottom clears the nav
-  cardRow: { gap: GAP, paddingTop: 8, paddingBottom: space.sm, paddingLeft: space.lg, paddingRight: space.lg },
+  // Full-bleed: break out of the safe-area padding so cards use the device width,
+  // first card flush to the edge (no margin).
+  carousel: { marginHorizontal: -space.lg },
+  cardRow: { gap: GAP, paddingTop: 8, paddingBottom: space.sm, paddingLeft: 0, paddingRight: space.lg },
+  // Thick 3D drop shadow under each card.
+  cardShadow: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.55,
+    shadowRadius: 22,
+    elevation: 16,
+  },
   cardArt: {
     position: 'absolute', top: SLANT, left: 0, right: 0,
     alignItems: 'center', justifyContent: 'center',
