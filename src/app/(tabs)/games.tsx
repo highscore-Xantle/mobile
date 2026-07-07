@@ -32,7 +32,7 @@ interface ActiveRoom {
 }
 
 // ─── Game catalogue ───────────────────────────────────────────────────────────
-const GAMES = [
+export const GAMES = [
   {
     id: 'number-duel',
     title: 'Number Duel',
