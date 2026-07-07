@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -69,6 +69,22 @@ export default function Onboarding() {
     setErrorMsg('');
     setCheckState(data ? 'taken' : 'available');
   };
+
+  // Seed a username suggestion from the provider (Google/Apple) name — or the
+  // email local-part as a fallback — sanitised to the [a-z0-9_] rules. It stays
+  // fully editable; the user can keep it or type their own. Runs once on load.
+  useEffect(() => {
+    if (!session?.user) return;
+    const meta = session.user.user_metadata as { full_name?: string; name?: string } | undefined;
+    const source = meta?.full_name || meta?.name || session.user.email?.split('@')[0] || '';
+    const candidate = source.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, MAX_LEN);
+    if (candidate.length >= MIN_LEN) {
+      setUsername(candidate);
+      setCheckState('checking');
+      checkAvailability(candidate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id]);
 
   const handleConfirm = () => {
     if (checkState !== 'available' || !session?.user) return;

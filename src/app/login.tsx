@@ -166,6 +166,13 @@ export default function Login() {
         provider: 'apple',
         token: credential.identityToken,
       });
+      // Apple only returns the name on the FIRST sign-in — persist it to
+      // user_metadata so onboarding can suggest a username from it.
+      const fullName = [credential.fullName?.givenName, credential.fullName?.familyName]
+        .filter(Boolean).join(' ').trim();
+      if (!error && fullName) {
+        await supabase.auth.updateUser({ data: { full_name: fullName } });
+      }
       handleAuthResult(error, data);
     } catch (e: any) {
       if (e.code !== 'ERR_REQUEST_CANCELED') setErrorMsg('Apple sign-in failed. Please try again.');
