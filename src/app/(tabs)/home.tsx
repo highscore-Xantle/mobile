@@ -214,11 +214,11 @@ const styles = StyleSheet.create({
 
   rightBand: {
     position: 'absolute',
-    top: 0, bottom: 0, right: 0,
+    top: 0, bottom: 72, right: 0,          // stops a bit above the nav (almost, not flush)
     width: Math.round(SCREEN_W * 0.34),   // ~30–35% of the width
     overflow: 'hidden',
-    borderTopLeftRadius: 44,
-    borderBottomLeftRadius: 120,          // soft curve near the nav, like the sample
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 12,          // soft curve near the nav, like the sample
   },
 
   header: {
