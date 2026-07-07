@@ -203,7 +203,7 @@ const styles = StyleSheet.create({
 
   rightBand: {
     position: 'absolute',
-    top: 28, bottom: 72, right: 0,         // sits a bit down from the top; stops above the nav
+    top: 0, bottom: 48, right: 0,          // occupies the top; bottom comes down a bit
     width: Math.round(SCREEN_W * 0.34),   // ~30–35% of the width
     overflow: 'hidden',
     borderTopLeftRadius: 0,
@@ -242,7 +242,7 @@ const styles = StyleSheet.create({
 
   // Full-bleed: break out of the safe-area padding so cards use the device width,
   // first card flush to the edge (no margin).
-  carousel: { marginHorizontal: -space.lg },
+  carousel: { marginHorizontal: -space.lg, marginBottom: 24 },
   cardRow: { gap: GAP, paddingTop: 8, paddingBottom: space.sm, paddingLeft: 0, paddingRight: space.lg },
   // Thick 3D drop shadow under each card.
   cardShadow: {
