@@ -1,8 +1,9 @@
 import * as Location from 'expo-location';
 
 export type DeviceLocation = {
+  address: string | null;   // street-level ("12 Marina St") when available
   city: string | null;
-  region: string | null;
+  region: string | null;    // state / region
   country: string | null;
   latitude: number;
   longitude: number;
@@ -70,7 +71,13 @@ export async function getDeviceLocation(): Promise<DeviceLocation> {
     throw new LocationCaptureError('unknown', 'Could not determine your location.');
   }
 
+  const address =
+    [place.streetNumber, place.street].filter(Boolean).join(' ').trim() ||
+    place.name ||
+    null;
+
   return {
+    address,
     city: place.city ?? null,
     region: place.region ?? null,
     country: place.country ?? null,

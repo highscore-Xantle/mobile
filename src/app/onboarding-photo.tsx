@@ -127,9 +127,13 @@ export default function OnboardingPhoto() {
               {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.ctaText}>Continue →</Text>}
             </View>
           </Pressable>
-          <Pressable onPress={() => saveAndContinue(providerUrl)} disabled={busy} hitSlop={8}>
-            <Text style={styles.skipText}>Skip for now</Text>
-          </Pressable>
+          {/* A photo is required once one is present — only offer Skip when
+              there's nothing to continue with yet. */}
+          {!preview && (
+            <Pressable onPress={() => saveAndContinue(null)} disabled={busy} hitSlop={8}>
+              <Text style={styles.skipText}>Skip for now</Text>
+            </Pressable>
+          )}
         </View>
       </SafeAreaView>
     </View>

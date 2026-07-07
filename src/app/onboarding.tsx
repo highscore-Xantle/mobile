@@ -39,6 +39,7 @@ export default function Onboarding() {
   const [step, setStep] = useState<Step>('username');
   const [locStatus, setLocStatus] = useState<LocStatus>('idle');
   const [locError, setLocError] = useState('');
+  const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
   const [region, setRegion] = useState('');
   const [country, setCountry] = useState('');
@@ -97,11 +98,15 @@ export default function Onboarding() {
     setLocError('');
     try {
       const loc = await getDeviceLocation();
-      setCity(loc.city ?? '');
-      setRegion(loc.region ?? '');
-      setCountry(loc.country ?? '');
-      setCoords({ latitude: loc.latitude, longitude: loc.longitude });
-      setLocStatus('detected');
+      // Save silently and go straight to the photo step — no review screen.
+      await finishOnboarding({
+        address: loc.address,
+        city: loc.city,
+        region: loc.region,
+        country: loc.country,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+      });
     } catch (e) {
       setLocStatus('manual');
       const reason = e instanceof LocationCaptureError ? e.reason : 'unknown';
@@ -119,11 +124,13 @@ export default function Onboarding() {
 
   // Editing a detected value by hand means the field no longer matches the
   // captured coords, so drop them rather than upload a mismatched pin.
+  const editAddress = (v: string) => { setAddress(v); setCoords(null); };
   const editCity = (v: string) => { setCity(v); setCoords(null); };
   const editRegion = (v: string) => { setRegion(v); setCoords(null); };
   const editCountry = (v: string) => { setCountry(v); setCoords(null); };
 
   const finishOnboarding = async (loc: {
+    address: string | null;
     city: string | null;
     region: string | null;
     country: string | null;
@@ -137,6 +144,7 @@ export default function Onboarding() {
       .from('profiles')
       .update({
         username,
+        address: loc.address,
         city: loc.city,
         region: loc.region,
         country: loc.country,
@@ -159,6 +167,7 @@ export default function Onboarding() {
   };
 
   const confirmLocation = () => finishOnboarding({
+    address: address.trim() || null,
     city: city.trim() || null,
     region: region.trim() || null,
     country: country.trim() || null,
@@ -167,11 +176,11 @@ export default function Onboarding() {
   });
 
   const skipLocation = () => finishOnboarding({
-    city: null, region: null, country: null, latitude: null, longitude: null,
+    address: null, city: null, region: null, country: null, latitude: null, longitude: null,
   });
 
-  const manualComplete = city.trim().length > 0 && country.trim().length > 0;
-  const locationCtaEnabled = !saving && (locStatus === 'detected' || locStatus === 'manual') && manualComplete;
+  const manualComplete = address.trim().length > 0 && country.trim().length > 0;
+  const locationCtaEnabled = !saving && locStatus === 'manual' && manualComplete;
 
   // Status pill config
   type StatusConfig = { label: string; color: string; bg: string } | null;
@@ -295,15 +304,9 @@ export default function Onboarding() {
 
             <RolloverReveal delay={260} duration={750} style={styles.inputSection}>
 
-              {locStatus === 'detected' ? (
-                <View style={[styles.inputCard, styles.inputCardGreen, styles.locSummary]}>
-                  <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
-                  <FontAwesome name="map-marker" size={20} color={colors.success} />
-                  <Text style={styles.locSummaryText} numberOfLines={2}>
-                    {[city, region, country].filter(Boolean).join(', ') || 'Location detected'}
-                  </Text>
-                </View>
-              ) : (
+              {/* GPS path: tap → permission → detect → save silently → photo.
+                  Hidden in manual mode (where we show the fields + Finish). */}
+              {locStatus !== 'manual' && (
                 <Pressable
                   style={({ pressed }) => [styles.locateBtn, pressed && styles.pressed]}
                   onPress={useMyLocation}
@@ -335,15 +338,15 @@ export default function Onboarding() {
                 </View>
               ) : null}
 
-              {(locStatus === 'manual' || locStatus === 'detected') && (
+              {locStatus === 'manual' && (
                 <View style={styles.manualFields}>
                   <View style={styles.inputCard}>
                     <TextInput
                       style={styles.input}
-                      placeholder="City"
+                      placeholder="Address"
                       placeholderTextColor={colors.textFaint}
-                      value={city}
-                      onChangeText={editCity}
+                      value={address}
+                      onChangeText={editAddress}
                     />
                   </View>
                   <View style={styles.inputCard}>
@@ -379,26 +382,28 @@ export default function Onboarding() {
                 </View>
               ) : null}
 
-              {/* CTA */}
-              <Pressable
-                style={({ pressed }) => [
-                  styles.cta,
-                  !locationCtaEnabled && styles.ctaDisabled,
-                  pressed && locationCtaEnabled && styles.pressed,
-                ]}
-                onPress={confirmLocation}
-                disabled={!locationCtaEnabled}
-              >
-                <View style={styles.ctaInner}>
-                  {locationCtaEnabled && <GradientFill colors={gradients.button} />}
-                  {saving
-                    ? <ActivityIndicator color={colors.white} />
-                    : <Text style={[styles.ctaText, !locationCtaEnabled && styles.ctaTextDim]}>
-                        Finish →
-                      </Text>
-                  }
-                </View>
-              </Pressable>
+              {/* Finish CTA — only for manual entry; the GPS path auto-advances. */}
+              {locStatus === 'manual' && (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.cta,
+                    !locationCtaEnabled && styles.ctaDisabled,
+                    pressed && locationCtaEnabled && styles.pressed,
+                  ]}
+                  onPress={confirmLocation}
+                  disabled={!locationCtaEnabled}
+                >
+                  <View style={styles.ctaInner}>
+                    {locationCtaEnabled && <GradientFill colors={gradients.button} />}
+                    {saving
+                      ? <ActivityIndicator color={colors.white} />
+                      : <Text style={[styles.ctaText, !locationCtaEnabled && styles.ctaTextDim]}>
+                          Finish →
+                        </Text>
+                    }
+                  </View>
+                </Pressable>
+              )}
 
               <View style={styles.locFooter}>
                 <Pressable onPress={() => setStep('username')} hitSlop={8}>
