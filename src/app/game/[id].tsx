@@ -13,7 +13,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import QRCode from 'react-native-qrcode-svg';
+import Animated, { BounceIn } from 'react-native-reanimated';
 import { supabase } from '../../lib/supabase';
+import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
@@ -24,6 +26,7 @@ import {
   gridForRound,
   joinGame,
   leaveGame,
+  pickPuzzleImage,
   playerLabel,
   requestRematch,
   seedFor,
@@ -34,6 +37,7 @@ import {
   useGame,
   type GamePlayer,
 } from '../../lib/usePixelGame';
+import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
@@ -44,6 +48,7 @@ export default function GameScreen() {
   const myId = session?.user?.id ?? null;
 
   const { game, players, round, loading, error } = useGame(code);
+  const { isOnline } = usePresence();
   const isHost = game?.host_id === myId;
   const botPlayer = players.find((p) => p.is_bot) ?? null;
 
@@ -72,7 +77,7 @@ export default function GameScreen() {
     if (!game || !round || !isHost) return;
     if (game.status !== 'active') return;
     if (round.status !== 'awaiting_image') return;
-    setRoundImage(game.id, round.round_no, DEFAULT_PUZZLE_IMAGE).catch(console.warn);
+    setRoundImage(game.id, round.round_no, pickPuzzleImage(game.id, round.round_no)).catch(console.warn);
   }, [game?.id, game?.status, round?.status, round?.round_no, isHost]);
 
   // Both clients: auto-advance once a round is decided.
@@ -244,7 +249,13 @@ export default function GameScreen() {
             </Text>
             <View style={styles.playerList}>
               {players.map((p) => (
-                <PlayerRow key={p.id} player={p} isMe={p.user_id === myId} />
+                <PlayerRow
+                  key={p.id}
+                  player={p}
+                  isMe={p.user_id === myId}
+                  showPresence
+                  online={p.user_id === myId || isOnline(p.user_id)}
+                />
               ))}
               {players.length < game.max_players && (
                 <View style={[styles.playerRow, styles.playerRowLast]}>
@@ -364,13 +375,16 @@ export default function GameScreen() {
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
+      <Confetti active={iWon} />
       <SafeAreaView style={styles.safe}>
         <Header title="Game over" onBack={() => router.replace('/home')} />
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
 
           <View style={styles.finishedCard}>
             <GradientFill colors={iWon ? gradients.button : [colors.surface, colors.surfaceAlt]} />
-            <Text style={styles.finishedEmoji}>{iWon ? '🏆' : '🥈'}</Text>
+            <Animated.Text entering={BounceIn.duration(700)} style={styles.finishedEmoji}>
+              {iWon ? '🏆' : '🥈'}
+            </Animated.Text>
             <Text style={styles.finishedTitle}>
               {overallWinner
                 ? `${iWon ? 'You won!' : `${playerLabel(overallWinner)} wins!`}`
@@ -454,11 +468,15 @@ function PlayerRow({
   player,
   isMe,
   showScore,
+  showPresence,
+  online,
   rank,
 }: {
   player: GamePlayer;
   isMe: boolean;
   showScore?: boolean;
+  showPresence?: boolean;
+  online?: boolean;
   rank?: number;
 }) {
   const isLast = rank === undefined;
@@ -468,6 +486,9 @@ function PlayerRow({
         <Text style={styles.playerAvatarLetter}>
           {playerLabel(player).charAt(0).toUpperCase()}
         </Text>
+        {showPresence && !player.is_bot && (
+          <View style={[styles.presenceDot, { backgroundColor: online ? colors.success : colors.textFaint }]} />
+        )}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.playerName}>
@@ -566,6 +587,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   playerAvatarMe: { backgroundColor: colors.blue },
+  presenceDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.bg,
+  },
   playerAvatarLetter: { fontFamily: font.extrabold, fontSize: 16, color: colors.white },
   playerName: { fontFamily: font.bold, fontSize: 15, color: colors.text },
   playerBadge: { fontFamily: font.extrabold, fontSize: 10, color: colors.textFaint, letterSpacing: 0.5 },

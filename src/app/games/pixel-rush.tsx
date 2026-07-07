@@ -12,15 +12,17 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
 import { goBackOr } from '../../lib/navigation';
 import {
-  DEFAULT_PUZZLE_IMAGE,
+  PUZZLE_IMAGES,
   createBotMatch,
   createPixelRushGame,
   enqueueOrMatch,
+  gridForRound,
   joinGame,
   leaveQueue,
 } from '../../lib/usePixelGame';
@@ -47,16 +49,29 @@ export default function PixelRushScreen() {
   const searchTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cancelledRef = useRef(false);
 
-  // Solo puzzle state
+  // Solo puzzle state — grid scales up each consecutive round, same progression as multiplayer.
   const [soloSeed, setSoloSeed] = useState(0);
+  const [soloImage, setSoloImage] = useState(PUZZLE_IMAGES[0]);
+  const [soloRound, setSoloRound] = useState(1);
   const [soloStartedAt, setSoloStartedAt] = useState(0);
   const [soloResult, setSoloResult] = useState<number | null>(null);
 
-  function startSolo() {
+  function newSoloPuzzle() {
     setSoloSeed((Math.random() * 0x7fffffff) | 0);
+    setSoloImage(PUZZLE_IMAGES[Math.floor(Math.random() * PUZZLE_IMAGES.length)]);
     setSoloStartedAt(Date.now());
     setSoloResult(null);
+  }
+
+  function startSolo() {
+    setSoloRound(1);
+    newSoloPuzzle();
     setScreen('solo');
+  }
+
+  function nextSoloPuzzle() {
+    setSoloRound((r) => r + 1);
+    newSoloPuzzle();
   }
 
   function stopSearching() {
@@ -190,6 +205,7 @@ export default function PixelRushScreen() {
     return (
       <View style={styles.root}>
         <GradientFill colors={gradients.background} />
+        <Confetti active={soloResult !== null} />
         <SafeAreaView style={styles.safe}>
           <View style={styles.topBar}>
             <Pressable
@@ -198,15 +214,18 @@ export default function PixelRushScreen() {
             >
               <Text style={styles.backGlyph}>‹</Text>
             </Pressable>
-            <Text style={themeText.h2}>Solo Practice</Text>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={themeText.h2}>Solo Practice</Text>
+              <Text style={styles.soloGridHint}>Round {soloRound} · Grid {gridForRound(soloRound)}×{gridForRound(soloRound)}</Text>
+            </View>
             <HeaderAvatar />
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.soloContent}>
             <PixelBoard
-              image={DEFAULT_PUZZLE_IMAGE}
+              image={soloImage}
               seed={soloSeed}
-              grid={3}
+              grid={gridForRound(soloRound)}
               startedAt={soloStartedAt}
               locked={soloResult !== null}
               onSolve={(ms) => setSoloResult(ms)}
@@ -227,7 +246,7 @@ export default function PixelRushScreen() {
                   </Pressable>
                   <Pressable
                     style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
-                    onPress={startSolo}
+                    onPress={nextSoloPuzzle}
                   >
                     <GradientFill colors={gradients.button} />
                     <Text style={styles.primaryBtnText}>Play again</Text>
@@ -556,6 +575,7 @@ const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
 
   // ── Solo layout
+  soloGridHint: { fontFamily: font.semibold, fontSize: 12, color: colors.textFaint, marginTop: 2 },
   soloContent: { paddingBottom: space.xl, gap: space.lg, alignItems: 'center' },
   resultCard: {
     alignSelf: 'stretch',

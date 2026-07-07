@@ -6,13 +6,14 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Animated, {
-  FadeIn, FadeInDown, FadeInUp, SlideInUp,
+  BounceIn, FadeIn, FadeInDown, FadeInUp, SlideInUp,
   useAnimatedStyle, useSharedValue,
   withSequence, withTiming,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
+import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { NumberKeypad } from '../../components/NumberKeypad';
@@ -119,6 +120,18 @@ const hb = StyleSheet.create({
   text:  { fontFamily: font.extrabold, fontSize: 14 },
 });
 
+/** Bot's own secret for the round — whole or decimal, matching this round's rules. */
+function randomSecret(allowDecimal: boolean, isHard: boolean): number {
+  if (!allowDecimal) return Math.floor(Math.random() * 101);
+  return parseFloat((Math.random() * 100).toFixed(isHard ? 2 : 1));
+}
+
+/** How long the bot takes to land on the human's secret — longer when decimals are in play. */
+function botSolveDelayMs(allowDecimal: boolean, isHard: boolean): number {
+  const base = !allowDecimal ? 6000 : isHard ? 12000 : 9000;
+  return base + Math.random() * 4000;
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function NumberDuel() {
   const { roomCode } = useLocalSearchParams<{ roomCode: string }>();
@@ -131,6 +144,7 @@ export default function NumberDuel() {
   const [myName,        setMyName]        = useState('You');
   const [opponentName,  setOpponentName]  = useState('Opponent');
   const [opponentId,    setOpponentId]    = useState<string | null>(null);
+  const [isBot,         setIsBot]         = useState(false);
   const [isHost,        setIsHost]        = useState(false);
   const [inputValue,    setInputValue]    = useState('');
   const [loading,       setLoading]       = useState(true);
@@ -140,6 +154,9 @@ export default function NumberDuel() {
   const [isEditingShare,setIsEditingShare]= useState(false);
   const [shareText,     setShareText]     = useState('');
   const guessStartTimeRef = useRef<number>(0);
+  const botSecretRef = useRef<number | null>(null);
+  const botLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const botSolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [gameRules, setGameRules] = useState({ rounds: 12, difficulty: 'auto', mode: 'classic' });
 
@@ -179,7 +196,7 @@ export default function NumberDuel() {
 
       const { data: players } = await supabase
         .from('room_players')
-        .select('user_id, display_name, profiles(username)')
+        .select('user_id, display_name, is_bot, profiles(username)')
         .eq('room_id', room.id);
 
       setRoomId(room.id);
@@ -211,13 +228,14 @@ export default function NumberDuel() {
       setMyName(me?.display_name  || (me?.profiles  as any)?.username || 'You');
       setOpponentName(opp?.display_name || (opp?.profiles as any)?.username || 'Opponent');
       setOpponentId(opp?.user_id ?? null);
+      setIsBot(!!(opp as any)?.is_bot);
       setLoading(false);
     })();
   }, [roomCode, session]);
 
   // ── Sync heartbeat for P2P state ─────────────────────────────────────────
   useEffect(() => {
-    if (!roomCode || !session || gs.phase !== 'picking' && gs.phase !== 'opponent_picking') return;
+    if (isBot || !roomCode || !session || gs.phase !== 'picking' && gs.phase !== 'opponent_picking') return;
     const interval = setInterval(() => {
       chRef.current?.send({
         type: 'broadcast', event: 'sync_state',
@@ -225,7 +243,46 @@ export default function NumberDuel() {
       });
     }, 2000);
     return () => clearInterval(interval);
-  }, [roomCode, session, gs.phase, gs.mySecret]);
+  }, [isBot, roomCode, session, gs.phase, gs.mySecret]);
+
+  // ── Bot: lock its own secret after a short "thinking" delay ────────────────
+  useEffect(() => {
+    if (!isBot || gs.phase !== 'picking') return;
+    botSecretRef.current = null;
+    const delay = 3000 + Math.random() * 5000;
+    botLockTimerRef.current = setTimeout(() => {
+      botSecretRef.current = randomSecret(allowDecimal, isHard);
+      setOpponentReady(true);
+      setGs(prev => {
+        if (prev.mySecret !== null && prev.phase === 'opponent_picking') return { ...prev, phase: 'drama' };
+        return prev;
+      });
+    }, delay);
+    return () => { if (botLockTimerRef.current) clearTimeout(botLockTimerRef.current); };
+  }, [isBot, gs.phase, allowDecimal, isHard]);
+
+  // ── Bot: "solve" the human's secret after a delay, unless the human wins first ──
+  useEffect(() => {
+    if (!isBot || gs.phase !== 'guessing') return;
+    const delay = botSolveDelayMs(allowDecimal, isHard);
+    botSolveTimerRef.current = setTimeout(() => {
+      setGs(prev => {
+        if (prev.phase !== 'guessing') return prev; // human already won this round
+        const nextState = {
+          ...prev, opponentScore: prev.opponentScore + 1, roundWinner: 'opponent' as const,
+          opponentSecretReveal: botSecretRef.current, phase: 'round_end' as const,
+        };
+        if (isHost && roomId) {
+          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+            ...gameRules, round: nextState.round,
+            hostScore: nextState.myScore, guestScore: nextState.opponentScore,
+          }});
+        }
+        return nextState;
+      });
+    }, delay);
+    return () => { if (botSolveTimerRef.current) clearTimeout(botSolveTimerRef.current); };
+  }, [isBot, gs.phase, allowDecimal, isHard, isHost, roomId, gameRules]);
 
   // ── Drama Phase Timer ────────────────────────────────────────────────────
   useEffect(() => {
@@ -240,8 +297,10 @@ export default function NumberDuel() {
   }, [gs.phase]);
 
   // ── Realtime P2P channel ─────────────────────────────────────────────────
+  // Bot matches have no second device to talk to — the bot's behavior is
+  // simulated entirely locally above, so this channel is skipped outright.
   useEffect(() => {
-    if (!roomCode || !session) return;
+    if (isBot || !roomCode || !session) return;
 
     const ch = supabase.channel(`game_live_${roomCode}`);
 
@@ -418,7 +477,7 @@ export default function NumberDuel() {
     ch.subscribe();
     chRef.current = ch;
     return () => { supabase.removeChannel(ch); };
-  }, [roomCode, session, isHost, roomId, gameRules]);
+  }, [isBot, roomCode, session, isHost, roomId, gameRules]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
   const handleLockSecret = () => {
@@ -449,17 +508,59 @@ export default function NumberDuel() {
     if (!inputValue || submitting) return;
     setSubmitting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const guessStr = inputValue;
+    setInputValue('');
+
+    if (isBot) {
+      const timeSpent = Date.now() - guessStartTimeRef.current;
+      const guess = parseFloat(guessStr);
+      const secret = botSecretRef.current ?? 0;
+      const dist = Math.abs(guess - secret);
+      const hint: Hint = gameRules.mode === 'blind_duel'
+        ? (dist === 0 ? 'correct' : dist <= 5 ? 'hot' : dist <= 15 ? 'warm' : 'cold')
+        : (guess === secret ? 'correct' : guess < secret ? 'higher' : 'lower');
+
+      // Small delay so a bot guess still feels like it went somewhere and came back.
+      setTimeout(() => {
+        Haptics.impactAsync(hint === 'correct' ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light);
+        if (hint !== 'correct') shake();
+        updateBgFeedback(hint);
+        if (hint === 'correct' && botSolveTimerRef.current) {
+          clearTimeout(botSolveTimerRef.current);
+          botSolveTimerRef.current = null;
+        }
+        setGs(prev => {
+          const newMiss = prev.closestMiss === null ? dist : Math.min(prev.closestMiss, dist);
+          return {
+            ...prev,
+            guessTimeSum: prev.guessTimeSum + timeSpent,
+            guessCount: prev.guessCount + 1,
+            closestMiss: dist !== 0 ? newMiss : prev.closestMiss,
+            myGuesses: [{ value: guessStr, hint }, ...prev.myGuesses],
+            ...(hint === 'correct'
+              ? { myScore: prev.myScore + 1, roundWinner: 'me' as const, phase: 'round_end' as const, opponentSecretReveal: secret }
+              : {}),
+          };
+        });
+        setSubmitting(false);
+      }, 350 + Math.random() * 350);
+      return;
+    }
+
     chRef.current?.send({
       type: 'broadcast', event: 'player_guess',
-      payload: { userId: session?.user.id, username: myName, guess: inputValue },
+      payload: { userId: session?.user.id, username: myName, guess: guessStr },
     });
-    setInputValue('');
   };
 
   const handleTimeout = () => {
     if (submitting) return;
+    if (botSolveTimerRef.current) { clearTimeout(botSolveTimerRef.current); botSolveTimerRef.current = null; }
     chRef.current?.send({ type: 'broadcast', event: 'player_timeout', payload: { userId: session?.user.id } });
-    setGs(prev => ({ ...prev, opponentScore: prev.opponentScore + 1, roundWinner: 'opponent', phase: 'round_end' }));
+    setGs(prev => ({
+      ...prev, opponentScore: prev.opponentScore + 1, roundWinner: 'opponent', phase: 'round_end',
+      opponentSecretReveal: isBot ? botSecretRef.current : prev.opponentSecretReveal,
+    }));
   };
 
   const handleNextRound = () => {
@@ -561,7 +662,7 @@ export default function NumberDuel() {
         <View style={s.display}>
           <Text style={s.displayText}>{inputValue || '—'}</Text>
         </View>
-        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} />
+        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} />
       </Animated.View>
     );
 
@@ -607,7 +708,7 @@ export default function NumberDuel() {
         <View style={s.display}>
           <Text style={s.displayText}>{inputValue || '—'}</Text>
         </View>
-        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} />
+        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} />
       </Animated.View>
     );
 
@@ -633,7 +734,9 @@ export default function NumberDuel() {
     // ── GAME OVER
     if (gs.phase === 'game_over') return (
       <Animated.View entering={FadeInUp.springify()} style={[s.phaseContent, s.centered]}>
-        <Text style={s.trophyEmoji}>{gs.winner === 'me' ? '🏆' : gs.winner === 'draw' ? '🤝' : '😔'}</Text>
+        <Animated.Text entering={BounceIn.duration(700)} style={s.trophyEmoji}>
+          {gs.winner === 'me' ? '🏆' : gs.winner === 'draw' ? '🤝' : '😔'}
+        </Animated.Text>
         <Text style={s.phaseTitle}>{gs.winner === 'me' ? 'You Win!' : gs.winner === 'draw' ? "It's a Draw!" : `${opponentName} Wins!`}</Text>
         <Text style={s.scoreLabel}>Final: {gs.myScore} — {gs.opponentScore}</Text>
         <View style={s.statsCard}>
@@ -722,10 +825,17 @@ export default function NumberDuel() {
             <Text style={s.sharedBadgeText}>✓  Shared to Feed!</Text>
           </View>
         )}
-        <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={handleRematch}>
-          <GradientFill colors={gradients.button} />
-          <Text style={s.ctaText}>Rematch 🔄</Text>
-        </Pressable>
+        {isBot ? (
+          <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={() => router.replace('/setup/number-duel')}>
+            <GradientFill colors={gradients.button} />
+            <Text style={s.ctaText}>Find another match</Text>
+          </Pressable>
+        ) : (
+          <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={handleRematch}>
+            <GradientFill colors={gradients.button} />
+            <Text style={s.ctaText}>Rematch 🔄</Text>
+          </Pressable>
+        )}
         <Pressable style={({ pressed }) => [s.ctaOutline, pressed && s.pressed]} onPress={() => router.replace('/home')}>
           <Text style={s.ctaOutlineText}>Back to Home</Text>
         </Pressable>
@@ -738,6 +848,7 @@ export default function NumberDuel() {
   return (
     <KeyboardAvoidingView style={s.root} behavior="padding">
       <GradientFill colors={gradients.background} />
+      <Confetti active={gs.phase === 'game_over' && gs.winner === 'me'} />
       <SafeAreaView style={s.safe}>
         <View style={s.header}>
           <Pressable onPress={() => router.replace('/home')} style={s.backBtn}>

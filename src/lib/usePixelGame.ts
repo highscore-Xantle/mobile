@@ -62,7 +62,26 @@ export function seedFor(gameId: string, round: number): number {
   return h >>> 0;
 }
 
-export const DEFAULT_PUZZLE_IMAGE = 'https://picsum.photos/seed/xantle-puzzle/600/600';
+/** Puzzle image pool — every round picks one of these instead of always the same photo. */
+export const PUZZLE_IMAGES: string[] = [
+  'https://picsum.photos/seed/xantle-puzzle-1/600/600',
+  'https://picsum.photos/seed/xantle-puzzle-2/600/600',
+  'https://picsum.photos/seed/xantle-puzzle-3/600/600',
+  'https://picsum.photos/seed/xantle-puzzle-4/600/600',
+  'https://picsum.photos/seed/xantle-puzzle-5/600/600',
+  'https://picsum.photos/seed/xantle-puzzle-6/600/600',
+  'https://picsum.photos/seed/xantle-puzzle-7/600/600',
+  'https://picsum.photos/seed/xantle-puzzle-8/600/600',
+  'https://picsum.photos/seed/xantle-puzzle-9/600/600',
+  'https://picsum.photos/seed/xantle-puzzle-10/600/600',
+];
+
+export const DEFAULT_PUZZLE_IMAGE = PUZZLE_IMAGES[0];
+
+/** Deterministic puzzle pick — same image on every client for a given game+round. */
+export function pickPuzzleImage(gameId: string, round: number): string {
+  return PUZZLE_IMAGES[seedFor(gameId, round) % PUZZLE_IMAGES.length];
+}
 
 /** Subscribe to a game, its players, and current round by invite code. */
 export function useGame(code: string | undefined) {

@@ -295,9 +295,6 @@ export default function Onboarding() {
                 <View style={styles.headingText}>
                   <Text style={themeText.h1}>Where are you</Text>
                   <Text style={[themeText.h1, styles.headingCyan]}>playing from?</Text>
-                  <Text style={styles.subtitle}>
-                    Helps us match you with nearby players.{'\n'}You can enter it manually if you'd rather not share.
-                  </Text>
                 </View>
               </View>
             </RolloverReveal>
