@@ -162,9 +162,7 @@ export default function Home() {
   if (!session) return null;
 
   const openGame = (game: typeof GAMES[number]) => {
-    if (!game.available) return;
-    if (game.route) router.push(game.route as Parameters<typeof router.push>[0]);
-    else router.push(`/setup/${game.id}` as any);
+    router.push(`/details/${game.id}` as any);   // → product-detail screen
   };
 
   return (
