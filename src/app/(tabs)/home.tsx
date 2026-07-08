@@ -19,6 +19,7 @@ import Animated, {
   useAnimatedScrollHandler,
   useAnimatedStyle,
   interpolate,
+  withSpring,
   Extrapolation,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -77,6 +78,10 @@ function GameCard({
 }) {
   const gid = `gc-${game.id}`;
 
+  // Art bounces on touch.
+  const artScale = useSharedValue(1);
+  const artStyle = useAnimatedStyle(() => ({ transform: [{ scale: artScale.value }] }));
+
   // Active card lifts + scales; neighbours recede (scale down, drop, fade).
   const aStyle = useAnimatedStyle(() => {
     const dist = index - scrollX.value / ITEM;
@@ -92,7 +97,12 @@ function GameCard({
 
   return (
     <Animated.View style={[{ width: CARD_W, height: CARD_H }, styles.cardShadow, aStyle]}>
-      <Pressable onPress={onPress} style={StyleSheet.absoluteFill}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={() => { artScale.value = withSpring(1.16, { damping: 9, stiffness: 220 }); }}
+        onPressOut={() => { artScale.value = withSpring(1, { damping: 12, stiffness: 200 }); }}
+        style={StyleSheet.absoluteFill}
+      >
         <Svg width={CARD_W} height={CARD_H} style={StyleSheet.absoluteFill}>
           <Defs>
             <SvgLinearGradient id={gid} x1="0%" y1="0%" x2="0%" y2="100%">
@@ -103,11 +113,11 @@ function GameCard({
           <Path d={CARD_PATH} fill={`url(#${gid})`} />
         </Svg>
 
-        <View style={[styles.cardArt, { height: CARD_H * 0.6 }]}>
+        <Animated.View style={[styles.cardArt, { height: CARD_H * 0.6 }, artStyle]}>
           {game.image
             ? <Image source={game.image} style={styles.cardImg} contentFit="contain" />
             : <Text style={styles.cardEmoji}>{game.emoji}</Text>}
-        </View>
+        </Animated.View>
 
         <View style={styles.cardText}>
           <Text style={styles.cardTitle}>{game.title}</Text>
@@ -262,7 +272,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   cardEmoji: { fontSize: 68 },
-  cardImg: { width: '78%', height: '78%' },
+  cardImg: { width: '100%', height: '100%' },
   cardText: { position: 'absolute', left: space.lg, bottom: space.lg },
   cardTitle: { fontFamily: font.extrabold, fontSize: 19, color: colors.text },
   cardSub: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted, marginTop: 3 },
