@@ -106,8 +106,9 @@ function GameCard({
         <Svg width={CARD_W} height={CARD_H} style={StyleSheet.absoluteFill}>
           <Defs>
             <SvgLinearGradient id={gid} x1="0%" y1="0%" x2="0%" y2="100%">
-              <Stop offset="0" stopColor="#2F3745" />
-              <Stop offset="1" stopColor="#20262E" />
+              {game.cardBg.map((c, i) => (
+                <Stop key={i} offset={`${i / (game.cardBg.length - 1)}`} stopColor={c} />
+              ))}
             </SvgLinearGradient>
           </Defs>
           <Path d={CARD_PATH} fill={`url(#${gid})`} />
