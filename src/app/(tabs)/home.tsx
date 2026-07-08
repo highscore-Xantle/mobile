@@ -9,6 +9,7 @@
  */
 import { useState } from 'react';
 import { Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
@@ -103,7 +104,9 @@ function GameCard({
         </Svg>
 
         <View style={[styles.cardArt, { height: CARD_H * 0.6 }]}>
-          <Text style={styles.cardEmoji}>{game.emoji}</Text>
+          {game.image
+            ? <Image source={game.image} style={styles.cardImg} contentFit="contain" />
+            : <Text style={styles.cardEmoji}>{game.emoji}</Text>}
         </View>
 
         <View style={styles.cardText}>
@@ -259,6 +262,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   cardEmoji: { fontSize: 68 },
+  cardImg: { width: '78%', height: '78%' },
   cardText: { position: 'absolute', left: space.lg, bottom: space.lg },
   cardTitle: { fontFamily: font.extrabold, fontSize: 19, color: colors.text },
   cardSub: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted, marginTop: 3 },
