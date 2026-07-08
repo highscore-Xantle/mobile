@@ -20,10 +20,10 @@ import Animated, {
   useAnimatedStyle,
   interpolate,
   withSpring,
+  runOnJS,
   Extrapolation,
   type SharedValue,
 } from 'react-native-reanimated';
-import { scheduleOnRN } from 'react-native-worklets';
 import { useSession } from '../../lib/useSession';
 import { GradientFill } from '../../components/GradientFill';
 import { GAMES } from './games';
@@ -154,7 +154,7 @@ export default function Home() {
   const onScroll = useAnimatedScrollHandler((e) => {
     scrollX.value = e.contentOffset.x;
     const i = Math.round(e.contentOffset.x / ITEM);
-    if (i !== activeIdx.value) { activeIdx.value = i; scheduleOnRN(applyAccent, i); }
+    if (i !== activeIdx.value) { activeIdx.value = i; runOnJS(applyAccent)(i); }
   });
   useEffect(() => { applyAccent(0); /* seed with the first game */ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
