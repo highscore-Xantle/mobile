@@ -15,6 +15,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
 import { getDeviceLocation, LocationCaptureError } from '../lib/location';
+import { canonicalizeCountry, isValidCountry, suggestCountries } from '../lib/countries';
 import { GradientFill } from '../components/GradientFill';
 import { RolloverReveal } from '../components/RolloverReveal';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../theme';
@@ -44,6 +45,7 @@ export default function Onboarding() {
   const [region, setRegion] = useState('');
   const [country, setCountry] = useState('');
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [countrySuggestions, setCountrySuggestions] = useState<string[]>([]);
 
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -51,9 +53,12 @@ export default function Onboarding() {
     const trimmed = value.trim().toLowerCase();
     setUsername(trimmed);
     setErrorMsg('');
+    // Always cancel any pending availability check FIRST — otherwise a check armed
+    // for a previous valid value fires and marks the current (shorter/invalid) text
+    // "Available", letting a name below the minimum through.
+    if (debounceTimer.current) { clearTimeout(debounceTimer.current); debounceTimer.current = null; }
     if (trimmed.length < MIN_LEN) { setCheckState('idle'); return; }
     if (trimmed.length > MAX_LEN || !VALID_RE.test(trimmed)) { setCheckState('invalid'); return; }
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
     setCheckState('checking');
     debounceTimer.current = setTimeout(() => checkAvailability(trimmed), 600);
   };
@@ -98,15 +103,30 @@ export default function Onboarding() {
     setLocError('');
     try {
       const loc = await getDeviceLocation();
+      // Normalize the geocoded country to our canonical name where possible
+      // ("Czech Republic" locales, casing) so it matches manually-entered values;
+      // keep the raw name if it isn't in the list rather than dropping it.
+      const canonCountry = canonicalizeCountry(loc.country ?? '') ?? loc.country;
+      // Prefill the fields so that if the save fails we can drop to a populated
+      // manual form instead of stranding the user on a spinner.
+      setAddress(loc.address ?? '');
+      setRegion(loc.region ?? '');
+      setCity(loc.city ?? '');
+      setCountry(canonCountry ?? '');
+      setCoords({ latitude: loc.latitude, longitude: loc.longitude });
       // Save silently and go straight to the photo step — no review screen.
-      await finishOnboarding({
+      const ok = await finishOnboarding({
         address: loc.address,
         city: loc.city,
         region: loc.region,
-        country: loc.country,
+        country: canonCountry,
         latitude: loc.latitude,
         longitude: loc.longitude,
       });
+      // Save failed (finishOnboarding surfaced an error) — reveal the manual form
+      // with the detected values so they can retry rather than sit on "Getting
+      // location…" forever.
+      if (!ok) setLocStatus('manual');
     } catch (e) {
       setLocStatus('manual');
       const reason = e instanceof LocationCaptureError ? e.reason : 'unknown';
@@ -127,8 +147,19 @@ export default function Onboarding() {
   const editAddress = (v: string) => { setAddress(v); setCoords(null); };
   const editCity = (v: string) => { setCity(v); setCoords(null); };
   const editRegion = (v: string) => { setRegion(v); setCoords(null); };
-  const editCountry = (v: string) => { setCountry(v); setCoords(null); };
+  const editCountry = (v: string) => {
+    setCountry(v);
+    setCoords(null);
+    setCountrySuggestions(suggestCountries(v));
+  };
+  const pickCountry = (c: string) => {
+    setCountry(c);
+    setCoords(null);
+    setCountrySuggestions([]);
+  };
 
+  // Returns true on success. Callers (GPS path) use the result to decide whether
+  // to drop to the manual form on failure instead of hanging on a spinner.
   const finishOnboarding = async (loc: {
     address: string | null;
     city: string | null;
@@ -136,8 +167,8 @@ export default function Onboarding() {
     country: string | null;
     latitude: number | null;
     longitude: number | null;
-  }) => {
-    if (!session?.user) return;
+  }): Promise<boolean> => {
+    if (!session?.user) return false;
     setSaving(true);
     setErrorMsg('');
     const { error } = await supabase
@@ -160,17 +191,19 @@ export default function Onboarding() {
       } else {
         setErrorMsg(error.message);
       }
-      return;
+      return false;
     }
     // Username + location saved — send them to the profile-photo step.
     router.replace('/onboarding-photo');
+    return true;
   };
 
   const confirmLocation = () => finishOnboarding({
     address: address.trim() || null,
     city: city.trim() || null,
     region: region.trim() || null,
-    country: country.trim() || null,
+    // Store the canonical name ("Nigeria"), not whatever casing/alias was typed.
+    country: canonicalizeCountry(country),
     latitude: coords?.latitude ?? null,
     longitude: coords?.longitude ?? null,
   });
@@ -179,7 +212,13 @@ export default function Onboarding() {
     address: null, city: null, region: null, country: null, latitude: null, longitude: null,
   });
 
-  const manualComplete = address.trim().length > 0 && country.trim().length > 0;
+  // Country must resolve to a real country. Address is OPTIONAL — requiring it
+  // deadlocked users whose GPS returned no street (rural areas) and is
+  // unnecessary for analytics. Show the invalid-country hint only once they've
+  // typed something, so the field doesn't start out red.
+  const countryValid = isValidCountry(country);
+  const countryInvalid = country.trim().length > 0 && !countryValid;
+  const manualComplete = countryValid;
   const locationCtaEnabled = !saving && locStatus === 'manual' && manualComplete;
 
   // Status pill config
@@ -337,33 +376,77 @@ export default function Onboarding() {
 
               {locStatus === 'manual' && (
                 <View style={styles.manualFields}>
-                  <View style={styles.inputCard}>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Address"
-                      placeholderTextColor={colors.textFaint}
-                      value={address}
-                      onChangeText={editAddress}
-                    />
+                  <View style={styles.fieldGroup}>
+                    <Text style={styles.fieldLabel}>ADDRESS</Text>
+                    <View style={styles.inputCard}>
+                      <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
+                      <TextInput
+                        style={styles.inputManual}
+                        placeholder="Street, area, or neighborhood"
+                        placeholderTextColor={colors.textFaint}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                        value={address}
+                        onChangeText={editAddress}
+                      />
+                    </View>
                   </View>
-                  <View style={styles.inputCard}>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="State / region (optional)"
-                      placeholderTextColor={colors.textFaint}
-                      value={region}
-                      onChangeText={editRegion}
-                    />
+
+                  <View style={styles.fieldGroup}>
+                    <Text style={styles.fieldLabel}>STATE / REGION (OPTIONAL)</Text>
+                    <View style={styles.inputCard}>
+                      <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
+                      <TextInput
+                        style={styles.inputManual}
+                        placeholder="e.g. Lagos"
+                        placeholderTextColor={colors.textFaint}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                        value={region}
+                        onChangeText={editRegion}
+                      />
+                    </View>
                   </View>
-                  <View style={styles.inputCard}>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Country"
-                      placeholderTextColor={colors.textFaint}
-                      value={country}
-                      onChangeText={editCountry}
-                    />
+
+                  <View style={styles.fieldGroup}>
+                    <Text style={styles.fieldLabel}>COUNTRY</Text>
+                    <View style={styles.inputCard}>
+                      <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
+                      <TextInput
+                        style={styles.inputManual}
+                        placeholder="e.g. Nigeria"
+                        placeholderTextColor={colors.textFaint}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                        value={country}
+                        onChangeText={editCountry}
+                        onBlur={() => setTimeout(() => setCountrySuggestions([]), 150)}
+                      />
+                    </View>
+                    {countrySuggestions.length > 0 && (
+                      <View style={styles.suggestionsCard}>
+                        {countrySuggestions.map((c, i) => (
+                          <Pressable
+                            key={c}
+                            style={[styles.suggestionRow, i < countrySuggestions.length - 1 && styles.suggestionRowDivider]}
+                            onPress={() => pickCountry(c)}
+                          >
+                            <Text style={styles.suggestionText}>{c}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    )}
+                    {countryInvalid && countrySuggestions.length === 0 && (
+                      <Text style={styles.fieldError}>Pick a country from the list.</Text>
+                    )}
                   </View>
+
+                  <Pressable onPress={useMyLocation} hitSlop={8}>
+                    <Text style={styles.linkText}>
+                      <FontAwesome name="location-arrow" size={12} color={colors.blue} />
+                      {'  '}Use my location instead
+                    </Text>
+                  </Pressable>
                 </View>
               )}
 
@@ -473,7 +556,34 @@ const styles = StyleSheet.create({
     color: colors.text,
     paddingVertical: space.lg,
   },
+  // NO flex:1 here — inside the column-direction card it would collapse the
+  // input's content height to zero and clip the text (styles.input only works
+  // in the username field because inputRow is a row, where flex:1 = width).
+  inputManual: {
+    fontFamily: font.semibold,
+    fontSize: 18,
+    color: colors.text,
+    paddingVertical: space.lg,
+    paddingHorizontal: space.md,
+  },
   spinner: { marginRight: space.sm },
+
+  // Manual location field labels + country autocomplete
+  fieldGroup: { gap: space.xs },
+  fieldLabel: { fontFamily: font.bold, fontSize: 12, letterSpacing: 1, color: colors.textFaint, marginLeft: 2 },
+  fieldError: { fontFamily: font.semibold, fontSize: 12, color: colors.danger, marginLeft: 2 },
+  suggestionsCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    backgroundColor: colors.surface,
+    overflow: 'hidden',
+    marginTop: space.xs,
+    ...shadow.card,
+  },
+  suggestionRow: { paddingVertical: space.sm, paddingHorizontal: space.md },
+  suggestionRowDivider: { borderBottomWidth: 1, borderBottomColor: colors.hairline },
+  suggestionText: { fontFamily: font.semibold, fontSize: 15, color: colors.text },
 
   // Status pill
   statusPill: {

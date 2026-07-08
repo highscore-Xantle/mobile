@@ -14,7 +14,7 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, SlideInDown } from 'react-native-reanimated';
 import { useSession } from '../../lib/useSession';
-import { supabase } from '../../lib/supabase';
+import { fetchLiveMatches, viewerRouteFor } from '../../lib/useLiveMatches';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { RolloverReveal } from '../../components/RolloverReveal';
@@ -182,34 +182,15 @@ export default function GamesTab() {
   const [sheetLoading, setSheetLoading] = useState(false);
 
   // ── Fetch active rooms (10-second poll) ─────────────────────────────────────
+  // Shared with the Live tab (useLiveMatches) so both surfaces query the same
+  // way instead of drifting apart.
   const fetchLiveRooms = useCallback(async () => {
-    const [{ data: rooms }, { data: games }] = await Promise.all([
-      supabase
-        .from('rooms')
-        .select(`code, game_kind, state, room_players ( display_name, profiles ( username ) )`)
-        .eq('status', 'active'),
-      supabase
-        .from('games')
-        .select(`invite_code, current_round, game_players ( guest_name, profile:user_id ( username ) )`)
-        .eq('status', 'active')
-        .eq('game_type', 'pixel_rush'),
-    ]);
+    const matches = await fetchLiveMatches();
     const map: Record<string, ActiveRoom[]> = {};
-    (rooms ?? []).forEach((r: any) => {
-      const names: string[] = (r.room_players ?? []).map((p: any) =>
-        p.display_name || p.profiles?.username || 'Player'
-      );
-      const room: ActiveRoom = { code: r.code, round: r.state?.round ?? 1, playerNames: names };
-      if (!map[r.game_kind]) map[r.game_kind] = [];
-      map[r.game_kind].push(room);
-    });
-    (games ?? []).forEach((g: any) => {
-      const names: string[] = (g.game_players ?? []).map((p: any) =>
-        p.guest_name || p.profile?.username || 'Player'
-      );
-      const room: ActiveRoom = { code: g.invite_code, round: g.current_round ?? 1, playerNames: names };
-      if (!map['pixel-rush']) map['pixel-rush'] = [];
-      map['pixel-rush'].push(room);
+    matches.forEach((m) => {
+      const room: ActiveRoom = { code: m.code, round: m.round, playerNames: m.playerNames };
+      if (!map[m.gameKind]) map[m.gameKind] = [];
+      map[m.gameKind].push(room);
     });
     setLiveRooms(map);
   }, []);
@@ -241,7 +222,7 @@ export default function GamesTab() {
   };
 
   const handleWatchRoom = (roomCode: string) => {
-    const viewerId = sheetGame?.id === 'pixel-rush' ? 'pixel-rush-viewer' : 'number-duel-viewer';
+    const viewerId = viewerRouteFor(sheetGame?.id ?? '');
     setSheetGame(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push({ pathname: '/game/[id]', params: { id: viewerId, roomCode } });

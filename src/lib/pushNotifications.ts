@@ -95,9 +95,16 @@ export async function registerForPushNotifications(userId: string): Promise<stri
     const projectId = Constants.expoConfig?.extra?.eas?.projectId;
     const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
 
-    await supabase
+    // Don't report success if the row write failed — otherwise the Settings toggle
+    // flips "on" with no token stored, no push ever arrives, and it reads "off" on
+    // the next visit.
+    const { error } = await supabase
       .from('push_tokens')
       .upsert({ user_id: userId, token, updated_at: new Date().toISOString() });
+    if (error) {
+      console.warn('[pushNotifications] token upsert failed:', error);
+      return null;
+    }
 
     return token;
   } catch (err) {

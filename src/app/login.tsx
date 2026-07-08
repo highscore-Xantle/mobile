@@ -87,9 +87,21 @@ export default function Login() {
 
   const handleAuthResult = async (error: any, data: any) => {
     if (error) { setErrorMsg(error.message); return; }
-    const { data: profile } = await supabase
-      .from('profiles').select('username').eq('id', data.user.id).single();
-    router.replace(profile?.username ? '/home' : '/onboarding');
+    // Only send the user to onboarding when we've CONFIRMED they have no username.
+    // A failed profile fetch (flaky network) must not force an existing user back
+    // through onboarding — that would overwrite their saved location. Retry once,
+    // and on a persistent fetch error default to /home (they're authenticated and
+    // the profile row exists; index.tsx re-checks onboarding on next launch).
+    let username: string | null | undefined;
+    let fetchErr: any = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await supabase
+        .from('profiles').select('username').eq('id', data.user.id).maybeSingle();
+      fetchErr = res.error;
+      if (!res.error) { username = res.data?.username ?? null; break; }
+    }
+    if (fetchErr) { router.replace('/home'); return; }
+    router.replace(username ? '/home' : '/onboarding');
   };
 
   const sendOtp = async () => {
@@ -246,6 +258,8 @@ export default function Login() {
             chipBg={colors.surfaceAlt}
             label="Continue with Google"
             onPress={signInWithGoogle_}
+            loading={loading}
+            disabled={loading}
           />
 
           {/* Divider */}

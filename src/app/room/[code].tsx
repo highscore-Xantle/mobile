@@ -1,15 +1,15 @@
 import { FontAwesome } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import * as Linking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import Animated, { Easing, FadeInDown, interpolate, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
+import { buildInviteLink } from '../../lib/inviteLink';
 import { supabase } from '../../lib/supabase';
 import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
@@ -25,6 +25,16 @@ export default function RoomLobby() {
   const [room, setRoom] = useState<any>(null);
   const [players, setPlayers] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
+  // Navigate into the game exactly once — the host's own start call, the rooms
+  // UPDATE subscription, and the initial fetch can all fire for the same active
+  // room, and a double router.replace remounts the game screen (dropping any
+  // realtime event the first mount received).
+  const navigatedRef = useRef(false);
+  const goToGame = (r: any) => {
+    if (navigatedRef.current) return;
+    navigatedRef.current = true;
+    router.replace({ pathname: '/game/[id]', params: { id: r.game_kind, roomCode: code } });
+  };
 
   // Hooks must all be declared before any early return (Rules of Hooks)
   const pulse = useSharedValue(0.5);
@@ -77,7 +87,7 @@ export default function RoomLobby() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${code}` }, (payload) => {
         setRoom(payload.new);
         if (payload.new.status === 'active') {
-          router.replace({ pathname: '/game/[id]', params: { id: payload.new.game_kind, roomCode: code } });
+          goToGame(payload.new);
         }
       })
       .subscribe();
@@ -87,19 +97,43 @@ export default function RoomLobby() {
     };
   }, [code, session]);
 
+  // Key on room?.id (a stable string), NOT the whole room object — otherwise every
+  // rooms UPDATE (setRoom) tears down and resubscribes this channel, and a player
+  // join/leave landing in that gap is silently missed. Refetch on (re)subscribe as
+  // a backstop for anything missed while the socket was establishing.
   useEffect(() => {
-    if (!room) return;
+    if (!room?.id) return;
+    const roomId = room.id;
     const playersSub = supabase
-      .channel(`players_${room.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${room.id}` }, () => {
-        fetchPlayers(room.id);
+      .channel(`players_${roomId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, () => {
+        fetchPlayers(roomId);
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') fetchPlayers(roomId);
+      });
 
     return () => {
       supabase.removeChannel(playersSub);
     };
-  }, [room]);
+  }, [room?.id]);
+
+  // Auto-join: arriving via an invite deep link (xantle://room/CODE) drops the
+  // recipient straight into this lobby — seat them as a player, the same way the
+  // Pixel Rush game screen auto-joins a QR/deep-link scanner. Without this they'd
+  // sit here as a non-participant the host can't see or start with. join_room is
+  // idempotent (no-ops if already a member), so this is safe to run on any render.
+  useEffect(() => {
+    const uid = session?.user?.id;
+    if (!room || !code || !uid) return;
+    if (room.status !== 'lobby') return;
+    if (players.some((p: any) => p.user_id === uid)) return;
+    if (players.length >= room.max_players) return;
+    supabase.rpc('join_room', { p_code: code }).then(({ error }) => {
+      if (error) console.warn('[room] auto-join failed:', error.message);
+      else fetchPlayers(room.id);
+    });
+  }, [room?.id, room?.status, room?.max_players, code, session?.user?.id, players]);
 
   const fetchRoomAndPlayers = async () => {
     const { data: roomData, error: roomError } = await supabase
@@ -119,7 +153,7 @@ export default function RoomLobby() {
     setLoading(false);
 
     if (roomData.status === 'active') {
-      router.replace({ pathname: '/game/[id]', params: { id: roomData.game_kind, roomCode: code } });
+      goToGame(roomData);
     }
   };
 
@@ -143,7 +177,7 @@ export default function RoomLobby() {
       return;
     }
 
-    router.replace({ pathname: '/game/[id]', params: { id: room.game_kind, roomCode: code } });
+    goToGame(room);
   };
 
   const handleToggleFlip = () => {
@@ -161,11 +195,12 @@ export default function RoomLobby() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ── Share: deep link + friendly message, opens native share sheet ─────────
+  // ── Share: invite link + friendly message, opens native share sheet ───────
   const handleShare = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    // Generates xantle://room/<code> on native, https://... in Expo Go tunnel
-    const deepLink = Linking.createURL(`/room/${code}`);
+    // Rooms are Number Duel-only for now — see buildInviteLink for why this
+    // isn't a bare xantle:// link.
+    const deepLink = buildInviteLink('number-duel', code);
     try {
       await Share.share({
         title: 'Join my Xantle game 🎮',
@@ -253,7 +288,7 @@ export default function RoomLobby() {
               <Pressable style={StyleSheet.absoluteFill} onPress={handleToggleFlip} />
               <Text style={styles.codeLabel}>SCAN TO JOIN</Text>
               <View style={styles.qrWrapper}>
-                <QRCode value={code} size={150} color={colors.bg} backgroundColor={colors.white} />
+                <QRCode value={buildInviteLink('number-duel', code)} size={150} color={colors.bg} backgroundColor={colors.white} />
               </View>
               <View pointerEvents="none" style={styles.qrFooterRow}>
                 <FontAwesome name="refresh" size={12} color={colors.textMuted} />

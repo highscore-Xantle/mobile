@@ -98,6 +98,11 @@ export default function Profile() {
     const trimmed = value.trim().toLowerCase();
     setDraft(trimmed);
 
+    // Cancel any pending availability check FIRST so a stale check for a previous
+    // valid value can't mark the current (unchanged/too-short/invalid) text
+    // "available" and enable Save.
+    if (debounceTimer.current) { clearTimeout(debounceTimer.current); debounceTimer.current = null; }
+
     if (trimmed === username) {
       setCheckState('idle');
       return;
@@ -111,7 +116,6 @@ export default function Profile() {
       return;
     }
 
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
     setCheckState('checking');
     debounceTimer.current = setTimeout(() => checkAvailability(trimmed), 600);
   };

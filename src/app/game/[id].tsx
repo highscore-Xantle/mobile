@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import * as Linking from 'expo-linking';
 import QRCode from 'react-native-qrcode-svg';
 import Animated, { BounceIn } from 'react-native-reanimated';
 import { supabase } from '../../lib/supabase';
@@ -20,6 +19,7 @@ import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
 import { computeBotSolveDelayMs, getRecentWinRate } from '../../lib/botOpponent';
+import { buildInviteLink } from '../../lib/inviteLink';
 import {
   DEFAULT_PUZZLE_IMAGE,
   autoAdvanceRound,
@@ -40,6 +40,10 @@ import {
 import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
+
+// Must match PixelBoard's PREVIEW_MS — the human's race clock only starts this
+// long after the round's started_at, so the bot's timer is offset by it too.
+const PREVIEW_MS = 5000;
 
 export default function GameScreen() {
   const { id: code } = useLocalSearchParams<{ id: string }>();
@@ -80,11 +84,29 @@ export default function GameScreen() {
     setRoundImage(game.id, round.round_no, pickPuzzleImage(game.id, round.round_no)).catch(console.warn);
   }, [game?.id, game?.status, round?.status, round?.round_no, isHost]);
 
-  // Both clients: auto-advance once a round is decided.
+  // Both clients: auto-advance once a round is decided. Retried a few times with
+  // backoff — a single transient failure here would otherwise freeze BOTH clients
+  // forever on the "Round complete!" banner (the effect never re-fires, since the
+  // round row it's watching never changes again). The RPC is idempotent (guards on
+  // current_round), so racing retries from both clients are safe.
   useEffect(() => {
     if (!game || !round) return;
     if (round.status !== 'done') return;
-    autoAdvanceRound(game.id, round.round_no).catch(console.warn);
+    let cancelled = false;
+    const gameId = game.id;
+    const roundNo = round.round_no;
+    (async () => {
+      for (let attempt = 0; attempt < 4 && !cancelled; attempt++) {
+        try {
+          await autoAdvanceRound(gameId, roundNo);
+          return;
+        } catch (e) {
+          console.warn(`[game] auto-advance attempt ${attempt + 1} failed:`, e);
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        }
+      }
+    })();
+    return () => { cancelled = true; };
   }, [game?.id, round?.status, round?.round_no]);
 
   // Bot matches: look up the human's win rate once, to scale the bot's pace.
@@ -94,19 +116,25 @@ export default function GameScreen() {
   }, [botPlayer?.id, myId]);
 
   // Bot matches: schedule the bot's "solve" for the current round at a
-  // deterministic, skill-scaled delay. A late submit after the human already
-  // won is a harmless no-op (same atomic guard as a human's submit_solve).
+  // deterministic, skill-scaled delay. The delay is the bot's solve time MEASURED
+  // FROM THE RACE START (started_at + preview) — the same clock basis PixelBoard
+  // uses for the human — so the bot never "solves" during the 5s preview while
+  // the human is still locked out, and its recorded time is comparable to a
+  // human's. A late submit after the human already won is a harmless no-op.
   useEffect(() => {
     if (botTimerRef.current) { clearTimeout(botTimerRef.current); botTimerRef.current = null; }
     if (!game || !round || !botPlayer) return;
     if (round.status !== 'racing') return;
     const grid = gridForRound(game.current_round);
-    const delay = computeBotSolveDelayMs(game.id, round.round_no, grid, winRate);
+    const solveTime = computeBotSolveDelayMs(game.id, round.round_no, grid, winRate);
+    const startedAtMs = round.started_at ? new Date(round.started_at).getTime() : Date.now();
+    const raceStart = startedAtMs + PREVIEW_MS;
+    const wait = Math.max(0, raceStart + solveTime - Date.now());
     botTimerRef.current = setTimeout(() => {
-      submitBotSolve(game.id, round.round_no, delay).catch(console.warn);
-    }, delay);
+      submitBotSolve(game.id, round.round_no, solveTime).catch(console.warn);
+    }, wait);
     return () => { if (botTimerRef.current) clearTimeout(botTimerRef.current); };
-  }, [game?.id, game?.current_round, round?.status, round?.round_no, botPlayer?.id, winRate]);
+  }, [game?.id, game?.current_round, round?.status, round?.round_no, round?.started_at, botPlayer?.id, winRate]);
 
   async function handleStart() {
     if (!game || actionBusy) return;
@@ -156,7 +184,7 @@ export default function GameScreen() {
 
   async function shareCode() {
     if (!game) return;
-    const link = Linking.createURL(`/game/${game.invite_code}`);
+    const link = buildInviteLink('pixel-rush', game.invite_code);
     await Share.share({
       message: `Join my Pixel Rush game on Xantle! Code: ${game.invite_code}\n${link}`,
       title: 'Join Pixel Rush',
@@ -174,7 +202,10 @@ export default function GameScreen() {
         ? `Won ${me?.score ?? 0}–${opponent?.score ?? 0} vs ${oppLabel} in Pixel Rush`
         : `Played Pixel Rush vs ${oppLabel} (${me?.score ?? 0}–${opponent?.score ?? 0})`;
       const { error: shareError } = await supabase.rpc('share_win', {
-        p_game_type: 'pixel_rush',
+        // Hyphen form — the convention the feed (WinCard badge/routing) and
+        // match details both key on, matching 'number-duel'. Underscore here
+        // broke the badge and routed "Play" to a nonexistent /setup/pixel_rush.
+        p_game_type: 'pixel-rush',
         p_result_text: resultText,
         p_match_id: game.id,
       });
@@ -229,7 +260,7 @@ export default function GameScreen() {
               <Text style={styles.codeText}>{game.invite_code}</Text>
               <View style={styles.qrWrap}>
                 <QRCode
-                  value={Linking.createURL(`/game/${game.invite_code}`)}
+                  value={buildInviteLink('pixel-rush', game.invite_code)}
                   size={140}
                   backgroundColor={colors.white}
                   color={colors.bg}

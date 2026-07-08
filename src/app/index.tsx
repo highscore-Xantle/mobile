@@ -27,14 +27,19 @@ export default function Landing() {
 
   // ── Session check — runs once on mount ─────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        // Valid session in AsyncStorage → skip landing entirely
-        router.replace('/home');
-      } else {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) {
         // No session → show landing animation
         setAuthState('show');
+        return;
       }
+      // Signed in, but gate on onboarding: a user who killed the app mid-onboarding
+      // has a session with no username and must finish it, not land on /home as a
+      // permanently nameless player. On a fetch error, fall through to /home rather
+      // than trap them (they can still play; onboarding re-checks next launch).
+      const { data: profile, error } = await supabase
+        .from('profiles').select('username').eq('id', session.user.id).maybeSingle();
+      router.replace(!error && !profile?.username ? '/onboarding' : '/home');
     });
   }, []);
 

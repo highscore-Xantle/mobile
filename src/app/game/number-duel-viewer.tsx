@@ -17,8 +17,11 @@ import { GradientFill } from '../../components/GradientFill';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+// Must cover every hint the game broadcasts — blind_duel mode sends hot/warm/cold
+// (not higher/lower), and a missing key here crashed the whole viewer on render.
+type Hint = 'higher' | 'lower' | 'correct' | 'hot' | 'warm' | 'cold' | 'timeout';
 interface Comment { id: string; username: string; text: string; }
-interface GuessEvent { username: string; guess: string; hint: 'higher' | 'lower' | 'correct'; }
+interface GuessEvent { id: string; username: string; guess: string; hint: Hint; }
 interface FloatingReaction { id: string; emoji: string; x: number; }
 
 const QUICK_REACTIONS = ['❤️', '🔥', '😱', '👏'];
@@ -47,12 +50,17 @@ function FloatingEmoji({ emoji, x, onDone }: { emoji: string; x: number; onDone:
 }
 
 // ─── Hint chip ────────────────────────────────────────────────────────────────
-function HintChip({ hint }: { hint: 'higher' | 'lower' | 'correct' }) {
-  const cfg = {
-    higher: { label: '↑', color: colors.blue },
-    lower: { label: '↓', color: colors.danger },
-    correct: { label: '✓', color: colors.success },
-  }[hint];
+const HINT_CFG: Record<Hint, { label: string; color: string }> = {
+  higher: { label: '↑', color: colors.blue },
+  lower: { label: '↓', color: colors.danger },
+  correct: { label: '✓', color: colors.success },
+  hot: { label: '🔥', color: colors.danger },
+  warm: { label: '😅', color: colors.warning },
+  cold: { label: '❄️', color: colors.blue },
+  timeout: { label: '⏱', color: colors.textMuted },
+};
+function HintChip({ hint }: { hint: Hint }) {
+  const cfg = HINT_CFG[hint] ?? HINT_CFG.timeout;
   return (
     <View style={[hintStyles.chip, { backgroundColor: cfg.color + '22' }]}>
       <Text style={[hintStyles.text, { color: cfg.color }]}>{cfg.label}</Text>
@@ -74,6 +82,7 @@ export default function NumberDuelViewer() {
   const [playerA, setPlayerA] = useState({ name: 'Player 1', score: 0 });
   const [playerB, setPlayerB] = useState({ name: 'Player 2', score: 0 });
   const [round, setRound] = useState(1);
+  const [roundsTotal, setRoundsTotal] = useState(12);
   const [revealA, setRevealA] = useState<string | null>(null);
   const [revealB, setRevealB] = useState<string | null>(null);
   const [guessEvents, setGuessEvents] = useState<GuessEvent[]>([]);
@@ -83,8 +92,37 @@ export default function NumberDuelViewer() {
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const commentsRef = useRef<FlatList>(null);
+  // Player A = host, Player B = guest. Their user ids let us map broadcast events
+  // (which carry userIds) to the correct card for scores + secret reveals.
+  const playerIdsRef = useRef<{ a: string | null; b: string | null }>({ a: null, b: null });
+  const eventSeq = useRef(0); // stable, collision-free keys for the guess feed
 
   const username = (session?.user?.user_metadata?.username as string) ?? session?.user?.email ?? 'Viewer';
+
+  // ── Fetch the two players + rounds total so cards show real names/totals ──
+  useEffect(() => {
+    if (!roomCode) return;
+    let active = true;
+    (async () => {
+      const { data: room } = await supabase
+        .from('rooms').select('id, host_id, state').eq('code', roomCode).maybeSingle();
+      if (!active || !room) return;
+      setRoundsTotal(room.state?.rounds || 12);
+      const { data: players } = await supabase
+        .from('room_players')
+        .select('user_id, display_name, is_bot, profiles(username)')
+        .eq('room_id', room.id)
+        .order('joined_at', { ascending: true });
+      if (!active || !players) return;
+      const host = players.find((p: any) => p.user_id === room.host_id) ?? players[0];
+      const guest = players.find((p: any) => p !== host);
+      const label = (p: any) => p?.display_name || (p?.profiles as any)?.username || (p?.is_bot ? 'Xantle Bot' : 'Player');
+      playerIdsRef.current = { a: host?.user_id ?? null, b: guest?.user_id ?? null };
+      setPlayerA({ name: label(host), score: 0 });
+      setPlayerB({ name: guest ? label(guest) : 'Player 2', score: 0 });
+    })();
+    return () => { active = false; };
+  }, [roomCode]);
 
   // ── Presence + channel ────────────────────────────────────────────────────
   useEffect(() => {
@@ -96,18 +134,36 @@ export default function NumberDuelViewer() {
 
     // Live guess events (no secrets during guessing phase)
     ch.on('broadcast', { event: 'guess_result' }, ({ payload }) => {
+      eventSeq.current += 1;
       setGuessEvents(prev => [{
+        id: `${eventSeq.current}`,
         username: payload.username ?? 'Player',
         guess: payload.guess,
         hint: payload.hint,
       }, ...prev].slice(0, 30));
     });
 
-    // Secrets only revealed at round end
+    // Round end: the LOSER's device broadcasts { winnerUserId, secretA=loser's secret }.
+    // Reveal the loser's secret on their card and give the winner the point. The
+    // winner's own secret arrives separately via winner_reveals_secret.
     ch.on('broadcast', { event: 'round_end' }, ({ payload }) => {
-      setRevealA(payload.secretA);
-      setRevealB(payload.secretB);
-      setRound(payload.nextRound ?? round + 1);
+      const { a, b } = playerIdsRef.current;
+      const winner = payload.winnerUserId;
+      if (winner && winner === a) setPlayerA(p => ({ ...p, score: p.score + 1 }));
+      else if (winner && winner === b) setPlayerB(p => ({ ...p, score: p.score + 1 }));
+      // secretA belongs to the loser (whoever is NOT the winner).
+      if (payload.secretA != null) {
+        if (winner === a) setRevealB(String(payload.secretA));
+        else if (winner === b) setRevealA(String(payload.secretA));
+      }
+    });
+
+    // Winner reveals their own secret → fill the winner's card.
+    ch.on('broadcast', { event: 'winner_reveals_secret' }, ({ payload }) => {
+      const { a, b } = playerIdsRef.current;
+      if (payload.secret == null) return;
+      if (payload.userId === a) setRevealA(String(payload.secret));
+      else if (payload.userId === b) setRevealB(String(payload.secret));
     });
 
     ch.on('broadcast', { event: 'next_round' }, ({ payload }) => {
@@ -119,8 +175,9 @@ export default function NumberDuelViewer() {
 
     // Viewer comments
     ch.on('broadcast', { event: 'viewer_comment' }, ({ payload }) => {
+      eventSeq.current += 1;
       setComments(prev => [...prev, {
-        id: Date.now().toString(),
+        id: `c${eventSeq.current}`,
         username: payload.username,
         text: payload.text,
       }].slice(-50));
@@ -223,8 +280,8 @@ export default function NumberDuelViewer() {
 
           {/* ── Round indicator ── */}
           <View style={styles.roundRow}>
-            <Text style={styles.roundText}>Round {round} of 12</Text>
-            {revealA && <Text style={styles.revealNote}>Round ended — secrets revealed!</Text>}
+            <Text style={styles.roundText}>Round {round} of {roundsTotal}</Text>
+            {(revealA || revealB) && <Text style={styles.revealNote}>Round ended — secrets revealed!</Text>}
           </View>
 
           {/* ── Live guess feed ── */}
@@ -232,7 +289,7 @@ export default function NumberDuelViewer() {
             <Text style={styles.feedTitle}>Live Guesses</Text>
             <FlatList
               data={guessEvents}
-              keyExtractor={(_, i) => i.toString()}
+              keyExtractor={(item) => item.id}
               renderItem={({ item }) => (
                 <Animated.View entering={FadeInDown.duration(300)} style={styles.guessRow}>
                   <Text style={styles.guessUsername}>{item.username}</Text>

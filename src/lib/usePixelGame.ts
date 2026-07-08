@@ -62,6 +62,18 @@ export function seedFor(gameId: string, round: number): number {
   return h >>> 0;
 }
 
+/** Seeded PRNG — same algorithm used everywhere in the app that needs a
+ * reproducible/verifiable random sequence (bot pacing, puzzle shuffles). */
+export function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /** Puzzle image pool — every round picks one of these instead of always the same photo. */
 export const PUZZLE_IMAGES: string[] = [
   'https://picsum.photos/seed/xantle-puzzle-1/600/600',
@@ -91,6 +103,21 @@ export function useGame(code: string | undefined) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const gameIdRef = useRef<string | null>(null);
+  // Monotonic guard: a round only ever moves forward (higher round_no, or the same
+  // round_no advancing awaiting_image -> racing -> done). Without this, a slow
+  // fetchRound response can land after a realtime event and REGRESS the board
+  // (e.g. overwrite 'racing' back to 'awaiting_image'), silently blanking the
+  // puzzle for the rest of that round.
+  const roundRankRef = useRef(-1);
+
+  const applyRound = useCallback((next: GameRound | null) => {
+    if (!next) { roundRankRef.current = -1; setRound(null); return; }
+    const statusRank = next.status === 'done' ? 2 : next.status === 'racing' ? 1 : 0;
+    const rank = next.round_no * 10 + statusRank;
+    if (rank < roundRankRef.current) return; // stale — don't regress
+    roundRankRef.current = rank;
+    setRound(next);
+  }, []);
 
   const fetchPlayers = useCallback(async (gameId: string) => {
     const { data } = await supabase
@@ -102,15 +129,15 @@ export function useGame(code: string | undefined) {
   }, []);
 
   const fetchRound = useCallback(async (gameId: string, roundNo: number) => {
-    if (roundNo === 0) { setRound(null); return; }
+    if (roundNo === 0) { applyRound(null); return; }
     const { data } = await supabase
       .from('game_rounds')
       .select('*')
       .eq('game_id', gameId)
       .eq('round_no', roundNo)
       .maybeSingle();
-    setRound((data as GameRound | null) ?? null);
-  }, []);
+    applyRound((data as GameRound | null) ?? null);
+  }, [applyRound]);
 
   useEffect(() => {
     if (!code) return;
@@ -159,15 +186,32 @@ export function useGame(code: string | undefined) {
         if (!mounted) return;
         const r = payload.new as GameRound;
         if (r.game_id !== gameIdRef.current) return; // only this game's rounds
-        setRound(r);
+        applyRound(r);
       })
-      .subscribe();
+      .subscribe((status) => {
+        // On (re)connect, resync from the DB — postgres_changes are NOT replayed
+        // after a dropped socket, so a backgrounded client would otherwise miss
+        // the events (e.g. the game finishing) and stay stuck on a stale round.
+        if (status === 'SUBSCRIBED' && mounted && gameIdRef.current) {
+          supabase
+            .from('games')
+            .select('*')
+            .eq('id', gameIdRef.current)
+            .maybeSingle()
+            .then(({ data }) => {
+              if (!mounted || !data) return;
+              const g = data as Game;
+              setGame(g);
+              fetchRound(g.id, g.current_round);
+            });
+        }
+      });
 
     return () => {
       mounted = false;
       void supabase.removeChannel(ch);
     };
-  }, [code, fetchPlayers, fetchRound]);
+  }, [code, fetchPlayers, fetchRound, applyRound]);
 
   return { game, players, round, loading, error };
 }
@@ -240,7 +284,10 @@ export async function enqueueOrMatch(type: string = 'pixel_rush'): Promise<Game 
     .select()
     .maybeSingle();
   if (error) throw error;
-  return (data as Game) ?? null;
+  // The RPC returns SQL NULL when nobody else is queued yet, but PostgREST
+  // serializes a NULL row of a composite return type as an object with every
+  // field null (not a bare JSON null) — so check a real field, not just truthiness.
+  return (data as any)?.id ? (data as Game) : null;
 }
 
 export async function leaveQueue(type: string = 'pixel_rush'): Promise<void> {

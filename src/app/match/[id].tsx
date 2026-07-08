@@ -43,7 +43,9 @@ export default function MatchDetails() {
     async function fetchMatch() {
       setLoading(true);
 
-      if (gameType === 'pixel_rush') {
+      // 'pixel-rush' (hyphen) is the feed's game_type convention (see share_win
+      // call in game/[id].tsx and WinCard); the games-schema branch keys on it.
+      if (gameType === 'pixel-rush') {
         const { data, error: dbError } = await supabase
           .from('games')
           .select(`

@@ -12,6 +12,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
+import { mulberry32, seedFor } from '../../lib/usePixelGame';
 import { useSession } from '../../lib/useSession';
 import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
@@ -120,16 +121,43 @@ const hb = StyleSheet.create({
   text:  { fontFamily: font.extrabold, fontSize: 14 },
 });
 
-/** Bot's own secret for the round — whole or decimal, matching this round's rules. */
-function randomSecret(allowDecimal: boolean, isHard: boolean): number {
-  if (!allowDecimal) return Math.floor(Math.random() * 101);
-  return parseFloat((Math.random() * 100).toFixed(isHard ? 2 : 1));
+// Distinct salts so the secret / lock-delay / solve-delay draws from the same
+// per-round seed don't correlate with each other (same pattern as
+// botOpponent.ts's BOT_SEED_SALT for Pixel Rush).
+const BOT_SECRET_SALT = 0x1a2b3c4d;
+const BOT_LOCK_SALT = 0x9e3779b9;
+const BOT_SOLVE_SALT = 0x5bd1e995;
+
+/**
+ * Bot's own secret for the round — whole or decimal, matching this round's
+ * rules. Seeded off roomId+round (same seedFor Pixel Rush's puzzle shuffle
+ * uses) instead of Math.random(), so it's reproducible/verifiable rather than
+ * an opaque roll nobody can check after the fact.
+ */
+function seededBotSecret(roomId: string, round: number, allowDecimal: boolean, isHard: boolean): number {
+  const t = mulberry32((seedFor(roomId, round) ^ BOT_SECRET_SALT) >>> 0)();
+  if (!allowDecimal) return Math.floor(t * 101);
+  return parseFloat((t * 100).toFixed(isHard ? 2 : 1));
 }
 
-/** How long the bot takes to land on the human's secret — longer when decimals are in play. */
-function botSolveDelayMs(allowDecimal: boolean, isHard: boolean): number {
-  const base = !allowDecimal ? 6000 : isHard ? 12000 : 9000;
-  return base + Math.random() * 4000;
+/** How long the bot "thinks" before locking its secret in, seeded the same way. */
+function seededBotLockDelayMs(roomId: string, round: number): number {
+  const t = mulberry32((seedFor(roomId, round) ^ BOT_LOCK_SALT) >>> 0)();
+  return 3000 + t * 5000;
+}
+
+/**
+ * How long the bot takes to land on the human's secret. Calibrated against
+ * an optimal binary search (~7 guesses for whole 0-100, ~10 for 1 decimal,
+ * ~14 for 2 decimals) at a realistic several-seconds-per-guess human pace —
+ * short enough to still feel like a real opponent, long enough that a human
+ * playing well actually has a shot at winning the round. Seeded, not
+ * Math.random() — see seededBotSecret.
+ */
+function seededBotSolveDelayMs(roomId: string, round: number, allowDecimal: boolean, isHard: boolean): number {
+  const base = !allowDecimal ? 32000 : isHard ? 55000 : 42000;
+  const t = mulberry32((seedFor(roomId, round) ^ BOT_SOLVE_SALT) >>> 0)();
+  return base + t * 15000;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -157,6 +185,9 @@ export default function NumberDuel() {
   const botSecretRef = useRef<number | null>(null);
   const botLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const botSolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Fallback so a dropped player_guess/hint broadcast doesn't leave the CTA stuck
+  // on "Waiting…" for the rest of the round (Realtime broadcast is at-most-once).
+  const submittingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [gameRules, setGameRules] = useState({ rounds: 12, difficulty: 'auto', mode: 'classic' });
 
@@ -246,12 +277,17 @@ export default function NumberDuel() {
   }, [isBot, roomCode, session, gs.phase, gs.mySecret]);
 
   // ── Bot: lock its own secret after a short "thinking" delay ────────────────
+  // Keyed on gs.round (not gs.phase) — the bot's lock timer must survive the
+  // human locking first, which flips phase 'picking' -> 'opponent_picking'.
+  // Keying on phase would cancel this timer right then (cleanup on every
+  // dependency change) and never reschedule it, leaving the game stuck on
+  // "Waiting for Xantle Bot" forever.
   useEffect(() => {
-    if (!isBot || gs.phase !== 'picking') return;
+    if (!isBot || !roomId) return;
     botSecretRef.current = null;
-    const delay = 3000 + Math.random() * 5000;
+    const delay = seededBotLockDelayMs(roomId, gs.round);
     botLockTimerRef.current = setTimeout(() => {
-      botSecretRef.current = randomSecret(allowDecimal, isHard);
+      botSecretRef.current = seededBotSecret(roomId, gs.round, allowDecimal, isHard);
       setOpponentReady(true);
       setGs(prev => {
         if (prev.mySecret !== null && prev.phase === 'opponent_picking') return { ...prev, phase: 'drama' };
@@ -259,12 +295,12 @@ export default function NumberDuel() {
       });
     }, delay);
     return () => { if (botLockTimerRef.current) clearTimeout(botLockTimerRef.current); };
-  }, [isBot, gs.phase, allowDecimal, isHard]);
+  }, [isBot, roomId, gs.round, allowDecimal, isHard]);
 
   // ── Bot: "solve" the human's secret after a delay, unless the human wins first ──
   useEffect(() => {
-    if (!isBot || gs.phase !== 'guessing') return;
-    const delay = botSolveDelayMs(allowDecimal, isHard);
+    if (!isBot || !roomId || gs.phase !== 'guessing') return;
+    const delay = seededBotSolveDelayMs(roomId, gs.round, allowDecimal, isHard);
     botSolveTimerRef.current = setTimeout(() => {
       setGs(prev => {
         if (prev.phase !== 'guessing') return prev; // human already won this round
@@ -283,6 +319,13 @@ export default function NumberDuel() {
     }, delay);
     return () => { if (botSolveTimerRef.current) clearTimeout(botSolveTimerRef.current); };
   }, [isBot, gs.phase, allowDecimal, isHard, isHost, roomId, gameRules]);
+
+  // Clear any pending timers on unmount so they don't fire after navigation.
+  useEffect(() => () => {
+    if (botLockTimerRef.current) clearTimeout(botLockTimerRef.current);
+    if (botSolveTimerRef.current) clearTimeout(botSolveTimerRef.current);
+    if (submittingTimerRef.current) clearTimeout(submittingTimerRef.current);
+  }, []);
 
   // ── Drama Phase Timer ────────────────────────────────────────────────────
   useEffect(() => {
@@ -397,12 +440,20 @@ export default function NumberDuel() {
         });
       }
 
+      // Reset the per-guess clock (see the bot path) so avg-guess-time is measured
+      // per guess, not cumulatively from the round start.
+      guessStartTimeRef.current = Date.now();
+      if (submittingTimerRef.current) { clearTimeout(submittingTimerRef.current); submittingTimerRef.current = null; }
       setSubmitting(false);
     });
 
     ch.on('broadcast', { event: 'player_timeout' }, ({ payload }) => {
       if (payload.userId === session.user.id) return;
       setGs(prev => {
+        // Guard: if we've already resolved this round (we won, lost, or timed out
+        // ourselves), ignore the opponent's timeout — otherwise a simultaneous
+        // timeout double-scores and both clients declare themselves the winner.
+        if (prev.phase !== 'guessing') return prev;
         const nextState = { ...prev, myScore: prev.myScore + 1, roundWinner: 'me' as const, phase: 'round_end' as const };
         if (isHost && roomId) {
           supabase.rpc('update_room_state', { p_room: roomId, p_state: {
@@ -467,7 +518,13 @@ export default function NumberDuel() {
     });
 
     ch.on('broadcast', { event: 'game_over' }, ({ payload }) => {
-      setGs(prev => ({ ...prev, phase: 'game_over', winner: payload.winner, matchHistory: payload.finalHistory ?? prev.matchHistory }));
+      // Winner is broadcast as a user id (not the sender-relative 'me'/'opponent'),
+      // so each client resolves it from its OWN perspective — otherwise the loser
+      // would see the sender's result ("You Win!") verbatim.
+      const winner: GameState['winner'] = payload.draw
+        ? 'draw'
+        : payload.winnerUserId === session.user.id ? 'me' : 'opponent';
+      setGs(prev => ({ ...prev, phase: 'game_over', winner, matchHistory: payload.finalHistory ?? prev.matchHistory }));
     });
 
     ch.on('broadcast', { event: 'rematch_requested' }, () => {
@@ -530,6 +587,9 @@ export default function NumberDuel() {
           botSolveTimerRef.current = null;
         }
         setGs(prev => {
+          // Guard: the bot's solve timer may have fired during this 350-700ms
+          // delay (photo finish) and already ended the round — don't score on top.
+          if (prev.phase !== 'guessing') return prev;
           const newMiss = prev.closestMiss === null ? dist : Math.min(prev.closestMiss, dist);
           return {
             ...prev,
@@ -542,6 +602,9 @@ export default function NumberDuel() {
               : {}),
           };
         });
+        // Reset the per-guess clock so the next guess's time is measured from now,
+        // not from the start of the round (which inflated the avg-guess-time stat).
+        guessStartTimeRef.current = Date.now();
         setSubmitting(false);
       }, 350 + Math.random() * 350);
       return;
@@ -551,16 +614,26 @@ export default function NumberDuel() {
       type: 'broadcast', event: 'player_guess',
       payload: { userId: session?.user.id, username: myName, guess: guessStr },
     });
+    // If no hint comes back within 8s (dropped broadcast, opponent backgrounded),
+    // re-enable the input so the player isn't locked out for the rest of the round.
+    if (submittingTimerRef.current) clearTimeout(submittingTimerRef.current);
+    submittingTimerRef.current = setTimeout(() => {
+      submittingTimerRef.current = null;
+      setSubmitting(false);
+    }, 8000);
   };
 
   const handleTimeout = () => {
     if (submitting) return;
     if (botSolveTimerRef.current) { clearTimeout(botSolveTimerRef.current); botSolveTimerRef.current = null; }
     chRef.current?.send({ type: 'broadcast', event: 'player_timeout', payload: { userId: session?.user.id } });
-    setGs(prev => ({
-      ...prev, opponentScore: prev.opponentScore + 1, roundWinner: 'opponent', phase: 'round_end',
-      opponentSecretReveal: isBot ? botSecretRef.current : prev.opponentSecretReveal,
-    }));
+    setGs(prev => {
+      if (prev.phase !== 'guessing') return prev; // round already resolved
+      return {
+        ...prev, opponentScore: prev.opponentScore + 1, roundWinner: 'opponent', phase: 'round_end',
+        opponentSecretReveal: isBot ? botSecretRef.current : prev.opponentSecretReveal,
+      };
+    });
   };
 
   const handleNextRound = () => {
@@ -577,7 +650,17 @@ export default function NumberDuel() {
     if (isGameOver) {
       const w = gs.myScore > gs.opponentScore ? 'me'
               : gs.opponentScore > gs.myScore ? 'opponent' : 'draw';
-      chRef.current?.send({ type: 'broadcast', event: 'game_over', payload: { winner: w, finalHistory: newHistory } });
+      // Broadcast the winner as a user id so the other client interprets it from
+      // its own perspective (see the game_over handler). Sending 'me'/'opponent'
+      // would flip the result on the receiver's screen.
+      chRef.current?.send({
+        type: 'broadcast', event: 'game_over',
+        payload: {
+          winnerUserId: w === 'me' ? session?.user.id : w === 'opponent' ? opponentId : null,
+          draw: w === 'draw',
+          finalHistory: newHistory,
+        },
+      });
       
       // Persist final history to DB
       if (isHost && roomId) {
@@ -602,11 +685,20 @@ export default function NumberDuel() {
     }));
   };
 
+  // Only the host can reset the room (reset_room is host-gated server-side).
+  // The reset MUST commit (status -> 'lobby') before either client navigates,
+  // or the lobby's "redirect when active" guard bounces both straight back into
+  // the finished game. So: await reset, await the broadcast flush, THEN navigate.
   const handleRematch = async () => {
-    if (isHost && roomId) {
-      await supabase.rpc('reset_room', { p_room: roomId, p_state: gameRules });
+    if (!isHost || !roomId) return;
+    setSubmitting(true);
+    const { error } = await supabase.rpc('reset_room', { p_room: roomId, p_state: gameRules });
+    if (error) {
+      setSubmitting(false);
+      Alert.alert('Could not rematch', error.message);
+      return;
     }
-    chRef.current?.send({ type: 'broadcast', event: 'rematch_requested', payload: {} });
+    await chRef.current?.send({ type: 'broadcast', event: 'rematch_requested', payload: {} });
     router.replace({ pathname: '/room/[code]', params: { code: roomCode } });
   };
 
@@ -662,7 +754,7 @@ export default function NumberDuel() {
         <View style={s.display}>
           <Text style={s.displayText}>{inputValue || '—'}</Text>
         </View>
-        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} />
+        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} maxDecimals={isHard ? 2 : 1} />
       </Animated.View>
     );
 
@@ -708,7 +800,7 @@ export default function NumberDuel() {
         <View style={s.display}>
           <Text style={s.displayText}>{inputValue || '—'}</Text>
         </View>
-        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} />
+        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} maxDecimals={isHard ? 2 : 1} />
       </Animated.View>
     );
 
@@ -830,11 +922,24 @@ export default function NumberDuel() {
             <GradientFill colors={gradients.button} />
             <Text style={s.ctaText}>Find another match</Text>
           </Pressable>
-        ) : (
-          <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={handleRematch}>
+        ) : isHost ? (
+          <Pressable
+            style={({ pressed }) => [s.cta, submitting && s.ctaDisabled, pressed && s.pressed]}
+            onPress={handleRematch}
+            disabled={submitting}
+          >
             <GradientFill colors={gradients.button} />
-            <Text style={s.ctaText}>Rematch 🔄</Text>
+            {submitting
+              ? <ActivityIndicator color={colors.white} />
+              : <Text style={s.ctaText}>Rematch 🔄</Text>}
           </Pressable>
+        ) : (
+          // Only the host can reset the room; the guest waits to be pulled into
+          // the fresh lobby by the host's rematch_requested broadcast.
+          <View style={s.waitingCta}>
+            <ActivityIndicator color={colors.blue} />
+            <Text style={s.waitingText}>Host can start a rematch</Text>
+          </View>
         )}
         <Pressable style={({ pressed }) => [s.ctaOutline, pressed && s.pressed]} onPress={() => router.replace('/home')}>
           <Text style={s.ctaOutlineText}>Back to Home</Text>

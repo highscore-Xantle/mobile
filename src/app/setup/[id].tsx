@@ -1,9 +1,11 @@
-import { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert, Switch } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
+import { leaveQueue } from '../../lib/usePixelGame';
+import { createBotRoom, enqueueOrMatchRoom } from '../../lib/useNumberDuel';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
@@ -15,23 +17,56 @@ const GAME_RULES: Record<string, { title: string; desc: string }> = {
   },
 };
 
+const SEARCH_SECONDS = 30;
+const QUEUE_TYPE = 'number-duel';
+
 export default function GameSetup() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 
   const [creating, setCreating] = useState(false);
+  const [anyoneCanJoin, setAnyoneCanJoin] = useState(false);
+  const [screen, setScreen] = useState<'rules' | 'searching'>('rules');
+  const [secondsLeft, setSecondsLeft] = useState(SEARCH_SECONDS);
+  const [err, setErr] = useState('');
   const [settings, setSettings] = useState({
     rounds: 12,
     difficulty: 'auto', // 'auto', 'easy', 'hardcore'
     mode: 'classic',    // 'classic', 'time_attack', 'blind_duel'
   });
 
+  const searchTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cancelledRef = useRef(false);
+  // Guards against a double navigation when a poll and the 30s timeout resolve
+  // in the same tick (same race pixel-rush.tsx guards against).
+  const enteredRef = useRef(false);
+
   const rules = GAME_RULES[id!] || { title: 'Unknown Game', desc: 'Configure your room.' };
+
+  function stopSearching() {
+    if (searchTimerRef.current) { clearInterval(searchTimerRef.current); searchTimerRef.current = null; }
+  }
+  useEffect(() => stopSearching, []);
+
+  function enterRoom(code: string) {
+    if (enteredRef.current) return;
+    enteredRef.current = true;
+    cancelledRef.current = true;
+    stopSearching();
+    setCreating(false);
+    router.replace({ pathname: '/game/[id]', params: { id: id!, roomCode: code } });
+  }
 
   const handleCreateRoom = async () => {
     if (creating) return;
     setCreating(true);
+    setErr('');
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+    if (anyoneCanJoin) {
+      await startMatchmaking();
+      return;
+    }
 
     // Call create_room with the specific settings baked into the room state!
     const { data: room, error } = await supabase.rpc('create_room', {
@@ -50,26 +85,103 @@ export default function GameSetup() {
     router.replace(`/room/${room.code}`);
   };
 
-  const handlePlayBot = async () => {
-    if (creating) return;
-    setCreating(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-
-    const { data: room, error } = await supabase.rpc('create_bot_room', { p_state: settings });
-
-    if (error) {
-      Alert.alert('Error starting match', error.message);
+  // Polls enqueue_or_match_room every few seconds instead of matching only
+  // once — two players who tap "anyone can join" moments apart won't see
+  // each other on their first call, so whoever polls next is what pairs them.
+  async function pollForMatch() {
+    if (cancelledRef.current) return;
+    try {
+      const room = await enqueueOrMatchRoom(settings);
+      if (cancelledRef.current) return;
+      if (room) enterRoom(room.code);
+    } catch (e) {
+      stopSearching();
+      setErr((e as Error).message);
+      setScreen('rules');
       setCreating(false);
-      return;
     }
+  }
 
-    router.replace({ pathname: '/game/[id]', params: { id: room.game_kind, roomCode: room.code } });
-  };
+  async function startMatchmaking() {
+    cancelledRef.current = false;
+    enteredRef.current = false;
+    try {
+      const room = await enqueueOrMatchRoom(settings);
+      if (cancelledRef.current) return;
+      if (room) { enterRoom(room.code); return; }
+
+      setScreen('searching');
+      setSecondsLeft(SEARCH_SECONDS);
+      setCreating(false);
+
+      let tick = 0;
+      searchTimerRef.current = setInterval(() => {
+        tick += 1;
+        if (tick % 3 === 0) pollForMatch();
+        setSecondsLeft((s) => {
+          if (s <= 1) { handleSearchTimeout(); return 0; }
+          return s - 1;
+        });
+      }, 1000);
+    } catch (e) {
+      setCreating(false);
+      setErr((e as Error).message);
+      setScreen('rules');
+    }
+  }
+
+  async function handleSearchTimeout() {
+    stopSearching();
+    // Suppress any in-flight poll from also navigating, then do ONE final
+    // enqueue: if a real opponent paired with us in the last seconds, use
+    // that match (idempotent) instead of abandoning them for a bot.
+    cancelledRef.current = true;
+    try {
+      const lastChance = await enqueueOrMatchRoom(settings);
+      if (lastChance) { enterRoom(lastChance.code); return; }
+      await leaveQueue(QUEUE_TYPE);
+      const room = await createBotRoom(settings);
+      enterRoom(room.code);
+    } catch (e) {
+      setErr((e as Error).message);
+      setScreen('rules');
+      setCreating(false);
+    }
+  }
+
+  function cancelSearching() {
+    cancelledRef.current = true;
+    stopSearching();
+    leaveQueue(QUEUE_TYPE).catch(() => {});
+    setCreating(false);
+    setScreen('rules');
+  }
 
   const updateSetting = (key: keyof typeof settings, value: string | number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
+
+  if (screen === 'searching') {
+    return (
+      <View style={styles.root}>
+        <GradientFill colors={gradients.background} />
+        <SafeAreaView style={[styles.safe, styles.center]}>
+          <ActivityIndicator color={colors.blue} size="large" />
+          <Text style={styles.searchingTitle}>Finding an opponent…</Text>
+          <Text style={styles.searchingSub}>
+            Starting a match against the machine in {secondsLeft}s if nobody joins.
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.outlineBtn, { marginTop: space.xl, alignSelf: 'stretch' }, pressed && styles.pressed]}
+            onPress={cancelSearching}
+          >
+            <Text style={styles.outlineBtnText}>Cancel</Text>
+          </Pressable>
+        </SafeAreaView>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -151,13 +263,35 @@ export default function GameSetup() {
               {settings.difficulty === 'auto' && <Text style={styles.settingNote}>Starts easy, decimals get added later.</Text>}
               {settings.difficulty === 'hardcore' && <Text style={styles.settingNote}>2 decimals required immediately.</Text>}
             </View>
+
+            {/* Anyone can join */}
+            <View style={styles.toggleCard}>
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={styles.settingLabel}>Let anyone join?</Text>
+                  <Text style={styles.settingNote}>
+                    {anyoneCanJoin
+                      ? "We'll match you with a real opponent for 30s, then a machine if nobody joins."
+                      : 'Off — get a private code and link to invite a friend.'}
+                  </Text>
+                </View>
+                <Switch
+                  value={anyoneCanJoin}
+                  onValueChange={setAnyoneCanJoin}
+                  trackColor={{ false: colors.hairline, true: colors.blue }}
+                  thumbColor={colors.white}
+                />
+              </View>
+            </View>
           </View>
+
+          {!!err && <Text style={styles.errText}>{err}</Text>}
         </ScrollView>
 
         {/* Footer */}
         <View style={styles.footer}>
-          <Pressable 
-            style={({ pressed }) => [styles.cta, (creating) && styles.ctaDisabled, pressed && styles.pressed]} 
+          <Pressable
+            style={({ pressed }) => [styles.cta, (creating) && styles.ctaDisabled, pressed && styles.pressed]}
             onPress={handleCreateRoom}
             disabled={creating}
           >
@@ -165,19 +299,9 @@ export default function GameSetup() {
             {creating ? (
               <ActivityIndicator color={colors.white} style={{ paddingVertical: 18 }} />
             ) : (
-              <Text style={styles.ctaText}>Create Room & Invite →</Text>
+              <Text style={styles.ctaText}>{anyoneCanJoin ? 'Continue →' : 'Create Room & Invite →'}</Text>
             )}
           </Pressable>
-
-          {id === 'number-duel' && (
-            <Pressable
-              style={({ pressed }) => [styles.outlineBtn, creating && styles.ctaDisabled, pressed && styles.pressed]}
-              onPress={handlePlayBot}
-              disabled={creating}
-            >
-              <Text style={styles.outlineBtnText}>Practice vs Bot</Text>
-            </Pressable>
-          )}
         </View>
 
       </SafeAreaView>
@@ -216,4 +340,20 @@ const styles = StyleSheet.create({
   },
   outlineBtnText: { fontFamily: font.bold, fontSize: 15, color: colors.textMuted },
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.88 },
+
+  center: { alignItems: 'center', justifyContent: 'center' },
+  toggleCard: {
+    backgroundColor: colors.surface, padding: space.lg, borderRadius: radius.xl,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', ...shadow.card,
+  },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  errText: { fontFamily: font.semibold, fontSize: 13, color: colors.danger, textAlign: 'center', marginTop: space.sm },
+  searchingTitle: {
+    fontFamily: font.extrabold, fontSize: 20, color: colors.text,
+    marginTop: space.lg, textAlign: 'center',
+  },
+  searchingSub: {
+    fontFamily: font.semibold, fontSize: 14, color: colors.textMuted,
+    marginTop: space.sm, textAlign: 'center', paddingHorizontal: space.lg,
+  },
 });

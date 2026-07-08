@@ -15,6 +15,8 @@ interface NumberKeypadProps {
   disabled?: boolean;
   /** Reject keypresses that would push the numeric value outside [0, max]. */
   max?: number;
+  /** Max digits allowed after the decimal point (only meaningful with allowDecimal). */
+  maxDecimals?: number;
 }
 
 const KEYS = [
@@ -91,6 +93,7 @@ export function NumberKeypad({
   allowDecimal = false,
   disabled = false,
   max,
+  maxDecimals,
 }: NumberKeypadProps) {
   const withinMax = (candidate: string) => max === undefined || parseFloat(candidate) <= max;
 
@@ -110,6 +113,14 @@ export function NumberKeypad({
     }
 
     if (value.length >= maxLength) return;
+
+    // Cap decimal precision (e.g. 1 dp for medium, 2 dp for hard) — otherwise a
+    // player could lock a secret finer than the round's stated precision and be
+    // effectively unguessable.
+    if (maxDecimals !== undefined && value.includes('.')) {
+      const decimals = value.split('.')[1] ?? '';
+      if (decimals.length >= maxDecimals) return;
+    }
 
     // Prevent leading zeros (except "0.")
     if (value === '0' && key !== '.') {

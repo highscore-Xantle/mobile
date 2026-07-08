@@ -23,8 +23,15 @@ export async function uploadImage(localUri: string, folder = 'avatars'): Promise
     method: 'POST',
     body: form,
   });
-  const json = await res.json();
-  if (!res.ok || !json.secure_url) {
+  // A 5xx / HTML error page isn't JSON — parsing it unguarded surfaces a raw
+  // "JSON Parse error…" to the user. Fall back to a friendly message instead.
+  let json: any = null;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error('Image upload failed. Please try again.');
+  }
+  if (!res.ok || !json?.secure_url) {
     throw new Error(json?.error?.message ?? 'Image upload failed. Please try again.');
   }
   return json.secure_url as string;

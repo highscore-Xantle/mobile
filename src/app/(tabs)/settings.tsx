@@ -61,6 +61,11 @@ export default function Settings() {
   };
 
   const signOut = async () => {
+    // Drop this device's push token before signing out, so a shared phone doesn't
+    // keep receiving the signed-out account's notifications. Best-effort.
+    if (session?.user?.id && isPushSupported()) {
+      await unregisterPushNotifications(session.user.id).catch(() => {});
+    }
     await supabase.auth.signOut();
     router.replace('/login');
   };
@@ -108,6 +113,7 @@ export default function Settings() {
         <View style={styles.group}>
           <Row label="Change email" onPress={() => router.push('/settings/change-email')} />
           <Row label="Change password" onPress={() => router.push('/settings/change-password')} />
+          <Row label="Location" onPress={() => router.push('/settings/location')} />
           <ToggleRow
             label="Push notifications"
             value={pushSupported && notifEnabled}

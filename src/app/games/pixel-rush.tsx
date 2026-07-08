@@ -48,6 +48,22 @@ export default function PixelRushScreen() {
 
   const searchTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cancelledRef = useRef(false);
+  // Guards against a double navigation when a poll and the 30s timeout resolve in
+  // the same tick (both would otherwise push a game screen). Reset per search.
+  const enteredRef = useRef(false);
+
+  // Single navigation point into a matched/created game — idempotent, and resets
+  // the transient search UI so returning here lands on a usable screen (not a
+  // dead spinner) and the Continue button isn't stuck disabled.
+  function enterGame(inviteCode: string) {
+    if (enteredRef.current) return;
+    enteredRef.current = true;
+    cancelledRef.current = true;
+    stopSearching();
+    setBusy(false);
+    setScreen('menu');
+    router.push(`/game/${inviteCode}`);
+  }
 
   // Solo puzzle state — grid scales up each consecutive round, same progression as multiplayer.
   const [soloSeed, setSoloSeed] = useState(0);
@@ -119,10 +135,7 @@ export default function PixelRushScreen() {
     try {
       const game = await enqueueOrMatch('pixel_rush');
       if (cancelledRef.current) return;
-      if (game) {
-        stopSearching();
-        router.push(`/game/${game.invite_code}`);
-      }
+      if (game) enterGame(game.invite_code);
     } catch (e) {
       stopSearching();
       setErr((e as Error).message);
@@ -134,11 +147,12 @@ export default function PixelRushScreen() {
     setBusy(true);
     setErr('');
     cancelledRef.current = false;
+    enteredRef.current = false;
     try {
       const game = await enqueueOrMatch('pixel_rush');
       if (cancelledRef.current) return;
       if (game) {
-        router.push(`/game/${game.invite_code}`);
+        enterGame(game.invite_code);
         return;
       }
 
@@ -167,10 +181,16 @@ export default function PixelRushScreen() {
 
   async function handleSearchTimeout() {
     stopSearching();
+    // Suppress any in-flight poll from also navigating, then do ONE final
+    // enqueue_or_match: if a real opponent paired with us in the last seconds,
+    // it returns that game (idempotent) — so we don't abandon them for a bot.
+    cancelledRef.current = true;
     try {
+      const lastChance = await enqueueOrMatch('pixel_rush');
+      if (lastChance) { enterGame(lastChance.invite_code); return; }
       await leaveQueue('pixel_rush');
       const game = await createBotMatch('pixel_rush');
-      router.push(`/game/${game.invite_code}`);
+      enterGame(game.invite_code);
     } catch (e) {
       setErr((e as Error).message);
       setScreen('onevone');
@@ -440,11 +460,8 @@ export default function PixelRushScreen() {
         <SafeAreaView style={[styles.safe, styles.center]}>
           <ActivityIndicator color={colors.blue} size="large" />
           <Text style={styles.searchingTitle}>Finding an opponent…</Text>
-          <Text style={styles.searchingSub}>
-            Starting a match against the machine in {secondsLeft}s if nobody joins.
-          </Text>
           <Pressable
-            style={({ pressed }) => [styles.outlineBtn, { marginTop: space.xl }, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.searchCancelBtn, pressed && styles.pressed]}
             onPress={cancelSearching}
           >
             <Text style={styles.outlineBtnText}>Cancel</Text>
@@ -547,7 +564,7 @@ const RULES = [
   'A photo is shown for 5 seconds — study it.',
   'It scatters into a grid — 3×3 early rounds, up to 5×5 as rounds progress.',
   'Tap two tiles to swap them and rebuild the original image.',
-  'In multiplayer, fastest to solve the round takes the point. Best of 9 wins. 🏆',
+  'In multiplayer, fastest to solve each round takes the point. Most points after 10 rounds wins. 🏆',
 ];
 
 const styles = StyleSheet.create({
@@ -597,6 +614,18 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   outlineBtnText: { fontFamily: font.bold, fontSize: 15, color: colors.textMuted },
+  // Standalone (not in a row) — must NOT inherit outlineBtn's flex:1, or it
+  // stretches to fill the whole centered column.
+  searchCancelBtn: {
+    marginTop: space.xl,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    paddingVertical: space.md,
+    paddingHorizontal: space.xl,
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+  },
   primaryBtn: {
     flex: 1,
     borderRadius: radius.md,
@@ -719,13 +748,5 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginTop: space.lg,
     textAlign: 'center',
-  },
-  searchingSub: {
-    fontFamily: font.semibold,
-    fontSize: 14,
-    color: colors.textMuted,
-    marginTop: space.sm,
-    textAlign: 'center',
-    paddingHorizontal: space.lg,
   },
 });
