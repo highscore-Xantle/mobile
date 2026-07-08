@@ -13,6 +13,7 @@ import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanim
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
+import { useAccent } from '../lib/accent';
 import { colors, font, shadow, space } from '../theme';
 
 type FAIcon = React.ComponentProps<typeof FontAwesome>['name'];
@@ -31,6 +32,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 export function BottomNav({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const { session } = useSession();
+  const { accent } = useAccent();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -63,7 +65,7 @@ export function BottomNav({ state, navigation }: BottomTabBarProps) {
               key={t.name}
               onPress={onPress}
               layout={LinearTransition.springify().damping(20).stiffness(180)}
-              style={[styles.item, focused && styles.itemActive]}
+              style={[styles.item, focused && styles.itemActive, focused && { backgroundColor: accent.accent }]}
               accessibilityRole="button"
               accessibilityState={{ selected: focused }}
               accessibilityLabel={t.label}

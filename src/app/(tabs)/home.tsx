@@ -7,7 +7,7 @@
  * react-native-svg; the active card lifts + scales while neighbours recede
  * (scale/fade), driven by scroll position for a smooth, finger-tracked feel.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,9 +23,11 @@ import Animated, {
   Extrapolation,
   type SharedValue,
 } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import { useSession } from '../../lib/useSession';
 import { GradientFill } from '../../components/GradientFill';
 import { GAMES } from './games';
+import { useAccent } from '../../lib/accent';
 import { colors, font, radius, shadow, space } from '../../theme';
 
 type FAIcon = React.ComponentProps<typeof FontAwesome>['name'];
@@ -140,8 +142,22 @@ export default function Home() {
 
   const [activeCat, setActiveCat] = useState(0);
 
+  const { accent, setAccent } = useAccent();
   const scrollX = useSharedValue(0);
-  const onScroll = useAnimatedScrollHandler((e) => { scrollX.value = e.contentOffset.x; });
+  const activeIdx = useSharedValue(0);
+
+  // Re-theme the app to the focused game (right band, chips, nav pill).
+  const applyAccent = (i: number) => {
+    const g = GAMES[i];
+    if (g) setAccent({ theme: g.theme, accent: g.accent });
+  };
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollX.value = e.contentOffset.x;
+    const i = Math.round(e.contentOffset.x / ITEM);
+    if (i !== activeIdx.value) { activeIdx.value = i; scheduleOnRN(applyAccent, i); }
+  });
+  useEffect(() => { applyAccent(0); /* seed with the first game */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!session) return null;
 
@@ -155,9 +171,9 @@ export default function Home() {
     <View style={styles.root}>
       <GradientFill colors={[colors.bgTop, colors.bgBottom]} />
 
-      {/* Blue band — straight vertical on the right, top to near the nav */}
+      {/* Accent band — themes to the focused game's colour */}
       <View style={styles.rightBand} pointerEvents="none">
-        <GradientFill colors={[colors.blueBright, colors.blueDeep]} />
+        <GradientFill colors={accent.theme} />
       </View>
 
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -183,7 +199,12 @@ export default function Home() {
               <Pressable
                 key={c.key}
                 onPress={() => setActiveCat(i)}
-                style={({ pressed }) => [styles.catChip, active && styles.catChipActive, pressed && styles.pressed]}
+                style={({ pressed }) => [
+                  styles.catChip,
+                  active && styles.catChipActive,
+                  active && { backgroundColor: accent.accent, borderColor: accent.accent },
+                  pressed && styles.pressed,
+                ]}
                 accessibilityLabel={c.key}
               >
                 <FontAwesome name={c.icon} size={20} color={active ? colors.white : colors.textMuted} />

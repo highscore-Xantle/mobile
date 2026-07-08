@@ -40,6 +40,8 @@ export const GAMES = [
     tagline: 'Pick a secret. Race to guess.',
     gradient: ['#3B9DE7', '#4967E0'] as [string, string],
     cardBg: ['#2F3745', '#20262E'] as string[],
+    theme: ['#489AE7', '#3B6DCF'] as [string, string],   // right-band gradient
+    accent: '#3B9DE7',                                    // pill / active-icon color
     emoji: '🔢',
     image: null as number | null,
     available: true,
@@ -53,6 +55,8 @@ export const GAMES = [
     tagline: 'Fast. Frantic. Pixel-perfect.',
     gradient: gradients.button as [string, string],
     cardBg: ['#2F3745', '#20262E'] as string[],
+    theme: ['#489AE7', '#3B6DCF'] as [string, string],
+    accent: '#3B9DE7',
     emoji: '🎮',
     image: null as number | null,
     available: true,
@@ -66,6 +70,8 @@ export const GAMES = [
     tagline: 'Classic checkers, one on one.',
     gradient: ['#6D3F17', '#2D1808'] as [string, string],
     cardBg: ['#5A3A1E', '#3A2413', '#160E07'] as string[],   // warm wood tones from the board image
+    theme: ['#D08A24', '#6D3F17'] as [string, string],       // amber/gold → wood-brown
+    accent: '#C8811F',
     emoji: '⚫',
     image: require('../../../assets/games-icon/drought.png') as number | null,
     available: true,
@@ -79,6 +85,8 @@ export const GAMES = [
     tagline: 'Who among you is the spy?',
     gradient: gradients.featured as [string, string],
     cardBg: ['#2F3745', '#20262E'] as string[],
+    theme: ['#489AE7', '#3B6DCF'] as [string, string],
+    accent: '#3B9DE7',
     emoji: '🕵️',
     image: null as number | null,
     available: false,
