@@ -15,6 +15,10 @@ const GAME_RULES: Record<string, { title: string; desc: string }> = {
     title: 'Number Duel',
     desc: 'Pick a secret number and guess your opponent\'s number first. Pay attention to the hints and lock in fast!',
   },
+  'draughts': {
+    title: 'Draughts',
+    desc: 'Classic checkers, one on one. Forced captures, multi-jump chains, and flying kings. Create a room to play a friend, or practice against the bot.',
+  },
 };
 
 const SEARCH_SECONDS = 30;
@@ -101,6 +105,26 @@ export default function GameSetup() {
       setCreating(false);
     }
   }
+
+  // Instant bot match — skips the 30s matchmaking wait. Draughts' bot is a
+  // local single-device game (no room); Number Duel's is a bot room.
+  const handlePlayBot = async () => {
+    if (creating) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    if (id === 'draughts') {
+      router.push('/game/draughts');
+      return;
+    }
+    setCreating(true);
+    setErr('');
+    try {
+      const room = await createBotRoom(settings);
+      enterRoom(room.code);
+    } catch (e) {
+      setErr((e as Error).message);
+      setCreating(false);
+    }
+  };
 
   async function startMatchmaking() {
     cancelledRef.current = false;
@@ -204,7 +228,8 @@ export default function GameSetup() {
             <Text style={styles.gameDesc}>{rules.desc}</Text>
           </View>
 
-          {/* Settings Section */}
+          {/* Settings Section (Number Duel only) */}
+          {id === 'number-duel' && (
           <View style={styles.settingsSection}>
             <Text style={styles.sectionHeader}>Configure Rules</Text>
             
@@ -284,6 +309,7 @@ export default function GameSetup() {
               </View>
             </View>
           </View>
+          )}
 
           {!!err && <Text style={styles.errText}>{err}</Text>}
         </ScrollView>
@@ -302,6 +328,16 @@ export default function GameSetup() {
               <Text style={styles.ctaText}>{anyoneCanJoin ? 'Continue →' : 'Create Room & Invite →'}</Text>
             )}
           </Pressable>
+
+          {(id === 'number-duel' || id === 'draughts') && (
+            <Pressable
+              style={({ pressed }) => [styles.outlineBtn, creating && styles.ctaDisabled, pressed && styles.pressed]}
+              onPress={handlePlayBot}
+              disabled={creating}
+            >
+              <Text style={styles.outlineBtnText}>Practice vs Bot</Text>
+            </Pressable>
+          )}
         </View>
 
       </SafeAreaView>
