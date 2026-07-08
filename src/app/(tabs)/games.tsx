@@ -66,7 +66,7 @@ export const GAMES = [
     emoji: '⚫',
     image: require('../../../assets/games-icon/drought.png') as number | null,
     available: true,
-    route: '/game/draughts' as string | null,
+    route: null as string | null,   // → /setup/draughts (online or vs bot)
     hasViewer: false,
   },
   {

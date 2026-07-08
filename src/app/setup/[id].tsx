@@ -13,6 +13,10 @@ const GAME_RULES: Record<string, { title: string; desc: string }> = {
     title: 'Number Duel',
     desc: 'Pick a secret number and guess your opponent\'s number first. Pay attention to the hints and lock in fast!',
   },
+  'draughts': {
+    title: 'Draughts',
+    desc: 'Classic checkers, one on one. Forced captures, multi-jump chains, and flying kings. Create a room to play a friend, or practice against the bot.',
+  },
 };
 
 export default function GameSetup() {
@@ -52,9 +56,15 @@ export default function GameSetup() {
 
   const handlePlayBot = async () => {
     if (creating) return;
-    setCreating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
+    // Draughts' bot is a local, single-device match (no room).
+    if (id === 'draughts') {
+      router.push('/game/draughts');
+      return;
+    }
+
+    setCreating(true);
     const { data: room, error } = await supabase.rpc('create_bot_room', { p_state: settings });
 
     if (error) {
@@ -92,7 +102,8 @@ export default function GameSetup() {
             <Text style={styles.gameDesc}>{rules.desc}</Text>
           </View>
 
-          {/* Settings Section */}
+          {/* Settings Section (Number Duel only) */}
+          {id === 'number-duel' && (
           <View style={styles.settingsSection}>
             <Text style={styles.sectionHeader}>Configure Rules</Text>
             
@@ -152,6 +163,7 @@ export default function GameSetup() {
               {settings.difficulty === 'hardcore' && <Text style={styles.settingNote}>2 decimals required immediately.</Text>}
             </View>
           </View>
+          )}
         </ScrollView>
 
         {/* Footer */}
@@ -169,7 +181,7 @@ export default function GameSetup() {
             )}
           </Pressable>
 
-          {id === 'number-duel' && (
+          {(id === 'number-duel' || id === 'draughts') && (
             <Pressable
               style={({ pressed }) => [styles.outlineBtn, creating && styles.ctaDisabled, pressed && styles.pressed]}
               onPress={handlePlayBot}
