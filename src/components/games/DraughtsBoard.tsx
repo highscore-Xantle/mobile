@@ -12,10 +12,10 @@ import {
 } from '../../lib/draughts';
 import { colors, font } from '../../theme';
 
-const RED_PIECE: [string, string] = ['#F43F5E', '#C026D3'];
-const WHITE_PIECE: [string, string] = ['#F4F4F5', '#A1A1AA'];
-const DARK_SQ = '#3A2A4A';
-const LIGHT_SQ = '#D6B88F';
+const GOLD_PIECE: [string, string] = ['#F0CE7A', '#A9791A'];   // 'r'
+const BLACK_PIECE: [string, string] = ['#3A3A37', '#0C0C0B'];  // 'b'
+const DARK_SQ = '#5B3B22';   // wood brown
+const LIGHT_SQ = '#E6CBA0';  // tan
 const GOLD = '#F5C451';
 
 function AnimatedPiece({ piece, cell, flip, selected, canSelect }: {
@@ -25,28 +25,46 @@ function AnimatedPiece({ piece, cell, flip, selected, canSelect }: {
   const dc = flip ? 7 - piece.c : piece.c;
   const tx = useSharedValue(dc * cell);
   const ty = useSharedValue(dr * cell);
+  const lift = useSharedValue(0);
 
   useEffect(() => {
     tx.value = withTiming(dc * cell, { duration: 130, easing: Easing.out(Easing.quad) });
     ty.value = withTiming(dr * cell, { duration: 130, easing: Easing.out(Easing.quad) });
   }, [dc, dr, cell]);
+  useEffect(() => {
+    lift.value = withTiming(selected ? 1 : 0, { duration: 150, easing: Easing.out(Easing.quad) });
+  }, [selected]);
 
   const style = useAnimatedStyle(() => ({
-    transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: selected ? 1.08 : 1 }],
+    // Lift the selected piece up + scale it — reads as "picked up".
+    transform: [
+      { translateX: tx.value },
+      { translateY: ty.value - lift.value * cell * 0.2 },
+      { scale: 1 + lift.value * 0.16 },
+    ],
   }));
 
   const disc = cell * 0.78;
   return (
-    <Animated.View style={[{ position: 'absolute', width: cell, height: cell, alignItems: 'center', justifyContent: 'center' }, style]}>
+    <Animated.View pointerEvents="none" style={[{ position: 'absolute', width: cell, height: cell, alignItems: 'center', justifyContent: 'center', zIndex: selected ? 20 : 1 }, style]}>
       <View
         style={{
-          width: disc, height: disc, borderRadius: disc / 2, overflow: 'hidden',
+          width: disc, height: disc, borderRadius: disc / 2,
           alignItems: 'center', justifyContent: 'center',
-          borderWidth: selected ? 3 : canSelect ? 2 : 0,
-          borderColor: selected ? GOLD : 'rgba(245,196,81,0.4)',
+          borderWidth: 1.5,
+          borderColor: selected ? GOLD : canSelect ? 'rgba(245,196,81,0.55)' : 'rgba(0,0,0,0.35)',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: selected ? 10 : 3 },
+          shadowOpacity: selected ? 0.6 : 0.5,
+          shadowRadius: selected ? 12 : 4,
+          elevation: selected ? 16 : 5,
         }}
       >
-        <GradientFill colors={piece.color === 'r' ? RED_PIECE : WHITE_PIECE} />
+        <View style={{ ...StyleSheet.absoluteFillObject, borderRadius: disc / 2, overflow: 'hidden' }}>
+          <GradientFill colors={piece.color === 'r' ? GOLD_PIECE : BLACK_PIECE} />
+        </View>
+        {/* gloss highlight */}
+        <View style={{ position: 'absolute', top: disc * 0.12, left: disc * 0.2, width: disc * 0.4, height: disc * 0.26, borderRadius: disc * 0.2, backgroundColor: 'rgba(255,255,255,0.28)' }} />
         {piece.king && <Text style={{ fontSize: disc * 0.5 }}>👑</Text>}
       </View>
     </Animated.View>

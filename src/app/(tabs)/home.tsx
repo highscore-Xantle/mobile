@@ -7,7 +7,7 @@
  * react-native-svg; the active card lifts + scales while neighbours recede
  * (scale/fade), driven by scroll position for a smooth, finger-tracked feel.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,12 +19,15 @@ import Animated, {
   useAnimatedScrollHandler,
   useAnimatedStyle,
   interpolate,
+  withSpring,
+  runOnJS,
   Extrapolation,
   type SharedValue,
 } from 'react-native-reanimated';
 import { useSession } from '../../lib/useSession';
 import { GradientFill } from '../../components/GradientFill';
 import { GAMES } from './games';
+import { useAccent } from '../../lib/accent';
 import { colors, font, radius, shadow, space } from '../../theme';
 
 type FAIcon = React.ComponentProps<typeof FontAwesome>['name'];
@@ -77,6 +80,10 @@ function GameCard({
 }) {
   const gid = `gc-${game.id}`;
 
+  // Art bounces on touch.
+  const artScale = useSharedValue(1);
+  const artStyle = useAnimatedStyle(() => ({ transform: [{ scale: artScale.value }] }));
+
   // Active card lifts + scales; neighbours recede (scale down, drop, fade).
   const aStyle = useAnimatedStyle(() => {
     const dist = index - scrollX.value / ITEM;
@@ -92,22 +99,28 @@ function GameCard({
 
   return (
     <Animated.View style={[{ width: CARD_W, height: CARD_H }, styles.cardShadow, aStyle]}>
-      <Pressable onPress={onPress} style={StyleSheet.absoluteFill}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={() => { artScale.value = withSpring(1.16, { damping: 9, stiffness: 220 }); }}
+        onPressOut={() => { artScale.value = withSpring(1, { damping: 12, stiffness: 200 }); }}
+        style={StyleSheet.absoluteFill}
+      >
         <Svg width={CARD_W} height={CARD_H} style={StyleSheet.absoluteFill}>
           <Defs>
             <SvgLinearGradient id={gid} x1="0%" y1="0%" x2="0%" y2="100%">
-              <Stop offset="0" stopColor="#2F3745" />
-              <Stop offset="1" stopColor="#20262E" />
+              {game.cardBg.map((c, i) => (
+                <Stop key={i} offset={`${i / (game.cardBg.length - 1)}`} stopColor={c} />
+              ))}
             </SvgLinearGradient>
           </Defs>
           <Path d={CARD_PATH} fill={`url(#${gid})`} />
         </Svg>
 
-        <View style={[styles.cardArt, { height: CARD_H * 0.6 }]}>
+        <Animated.View style={[styles.cardArt, { height: CARD_H * 0.6 }, artStyle]}>
           {game.image
             ? <Image source={game.image} style={styles.cardImg} contentFit="contain" />
             : <Text style={styles.cardEmoji}>{game.emoji}</Text>}
-        </View>
+        </Animated.View>
 
         <View style={styles.cardText}>
           <Text style={styles.cardTitle}>{game.title}</Text>
@@ -129,24 +142,36 @@ export default function Home() {
 
   const [activeCat, setActiveCat] = useState(0);
 
+  const { accent, setAccent } = useAccent();
   const scrollX = useSharedValue(0);
-  const onScroll = useAnimatedScrollHandler((e) => { scrollX.value = e.contentOffset.x; });
+  const activeIdx = useSharedValue(0);
+
+  // Re-theme the app to the focused game (right band, chips, nav pill).
+  const applyAccent = (i: number) => {
+    const g = GAMES[i];
+    if (g) setAccent({ theme: g.theme, accent: g.accent });
+  };
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollX.value = e.contentOffset.x;
+    const i = Math.round(e.contentOffset.x / ITEM);
+    if (i !== activeIdx.value) { activeIdx.value = i; runOnJS(applyAccent)(i); }
+  });
+  useEffect(() => { applyAccent(0); /* seed with the first game */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!session) return null;
 
   const openGame = (game: typeof GAMES[number]) => {
-    if (!game.available) return;
-    if (game.route) router.push(game.route as Parameters<typeof router.push>[0]);
-    else router.push(`/setup/${game.id}` as any);
+    router.push(`/details/${game.id}` as any);   // → product-detail screen
   };
 
   return (
     <View style={styles.root}>
       <GradientFill colors={[colors.bgTop, colors.bgBottom]} />
 
-      {/* Blue band — straight vertical on the right, top to near the nav */}
+      {/* Accent band — themes to the focused game's colour */}
       <View style={styles.rightBand} pointerEvents="none">
-        <GradientFill colors={[colors.blueBright, colors.blueDeep]} />
+        <GradientFill colors={accent.theme} />
       </View>
 
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -172,7 +197,12 @@ export default function Home() {
               <Pressable
                 key={c.key}
                 onPress={() => setActiveCat(i)}
-                style={({ pressed }) => [styles.catChip, active && styles.catChipActive, pressed && styles.pressed]}
+                style={({ pressed }) => [
+                  styles.catChip,
+                  active && styles.catChipActive,
+                  active && { backgroundColor: accent.accent, borderColor: accent.accent },
+                  pressed && styles.pressed,
+                ]}
                 accessibilityLabel={c.key}
               >
                 <FontAwesome name={c.icon} size={20} color={active ? colors.white : colors.textMuted} />
@@ -262,7 +292,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   cardEmoji: { fontSize: 68 },
-  cardImg: { width: '78%', height: '78%' },
+  cardImg: { width: '100%', height: '100%' },
   cardText: { position: 'absolute', left: space.lg, bottom: space.lg },
   cardTitle: { fontFamily: font.extrabold, fontSize: 19, color: colors.text },
   cardSub: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted, marginTop: 3 },
