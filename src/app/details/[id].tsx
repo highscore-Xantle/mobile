@@ -31,8 +31,8 @@ const HERO_H = Math.round(SCREEN_H * 0.46);
 
 const META: { label: string; value: string }[] = [
   { label: 'TYPE', value: 'Board' },
-  { label: 'PLAYERS', value: '1 – 2' },
-  { label: 'MODE', value: 'Online & Bot' },
+  { label: 'STYLE', value: 'Strategy' },
+  { label: 'PACE', value: 'Turn-based' },
 ];
 
 type Mode = 'online' | 'invite' | 'group' | 'join';
