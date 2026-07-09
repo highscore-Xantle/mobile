@@ -91,9 +91,10 @@ export default function GameDetail() {
 
   const handleCta = () => {
     if (busy) return;
-    if (mode === 'join') { setErr(''); setCode(''); setJoinOpen(true); return; }
+    if (mode === 'online') { router.push('/game/draughts?mp=online' as any); return; }  // matchmaking
+    if (mode === 'invite') { createRoom(); return; }                                    // → lobby to share the code
     if (mode === 'group') { Alert.alert('Group play', 'Group games ($2) are coming soon.'); return; }
-    createRoom();  // online + invite both open a room lobby
+    if (mode === 'join') { setErr(''); setCode(''); setJoinOpen(true); return; }
   };
 
   const doJoin = async () => {

@@ -1,11 +1,12 @@
 // Draughts.
-//   • No roomCode  → Practice vs Bot (client-simulated, single device).
-//   • With roomCode → online 1v1. Board state lives in rooms.state and syncs
-//     via postgres_changes on rooms (same rail Number Duel / room lobby use);
-//     each move writes the full state through update_room_state and both
-//     clients converge on it. Host plays black (moves first), guest plays red.
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+//   roomCode param   → online 1v1 (from lobby / invite / join).
+//   mp=online param  → matchmaking: wait for an opponent, fall back to a bot
+//                      after 10s.
+//   neither          → Practice vs Bot (local single device).
+// Board state (online) lives in rooms.state and syncs via postgres_changes on
+// rooms. Screen accents follow the Draughts theme (amber/gold).
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
@@ -13,13 +14,17 @@ import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
 import { GradientFill } from '../../components/GradientFill';
 import DraughtsBoard from '../../components/games/DraughtsBoard';
+import { GAMES } from '../(tabs)/games';
 import {
   applyMove, initialBoard, isLost, legalMoves,
   type Board, type Move, type PieceColor,
 } from '../../lib/draughts';
-import { colors, font, gradients, radius, shadow, space } from '../../theme';
+import { colors, font, radius, shadow, space } from '../../theme';
 
-// Bot: forced captures come from the engine; prefer the longest chain.
+const DRAUGHTS = GAMES.find((g) => g.id === 'draughts')!;
+const THEME = DRAUGHTS.theme;
+const ACCENT = DRAUGHTS.accent;
+
 function pickBotMove(board: Board, color: PieceColor): Move | null {
   const moves = legalMoves(board, color);
   if (moves.length === 0) return null;
@@ -29,13 +34,15 @@ function pickBotMove(board: Board, color: PieceColor): Move | null {
 }
 
 export default function Draughts() {
-  const { roomCode } = useLocalSearchParams<{ roomCode?: string }>();
-  return roomCode ? <OnlineDraughts roomCode={roomCode} /> : <BotDraughts />;
+  const { roomCode, mp } = useLocalSearchParams<{ roomCode?: string; mp?: string }>();
+  if (roomCode) return <OnlineDraughts roomCode={roomCode} />;
+  if (mp === 'online') return <Matchmaking />;
+  return <BotDraughts />;
 }
 
-// ── Shell (header + board slot + result) ──────────────────────────────────────
+// ── Shell ─────────────────────────────────────────────────────────────────────
 function Shell({
-  sub, board, myColor, myTurn, onMove, result, onPrimary, primaryLabel,
+  sub, board, myColor, myTurn, onMove, result, onPrimary, primaryLabel, children,
 }: {
   sub: string;
   board: Board | null;
@@ -45,6 +52,7 @@ function Shell({
   result: string | null;
   onPrimary?: () => void;
   primaryLabel?: string;
+  children?: React.ReactNode;
 }) {
   const router = useRouter();
   return (
@@ -63,7 +71,7 @@ function Shell({
         <View style={styles.boardWrap}>
           {board
             ? <DraughtsBoard board={board} myColor={myColor} myTurn={myTurn} onMove={onMove} />
-            : <ActivityIndicator color={colors.blue} />}
+            : <ActivityIndicator color={ACCENT} />}
         </View>
 
         {result && (
@@ -72,7 +80,7 @@ function Shell({
             {onPrimary && (
               <Pressable style={({ pressed }) => [styles.cta, pressed && styles.pressed]} onPress={onPrimary}>
                 <View style={styles.ctaInner}>
-                  <GradientFill colors={gradients.button} />
+                  <GradientFill colors={THEME} />
                   <Text style={styles.ctaText}>{primaryLabel}</Text>
                 </View>
               </Pressable>
@@ -80,6 +88,7 @@ function Shell({
           </View>
         )}
       </SafeAreaView>
+      {children}
     </View>
   );
 }
@@ -88,7 +97,7 @@ function Shell({
 const HUMAN: PieceColor = 'b';
 const BOT: PieceColor = 'r';
 
-function BotDraughts() {
+function BotDraughts({ note }: { note?: string }) {
   const [board, setBoard] = useState<Board>(() => initialBoard());
   const [turn, setTurn] = useState<PieceColor>(HUMAN);
   const [winner, setWinner] = useState<PieceColor | null>(null);
@@ -101,7 +110,6 @@ function BotDraughts() {
     const opp: PieceColor = mover === 'b' ? 'r' : 'b';
     if (isLost(next, opp)) { setWinner(mover); setTurn(mover); } else setTurn(opp);
   };
-
   const onMove = (move: Move) => { if (turn === HUMAN && !winner) commit(board, move, HUMAN); };
 
   useEffect(() => {
@@ -124,7 +132,7 @@ function BotDraughts() {
 
   return (
     <Shell
-      sub="Practice vs Bot"
+      sub={note ?? 'Practice vs Bot'}
       board={board}
       myColor={HUMAN}
       myTurn={turn === HUMAN && !winner}
@@ -136,24 +144,91 @@ function BotDraughts() {
   );
 }
 
+// ── Matchmaking (Play Online) ─────────────────────────────────────────────────
+function Matchmaking() {
+  const router = useRouter();
+  const { session } = useSession();
+  const meId = session?.user?.id ?? null;
+  const [phase, setPhase] = useState<'searching' | 'online' | 'bot'>('searching');
+  const [roomCode, setRoomCode] = useState<string | null>(null);
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const searchBoard = useMemo(() => initialBoard(), []);
+
+  // Enter the queue: join an open room or create one and wait.
+  useEffect(() => {
+    if (!meId) return;
+    let active = true;
+    (async () => {
+      const { data: room, error } = await supabase.rpc('matchmake_draughts');
+      if (!active) return;
+      if (error || !room) { setPhase('bot'); return; }   // fall back to bot on any hiccup
+      setRoomCode(room.code);
+      setRoomId(room.id);
+      if (room.status === 'active') setPhase('online');   // paired immediately
+    })();
+    return () => { active = false; };
+  }, [meId]);
+
+  // Waiting: listen for someone to join; bot-fallback after 10s.
+  useEffect(() => {
+    if (phase !== 'searching' || !roomId) return;
+    const ch = supabase
+      .channel(`mm_${roomId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
+        ({ new: row }: any) => { if (row?.status === 'active') setPhase('online'); })
+      .subscribe();
+    const timer = setTimeout(() => {
+      supabase.rpc('cancel_matchmaking', { p_room: roomId });
+      setPhase('bot');
+    }, 10000);
+    return () => { void supabase.removeChannel(ch); clearTimeout(timer); };
+  }, [phase, roomId]);
+
+  const cancel = () => {
+    if (roomId) supabase.rpc('cancel_matchmaking', { p_room: roomId });
+    router.back();
+  };
+
+  if (phase === 'online' && roomCode) return <OnlineDraughts roomCode={roomCode} />;
+  if (phase === 'bot') return <BotDraughts note="No one around — playing the bot!" />;
+
+  return (
+    <Shell sub="Play Online" board={searchBoard} myColor={HUMAN} myTurn={false} onMove={() => {}} result={null}>
+      <Modal transparent visible animationType="fade" onRequestClose={cancel}>
+        <View style={styles.overlay}>
+          <View style={styles.searchCard}>
+            <ActivityIndicator color={ACCENT} size="large" />
+            <Text style={styles.searchTitle}>Finding an opponent…</Text>
+            <Text style={styles.searchSub}>
+              You're in the queue. If no one joins in a few seconds, you'll play an intelligent bot.
+            </Text>
+            <Pressable onPress={cancel} hitSlop={8}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </Shell>
+  );
+}
+
 // ── Online 1v1 ────────────────────────────────────────────────────────────────
 type RoomState = { board: Board; turn: PieceColor; status: 'playing' | 'done'; winner: PieceColor | null };
 
 function OnlineDraughts({ roomCode }: { roomCode: string }) {
   const router = useRouter();
   const { session } = useSession();
+  const meId = session?.user?.id ?? null;
 
   const [roomId, setRoomId] = useState<string | null>(null);
   const [myColor, setMyColor] = useState<PieceColor | null>(null);
   const [oppName, setOppName] = useState('Opponent');
   const [state, setState] = useState<RoomState | null>(null);
-  const meId = session?.user?.id ?? null;
 
   const persist = (s: RoomState) => {
     if (roomId) supabase.rpc('update_room_state', { p_room: roomId, p_state: s as any });
   };
 
-  // Fetch room + players, set my color, hydrate or (host) initialize.
   useEffect(() => {
     if (!roomCode || !meId) return;
     let active = true;
@@ -169,9 +244,9 @@ function OnlineDraughts({ roomCode }: { roomCode: string }) {
       const opp = players?.find((p: any) => p.user_id !== meId);
       setOppName(opp?.display_name || (opp?.profiles as any)?.username || 'Opponent');
 
-      const existing = room.state as Partial<RoomState> | null;
-      if (existing?.board) {
-        setState({ board: existing.board, turn: existing.turn ?? 'b', status: existing.status ?? 'playing', winner: existing.winner ?? null });
+      const ex = room.state as Partial<RoomState> | null;
+      if (ex?.board) {
+        setState({ board: ex.board, turn: ex.turn ?? 'b', status: ex.status ?? 'playing', winner: ex.winner ?? null });
       } else if (hostIsMe) {
         const fresh: RoomState = { board: initialBoard(), turn: 'b', status: 'playing', winner: null };
         setState(fresh);
@@ -181,7 +256,6 @@ function OnlineDraughts({ roomCode }: { roomCode: string }) {
     return () => { active = false; };
   }, [roomCode, meId]);
 
-  // Live sync: every move writes the full room.state; both clients hydrate here.
   useEffect(() => {
     if (!roomId) return;
     const ch = supabase
@@ -200,17 +274,11 @@ function OnlineDraughts({ roomCode }: { roomCode: string }) {
     const next = applyMove(state.board, move);
     const opp: PieceColor = myColor === 'b' ? 'r' : 'b';
     const won = isLost(next, opp);
-    const s: RoomState = {
-      board: next,
-      turn: won ? myColor : opp,
-      status: won ? 'done' : 'playing',
-      winner: won ? myColor : null,
-    };
-    setState(s);       // optimistic
-    persist(s);        // sync to opponent
+    const s: RoomState = { board: next, turn: won ? myColor : opp, status: won ? 'done' : 'playing', winner: won ? myColor : null };
+    setState(s);
+    persist(s);
   };
 
-  // If it's my turn and I have no legal moves, I lose.
   useEffect(() => {
     if (!state || !myColor || state.status !== 'playing' || state.turn !== myColor) return;
     if (legalMoves(state.board, myColor).length === 0) {
@@ -242,15 +310,8 @@ function OnlineDraughts({ roomCode }: { roomCode: string }) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1, paddingHorizontal: space.lg },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingTop: space.sm, paddingBottom: space.xs,
-  },
-  iconBtn: {
-    width: 44, height: 44, borderRadius: 12,
-    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: colors.hairline,
-  },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: space.sm, paddingBottom: space.xs },
+  iconBtn: { width: 44, height: 44, borderRadius: 12, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.hairline },
   title: { fontFamily: font.extrabold, fontSize: 20, color: colors.text },
   sub: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, textAlign: 'center', marginBottom: space.lg },
   boardWrap: { flex: 1, justifyContent: 'center' },
@@ -260,4 +321,10 @@ const styles = StyleSheet.create({
   ctaInner: { paddingVertical: 16, alignItems: 'center' },
   ctaText: { fontFamily: font.extrabold, fontSize: 16, color: colors.white },
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
+
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: space.xl },
+  searchCard: { backgroundColor: colors.surface, borderRadius: radius.xl, padding: space.xl, alignItems: 'center', gap: space.md, width: '100%', maxWidth: 340, borderWidth: 1, borderColor: colors.hairline },
+  searchTitle: { fontFamily: font.extrabold, fontSize: 18, color: colors.text },
+  searchSub: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, textAlign: 'center', lineHeight: 20 },
+  cancelText: { fontFamily: font.bold, fontSize: 14, color: ACCENT, marginTop: space.sm },
 });
