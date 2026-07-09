@@ -11,7 +11,7 @@ import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { FadeIn, Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
 import { GradientFill } from '../../components/GradientFill';
@@ -75,14 +75,24 @@ function Avatar({ uri, name, size = 48 }: { uri: string | null; name: string; si
 // ── Shell (header menu + scoreboard + board + result) ─────────────────────────
 function Shell({
   me, opp, myScore, oppScore, board, myColor, myTurn, onMove, result, onRematch, showRematch, children,
+  activeSide = null, turnKey = 0, turnSeconds = 30,
 }: {
   me: Player; opp: Player; myScore: number; oppScore: number;
   board: Board | null; myColor: PieceColor | null; myTurn: boolean; onMove: (m: Move) => void;
   result: string | null; onRematch?: () => void; showRematch?: boolean; children?: React.ReactNode;
+  activeSide?: 'me' | 'opp' | null; turnKey?: number; turnSeconds?: number;
 }) {
   const router = useRouter();
   const [menu, setMenu] = useState(false);
   const quit = () => { setMenu(false); router.replace('/home'); };
+
+  // Per-turn think bar under the active player's profile.
+  const prog = useSharedValue(1);
+  useEffect(() => {
+    prog.value = 1;
+    if (activeSide) prog.value = withTiming(0, { duration: turnSeconds * 1000, easing: Easing.linear });
+  }, [turnKey, activeSide]);
+  const barStyle = useAnimatedStyle(() => ({ width: `${Math.max(0, prog.value) * 100}%` }));
 
   return (
     <View style={styles.root}>
@@ -100,6 +110,7 @@ function Shell({
           <View style={styles.player}>
             <Avatar uri={me.avatar} name={me.name} size={46} />
             <Text style={styles.pName} numberOfLines={1}>{me.name}</Text>
+            <View style={styles.barTrack}>{activeSide === 'me' && <Animated.View style={[styles.bar, barStyle]} />}</View>
           </View>
           <View style={styles.scoreCenter}>
             <Text style={styles.score}>{myScore}</Text>
@@ -109,6 +120,7 @@ function Shell({
           <View style={[styles.player, { alignItems: 'flex-end' }]}>
             <Avatar uri={opp.avatar} name={opp.name} size={46} />
             <Text style={styles.pName} numberOfLines={1}>{opp.name}</Text>
+            <View style={styles.barTrack}>{activeSide === 'opp' && <Animated.View style={[styles.bar, barStyle]} />}</View>
           </View>
         </View>
 
@@ -156,9 +168,11 @@ function BotDraughts({ opp: oppInit }: { opp?: Player }) {
   const [winner, setWinner] = useState<PieceColor | null>(null);
   const [myScore, setMyScore] = useState(0);
   const [oppScore, setOppScore] = useState(0);
+  const [turnKey, setTurnKey] = useState(0);
   const boardRef = useRef(board);
   boardRef.current = board;
 
+  const changeTurn = (t: PieceColor) => { setTurn(t); setTurnKey((k) => k + 1); };
   const finish = (w: PieceColor) => {
     setWinner(w);
     if (w === HUMAN) setMyScore((s) => s + 1); else setOppScore((s) => s + 1);
@@ -167,20 +181,30 @@ function BotDraughts({ opp: oppInit }: { opp?: Player }) {
     const next = applyMove(b, move);
     setBoard(next);
     const other: PieceColor = mover === 'b' ? 'r' : 'b';
-    if (isLost(next, other)) { finish(mover); setTurn(mover); } else setTurn(other);
+    if (isLost(next, other)) { finish(mover); setTurn(mover); } else changeTurn(other);
   };
   const onMove = (move: Move) => { if (turn === HUMAN && !winner) commit(board, move, HUMAN); };
 
+  // Bot takes a human-like moment to think (well within its 30s).
   useEffect(() => {
     if (turn !== BOT || winner) return;
+    const think = 1800 + rand(5000);   // ~1.8–6.8s
     const t = setTimeout(() => {
       const move = pickBotMove(boardRef.current, BOT);
       if (!move) { finish(HUMAN); setTurn(HUMAN); return; }
       commit(boardRef.current, move, BOT);
-    }, 650);
+    }, think);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turn, winner]);
+  }, [turn, turnKey, winner]);
+
+  // 30s to move — else the turn passes to the bot.
+  useEffect(() => {
+    if (turn !== HUMAN || winner) return;
+    const t = setTimeout(() => changeTurn(BOT), 30000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turn, turnKey, winner]);
 
   useEffect(() => {
     if (winner || turn !== HUMAN) return;
@@ -188,12 +212,13 @@ function BotDraughts({ opp: oppInit }: { opp?: Player }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turn, board, winner]);
 
-  const rematch = () => { setBoard(initialBoard()); setTurn(HUMAN); setWinner(null); };
+  const rematch = () => { setBoard(initialBoard()); setTurn(HUMAN); setTurnKey((k) => k + 1); setWinner(null); };
 
   return (
     <Shell
       me={me} opp={opp} myScore={myScore} oppScore={oppScore}
       board={board} myColor={HUMAN} myTurn={turn === HUMAN && !winner} onMove={onMove}
+      activeSide={winner ? null : (turn === HUMAN ? 'me' : 'opp')} turnKey={turnKey}
       result={winner ? (winner === HUMAN ? '🏆  You win!' : `${opp.name} wins`) : null}
       onRematch={rematch} showRematch
     />
@@ -309,7 +334,9 @@ function OnlineDraughts({ roomCode }: { roomCode: string }) {
   const [state, setState] = useState<RoomState | null>(null);
   const [myScore, setMyScore] = useState(0);
   const [oppScore, setOppScore] = useState(0);
+  const [turnKey, setTurnKey] = useState(0);
   const scoredRef = useRef(false);
+  const prevTurn = useRef<PieceColor | null>(null);
 
   const persist = (s: RoomState) => { if (roomId) supabase.rpc('update_room_state', { p_room: roomId, p_state: s as any }); };
 
@@ -363,6 +390,23 @@ function OnlineDraughts({ roomCode }: { roomCode: string }) {
     }
   }, [state?.status, state?.winner, myColor]);
 
+  // Reset the think bar whenever the turn changes.
+  useEffect(() => {
+    if (state && state.turn !== prevTurn.current) { prevTurn.current = state.turn; setTurnKey((k) => k + 1); }
+  }, [state?.turn]);
+
+  // 30s to move — else the turn passes to the opponent.
+  useEffect(() => {
+    if (!state || !myColor || state.status !== 'playing' || state.turn !== myColor) return;
+    const t = setTimeout(() => {
+      const other: PieceColor = myColor === 'b' ? 'r' : 'b';
+      const s: RoomState = { ...state, turn: other };
+      setState(s); persist(s);
+    }, 30000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.turn, state?.status, myColor, turnKey]);
+
   const onMove = (move: Move) => {
     if (!state || !myColor || state.status !== 'playing' || state.turn !== myColor) return;
     const next = applyMove(state.board, move);
@@ -388,6 +432,7 @@ function OnlineDraughts({ roomCode }: { roomCode: string }) {
     <Shell
       me={me} opp={opp} myScore={myScore} oppScore={oppScore}
       board={state?.board ?? null} myColor={myColor} myTurn={!!state && state.status === 'playing' && state.turn === myColor} onMove={onMove}
+      activeSide={state && state.status === 'playing' ? (state.turn === myColor ? 'me' : 'opp') : null} turnKey={turnKey}
       result={result} onRematch={() => router.replace('/home')} showRematch={false}
     />
   );
@@ -403,6 +448,8 @@ const styles = StyleSheet.create({
   scoreboard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: space.sm, marginBottom: space.md },
   player: { width: 96, gap: 6 },
   pName: { fontFamily: font.bold, fontSize: 13, color: colors.text },
+  barTrack: { width: '100%', height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden' },
+  bar: { height: 4, borderRadius: 2, backgroundColor: ACCENT },
   scoreCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   score: { fontFamily: font.display, fontSize: 30, color: colors.white },
   vs: { fontFamily: font.extrabold, fontSize: 13, color: ACCENT, letterSpacing: 1 },
