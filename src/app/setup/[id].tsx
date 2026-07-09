@@ -9,6 +9,7 @@ import { createBotRoom, enqueueOrMatchRoom } from '../../lib/useNumberDuel';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
+import { JoinModal } from '../../components/JoinModal';
 
 const GAME_RULES: Record<string, { title: string; desc: string }> = {
   'number-duel': {
@@ -29,6 +30,7 @@ export default function GameSetup() {
   const router = useRouter();
 
   const [creating, setCreating] = useState(false);
+  const [joinVisible, setJoinVisible] = useState(false);
   const [anyoneCanJoin, setAnyoneCanJoin] = useState(false);
   const [screen, setScreen] = useState<'rules' | 'searching'>('rules');
   const [secondsLeft, setSecondsLeft] = useState(SEARCH_SECONDS);
@@ -210,8 +212,9 @@ export default function GameSetup() {
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
+      <JoinModal visible={joinVisible} onClose={() => setJoinVisible(false)} />
       <SafeAreaView style={styles.safe}>
-        
+
         {/* Header */}
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} style={styles.backBtn}>
@@ -338,6 +341,14 @@ export default function GameSetup() {
               <Text style={styles.outlineBtnText}>Practice vs Bot</Text>
             </Pressable>
           )}
+
+          <Pressable
+            style={({ pressed }) => [styles.outlineBtn, creating && styles.ctaDisabled, pressed && styles.pressed]}
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setJoinVisible(true); }}
+            disabled={creating}
+          >
+            <Text style={styles.outlineBtnText}>Join with a code</Text>
+          </Pressable>
         </View>
 
       </SafeAreaView>
