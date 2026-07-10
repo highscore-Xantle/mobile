@@ -43,7 +43,7 @@ export const GAMES = [
     theme: ['#489AE7', '#3B6DCF'] as [string, string],   // right-band gradient
     accent: '#3B9DE7',                                    // pill / active-icon color
     emoji: '🔢',
-    image: require('../../../assets/games-icon/number-duel.jpeg') as number | null,
+    image: require('../../../assets/games-icon/number-duel.png') as number | null,
     available: true,
     route: null as string | null,
     hasViewer: true,

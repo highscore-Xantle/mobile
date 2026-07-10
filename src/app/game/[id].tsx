@@ -11,15 +11,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import * as Linking from 'expo-linking';
 import QRCode from 'react-native-qrcode-svg';
 import Animated, { BounceIn } from 'react-native-reanimated';
 import { supabase } from '../../lib/supabase';
+import { Avatar } from '../../components/ui/Avatar';
 import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
 import { computeBotSolveDelayMs, getRecentWinRate } from '../../lib/botOpponent';
+import { playSound } from '../../lib/sounds';
 import {
   DEFAULT_PUZZLE_IMAGE,
   autoAdvanceRound,
@@ -51,16 +55,28 @@ export default function GameScreen() {
   const { isOnline } = usePresence();
   const isHost = game?.host_id === myId;
   const botPlayer = players.find((p) => p.is_bot) ?? null;
+  const overallWinner = game?.winner_is_bot
+    ? botPlayer
+    : game?.winner_player
+      ? players.find(p => p.user_id === game.winner_player)
+      : null;
+  const iWon = !!overallWinner && overallWinner.user_id === myId;
 
   // Track whether this client has submitted a solve for the current round.
   const [mySolved, setMySolved] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [winRate, setWinRate] = useState(0);
   const [shareState, setShareState] = useState<'idle' | 'busy' | 'done'>('idle');
+  const [copied, setCopied] = useState(false);
   const botTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset solved flag when a new round starts.
   useEffect(() => { setMySolved(false); }, [round?.round_no]);
+
+  // Match-over win sound — fires once when the finished screen is reached as the winner.
+  useEffect(() => {
+    if (game?.status === 'finished' && iWon) playSound('win');
+  }, [game?.status, iWon]);
 
   // Auto-join: landing here via a QR scan / deep link seats the scanner as a
   // player instead of leaving them as a bystander.
@@ -163,6 +179,14 @@ export default function GameScreen() {
     });
   }
 
+  async function handleCopy() {
+    if (!game) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    await Clipboard.setStringAsync(game.invite_code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   async function handleShareToHome() {
     if (!game || shareState !== 'idle') return;
     setShareState('busy');
@@ -236,12 +260,20 @@ export default function GameScreen() {
                 />
               </View>
               <Text style={styles.qrHint}>Scan to join</Text>
-              <Pressable
-                style={({ pressed }) => [styles.shareBtn, pressed && styles.pressed]}
-                onPress={shareCode}
-              >
-                <Text style={styles.shareBtnText}>Share invite</Text>
-              </Pressable>
+              <View style={styles.codeActionsRow}>
+                <Pressable
+                  style={({ pressed }) => [styles.shareBtn, pressed && styles.pressed]}
+                  onPress={handleCopy}
+                >
+                  <Text style={styles.shareBtnText}>{copied ? 'Copied!' : 'Copy Code'}</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.shareBtn, pressed && styles.pressed]}
+                  onPress={shareCode}
+                >
+                  <Text style={styles.shareBtnText}>Share invite</Text>
+                </Pressable>
+              </View>
             </View>
 
             <Text style={[themeText.label, { marginBottom: space.sm }]}>
@@ -364,12 +396,6 @@ export default function GameScreen() {
 
   // ── Finished ────────────────────────────────────────────────
 
-  const overallWinner = game.winner_is_bot
-    ? botPlayer
-    : game.winner_player
-      ? players.find(p => p.user_id === game.winner_player)
-      : null;
-  const iWon = !!overallWinner && overallWinner.user_id === myId;
   const hasBot = !!botPlayer;
 
   return (
@@ -482,10 +508,8 @@ function PlayerRow({
   const isLast = rank === undefined;
   return (
     <View style={[styles.playerRow, isLast && styles.playerRowLast]}>
-      <View style={[styles.playerAvatar, isMe && styles.playerAvatarMe]}>
-        <Text style={styles.playerAvatarLetter}>
-          {playerLabel(player).charAt(0).toUpperCase()}
-        </Text>
+      <View style={styles.playerAvatarWrap}>
+        <Avatar letter={playerLabel(player).charAt(0)} imageUrl={player.profile?.avatar_url ?? null} size={36} />
         {showPresence && !player.is_bot && (
           <View style={[styles.presenceDot, { backgroundColor: online ? colors.success : colors.textFaint }]} />
         )}
@@ -549,8 +573,12 @@ const styles = StyleSheet.create({
     color: colors.blue,
     letterSpacing: 6,
   },
-  shareBtn: {
+  codeActionsRow: {
+    flexDirection: 'row',
+    gap: space.sm,
     marginTop: space.xs,
+  },
+  shareBtn: {
     paddingHorizontal: space.lg,
     paddingVertical: space.sm,
     borderRadius: radius.pill,
@@ -578,15 +606,7 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   playerRowLast: { borderBottomWidth: 0 },
-  playerAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.surfaceAlt,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  playerAvatarMe: { backgroundColor: colors.blue },
+  playerAvatarWrap: { width: 36, height: 36 },
   presenceDot: {
     position: 'absolute',
     bottom: -1,
@@ -597,7 +617,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.bg,
   },
-  playerAvatarLetter: { fontFamily: font.extrabold, fontSize: 16, color: colors.white },
   playerName: { fontFamily: font.bold, fontSize: 15, color: colors.text },
   playerBadge: { fontFamily: font.extrabold, fontSize: 10, color: colors.textFaint, letterSpacing: 0.5 },
   playerScore: { fontFamily: font.extrabold, fontSize: 16, color: colors.text },

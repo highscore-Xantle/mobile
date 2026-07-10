@@ -12,6 +12,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
+import { playSound } from '../../lib/sounds';
 import { useSession } from '../../lib/useSession';
 import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
@@ -284,6 +285,12 @@ export default function NumberDuel() {
     return () => { if (botSolveTimerRef.current) clearTimeout(botSolveTimerRef.current); };
   }, [isBot, gs.phase, allowDecimal, isHard, isHost, roomId, gameRules]);
 
+  // Match-over win sound — fires once regardless of which path (broadcast or
+  // local host transition) reached game_over as the winner.
+  useEffect(() => {
+    if (gs.phase === 'game_over' && gs.winner === 'me') playSound('win');
+  }, [gs.phase, gs.winner]);
+
   // ── Drama Phase Timer ────────────────────────────────────────────────────
   useEffect(() => {
     if (gs.phase === 'drama') {
@@ -375,6 +382,7 @@ export default function NumberDuel() {
       Haptics.impactAsync(hint === 'correct' ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light);
       if (hint !== 'correct') shake();
       updateBgFeedback(hint);
+      playSound(hint === 'correct' ? 'correct' : 'wrong');
 
       setGs(prev => {
         const newMiss = prev.closestMiss === null ? payload.dist : Math.min(prev.closestMiss, payload.dist);
@@ -483,6 +491,7 @@ export default function NumberDuel() {
   const handleLockSecret = () => {
     if (!inputValue) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    playSound('click');
     const secret = parseFloat(inputValue);
     setGs(prev => ({
       ...prev,
@@ -525,6 +534,7 @@ export default function NumberDuel() {
         Haptics.impactAsync(hint === 'correct' ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light);
         if (hint !== 'correct') shake();
         updateBgFeedback(hint);
+        playSound(hint === 'correct' ? 'correct' : 'wrong');
         if (hint === 'correct' && botSolveTimerRef.current) {
           clearTimeout(botSolveTimerRef.current);
           botSolveTimerRef.current = null;

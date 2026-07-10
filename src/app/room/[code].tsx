@@ -8,8 +8,10 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Tex
 import QRCode from 'react-native-qrcode-svg';
 import Animated, { Easing, FadeInDown, interpolate, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Avatar } from '../../components/ui/Avatar';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
+import { playSound } from '../../lib/sounds';
 import { supabase } from '../../lib/supabase';
 import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
@@ -126,7 +128,7 @@ export default function RoomLobby() {
   const fetchPlayers = async (roomId: string) => {
     const { data } = await supabase
       .from('room_players')
-      .select('*, profiles(username)')
+      .select('*, profiles(username, avatar_url)')
       .eq('room_id', roomId)
       .order('joined_at', { ascending: true });
 
@@ -136,6 +138,7 @@ export default function RoomLobby() {
   const handleStartGame = async () => {
     if (!room || !canStart) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    playSound('click');
 
     const { error } = await supabase.rpc('start_room', { p_room: room.id });
     if (error) {
@@ -148,6 +151,7 @@ export default function RoomLobby() {
 
   const handleToggleFlip = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    playSound('click');
     const nextState = !isFlipped;
     setIsFlipped(nextState);
     flipAnim.value = withTiming(nextState ? 1 : 0, { duration: 400 });
@@ -156,6 +160,7 @@ export default function RoomLobby() {
   // ── Copy: uses expo-clipboard (works on both iOS & Android) ───────────────
   const handleCopy = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    playSound('click');
     await Clipboard.setStringAsync(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -164,6 +169,7 @@ export default function RoomLobby() {
   // ── Share: deep link + friendly message, opens native share sheet ─────────
   const handleShare = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    playSound('click');
     // Generates xantle://room/<code> on native, https://... in Expo Go tunnel
     const deepLink = Linking.createURL(`/room/${code}`);
     try {
@@ -304,8 +310,8 @@ export default function RoomLobby() {
                   entering={FadeInDown.springify().damping(14).stiffness(90).delay(i * 100)}
                   style={[styles.playerRow, isMe && styles.playerRowMe]}
                 >
-                  <View style={styles.playerAvatar}>
-                    <Text style={styles.playerAvatarLetter}>{displayName[0].toUpperCase()}</Text>
+                  <View style={styles.playerAvatarWrap}>
+                    <Avatar letter={displayName.charAt(0)} imageUrl={p.profiles?.avatar_url ?? null} size={36} />
                     {!!p.user_id && (
                       <View style={[styles.presenceDot, { backgroundColor: online ? colors.success : colors.textFaint }]} />
                     )}
@@ -388,12 +394,11 @@ const styles = StyleSheet.create({
     padding: space.md, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline, gap: space.md,
   },
   playerRowMe: { borderColor: colors.blue, backgroundColor: 'rgba(46,126,240,0.05)' },
-  playerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center' },
+  playerAvatarWrap: { width: 36, height: 36 },
   presenceDot: {
     position: 'absolute', bottom: -1, right: -1, width: 11, height: 11,
     borderRadius: 6, borderWidth: 2, borderColor: colors.bg,
   },
-  playerAvatarLetter: { fontFamily: font.bold, fontSize: 16, color: colors.textMuted },
   playerName: { flex: 1, fontFamily: font.semibold, fontSize: 15, color: colors.text },
   hostBadge: { fontFamily: font.bold, fontSize: 10, color: colors.blue, letterSpacing: 1, backgroundColor: 'rgba(46,126,240,0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
 

@@ -29,7 +29,7 @@ export type GamePlayer = {
   score: number;
   trophies: number;
   joined_at: string;
-  profile: { username: string | null } | null;
+  profile: { username: string | null; avatar_url: string | null } | null;
 };
 
 export type GameRound = {
@@ -95,7 +95,7 @@ export function useGame(code: string | undefined) {
   const fetchPlayers = useCallback(async (gameId: string) => {
     const { data } = await supabase
       .from('game_players')
-      .select('*, profile:user_id(username)')
+      .select('*, profile:user_id(username, avatar_url)')
       .eq('game_id', gameId)
       .order('joined_at', { ascending: true });
     setPlayers((data ?? []) as GamePlayer[]);

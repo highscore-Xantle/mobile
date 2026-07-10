@@ -4,9 +4,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
+import { playSound } from '../../lib/sounds';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
+import { JoinModal } from '../../components/JoinModal';
 
 const GAME_RULES: Record<string, { title: string; desc: string }> = {
   'number-duel': {
@@ -24,6 +26,7 @@ export default function GameSetup() {
   const router = useRouter();
 
   const [creating, setCreating] = useState(false);
+  const [joinVisible, setJoinVisible] = useState(false);
   const [settings, setSettings] = useState({
     rounds: 12,
     difficulty: 'auto', // 'auto', 'easy', 'hardcore'
@@ -36,6 +39,7 @@ export default function GameSetup() {
     if (creating) return;
     setCreating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    playSound('click');
 
     // Call create_room with the specific settings baked into the room state!
     const { data: room, error } = await supabase.rpc('create_room', {
@@ -57,6 +61,7 @@ export default function GameSetup() {
   const handlePlayBot = async () => {
     if (creating) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    playSound('click');
 
     // Draughts' bot is a local, single-device match (no room).
     if (id === 'draughts') {
@@ -78,14 +83,16 @@ export default function GameSetup() {
 
   const updateSetting = (key: keyof typeof settings, value: string | number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    playSound('click');
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
 
   return (
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
+      <JoinModal visible={joinVisible} onClose={() => setJoinVisible(false)} />
       <SafeAreaView style={styles.safe}>
-        
+
         {/* Header */}
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} style={styles.backBtn}>
@@ -190,6 +197,14 @@ export default function GameSetup() {
               <Text style={styles.outlineBtnText}>Practice vs Bot</Text>
             </Pressable>
           )}
+
+          <Pressable
+            style={({ pressed }) => [styles.outlineBtn, creating && styles.ctaDisabled, pressed && styles.pressed]}
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); playSound('click'); setJoinVisible(true); }}
+            disabled={creating}
+          >
+            <Text style={styles.outlineBtnText}>Join with a code</Text>
+          </Pressable>
         </View>
 
       </SafeAreaView>
