@@ -1,0 +1,23 @@
+# Netlify config for the Xantle web build.
+#
+# Expo Router exports a single-page app (app.json → expo.web.output = "single"),
+# so every route is served by the one index.html and the router takes over on
+# the client.
+#
+# NOTE: the EXPO_PUBLIC_* vars are inlined into the JS bundle at BUILD time, so
+# they must be set in Netlify (Site settings → Environment variables), not just
+# in the local .env. They are all public keys (Supabase anon, Cloudinary cloud
+# name + unsigned preset, Google web client ID) — no secrets belong here.
+
+[build]
+  command = "npx expo export --platform web"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA fallback — any path that isn't a real file boots index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

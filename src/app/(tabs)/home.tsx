@@ -7,8 +7,8 @@
  * react-native-svg; the active card lifts + scales while neighbours recede
  * (scale/fade), driven by scroll position for a smooth, finger-tracked feel.
  */
-import { useEffect, useState } from 'react';
-import { Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Dimensions, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -146,6 +146,41 @@ export default function Home() {
   const scrollX = useSharedValue(0);
   const activeIdx = useSharedValue(0);
 
+  // Web: a horizontal ScrollView is just an overflow-x div, and browsers don't
+  // drag-scroll one with a mouse — so the carousel felt frozen on desktop. Map
+  // the vertical wheel onto horizontal scroll and add click-drag panning. Both
+  // still fire native scroll events, so the accent theming keeps working.
+  const scrollRef = useRef<any>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const node: any = scrollRef.current?.getScrollableNode?.();
+    if (!node) return;
+
+    const onWheel = (e: any) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // let real h-scroll through
+      node.scrollLeft += e.deltaY;
+      e.preventDefault();
+    };
+
+    let dragging = false;
+    let startX = 0;
+    let startLeft = 0;
+    const onDown = (e: any) => { dragging = true; startX = e.pageX; startLeft = node.scrollLeft; };
+    const onMove = (e: any) => { if (dragging) node.scrollLeft = startLeft - (e.pageX - startX); };
+    const onUp = () => { dragging = false; };
+
+    node.addEventListener('wheel', onWheel, { passive: false });
+    node.addEventListener('mousedown', onDown);
+    globalThis.addEventListener?.('mousemove', onMove);
+    globalThis.addEventListener?.('mouseup', onUp);
+    return () => {
+      node.removeEventListener('wheel', onWheel);
+      node.removeEventListener('mousedown', onDown);
+      globalThis.removeEventListener?.('mousemove', onMove);
+      globalThis.removeEventListener?.('mouseup', onUp);
+    };
+  }, []);
+
   // Re-theme the app to the focused game (right band, chips, nav pill).
   const applyAccent = (i: number) => {
     const g = GAMES[i];
@@ -214,6 +249,7 @@ export default function Home() {
         <View style={{ flex: 1 }} />
 
         <Animated.ScrollView
+          ref={scrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
           snapToInterval={ITEM}

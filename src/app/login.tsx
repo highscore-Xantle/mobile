@@ -240,13 +240,17 @@ export default function Login() {
             />
           )}
 
-          {/* Google — native sign-in verified through our Edge Function */}
-          <SocialButton
-            icon={<FontAwesome name="google" size={20} color={colors.text} />}
-            chipBg={colors.surfaceAlt}
-            label="Continue with Google"
-            onPress={signInWithGoogle_}
-          />
+          {/* Google — native sign-in verified through our Edge Function.
+              @react-native-google-signin has no web implementation, so on web
+              we hide it and users sign in with the email code below. */}
+          {Platform.OS !== 'web' && (
+            <SocialButton
+              icon={<FontAwesome name="google" size={20} color={colors.text} />}
+              chipBg={colors.surfaceAlt}
+              label="Continue with Google"
+              onPress={signInWithGoogle_}
+            />
+          )}
 
           {/* Divider */}
           <View style={styles.divider}>
