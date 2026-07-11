@@ -4,7 +4,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
-import { playSound } from '../../lib/sounds';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
@@ -39,7 +38,6 @@ export default function GameSetup() {
     if (creating) return;
     setCreating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    playSound('click');
 
     // Call create_room with the specific settings baked into the room state!
     const { data: room, error } = await supabase.rpc('create_room', {
@@ -61,7 +59,6 @@ export default function GameSetup() {
   const handlePlayBot = async () => {
     if (creating) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    playSound('click');
 
     // Draughts' bot is a local, single-device match (no room).
     if (id === 'draughts') {
@@ -83,7 +80,6 @@ export default function GameSetup() {
 
   const updateSetting = (key: keyof typeof settings, value: string | number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    playSound('click');
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -200,7 +196,7 @@ export default function GameSetup() {
 
           <Pressable
             style={({ pressed }) => [styles.outlineBtn, creating && styles.ctaDisabled, pressed && styles.pressed]}
-            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); playSound('click'); setJoinVisible(true); }}
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setJoinVisible(true); }}
             disabled={creating}
           >
             <Text style={styles.outlineBtnText}>Join with a code</Text>

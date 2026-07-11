@@ -11,7 +11,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '../../components/ui/Avatar';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
-import { playSound } from '../../lib/sounds';
 import { supabase } from '../../lib/supabase';
 import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
@@ -138,7 +137,6 @@ export default function RoomLobby() {
   const handleStartGame = async () => {
     if (!room || !canStart) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    playSound('click');
 
     const { error } = await supabase.rpc('start_room', { p_room: room.id });
     if (error) {
@@ -151,7 +149,6 @@ export default function RoomLobby() {
 
   const handleToggleFlip = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    playSound('click');
     const nextState = !isFlipped;
     setIsFlipped(nextState);
     flipAnim.value = withTiming(nextState ? 1 : 0, { duration: 400 });
@@ -160,7 +157,6 @@ export default function RoomLobby() {
   // ── Copy: uses expo-clipboard (works on both iOS & Android) ───────────────
   const handleCopy = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    playSound('click');
     await Clipboard.setStringAsync(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -169,7 +165,6 @@ export default function RoomLobby() {
   // ── Share: deep link + friendly message, opens native share sheet ─────────
   const handleShare = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    playSound('click');
     // Generates xantle://room/<code> on native, https://... in Expo Go tunnel
     const deepLink = Linking.createURL(`/room/${code}`);
     try {
