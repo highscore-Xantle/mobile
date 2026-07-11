@@ -39,9 +39,9 @@ export const GAMES = [
     tag: 'MIND GAME',
     tagline: 'Pick a secret. Race to guess.',
     gradient: ['#3B9DE7', '#4967E0'] as [string, string],
-    cardBg: ['#2F3745', '#20262E'] as string[],
-    theme: ['#489AE7', '#3B6DCF'] as [string, string],   // right-band gradient
-    accent: '#3B9DE7',                                    // pill / active-icon color
+    cardBg: ['#26314A', '#161B2E'] as string[],           // deep indigo-navy
+    theme: ['#4F7FE0', '#3546A8'] as [string, string],    // indigo-blue right-band gradient
+    accent: '#4967E0',                                    // royal indigo pill / active-icon color
     emoji: '🔢',
     image: require('../../../assets/games-icon/number-duel.png') as number | null,
     available: true,
@@ -54,9 +54,9 @@ export const GAMES = [
     tag: '1v1 ARCADE',
     tagline: 'Fast. Frantic. Pixel-perfect.',
     gradient: gradients.button as [string, string],
-    cardBg: ['#2F3745', '#20262E'] as string[],
-    theme: ['#489AE7', '#3B6DCF'] as [string, string],
-    accent: '#3B9DE7',
+    cardBg: ['#123542', '#0A1E26'] as string[],           // dark teal-navy, arcade energy
+    theme: ['#22D3EE', '#0891B2'] as [string, string],    // electric cyan -> teal right-band
+    accent: '#22D3EE',
     emoji: '🎮',
     image: null as number | null,
     available: true,
@@ -75,7 +75,7 @@ export const GAMES = [
     emoji: '⚫',
     image: require('../../../assets/games-icon/drought.png') as number | null,
     available: true,
-    route: null as string | null,   // → /setup/draughts (online or vs bot)
+    route: null as string | null,   // no dedicated screen — details handles every mode
     hasViewer: false,
   },
   {
@@ -84,9 +84,9 @@ export const GAMES = [
     tag: 'STRATEGY',
     tagline: 'Who among you is the spy?',
     gradient: gradients.featured as [string, string],
-    cardBg: ['#2F3745', '#20262E'] as string[],
-    theme: ['#489AE7', '#3B6DCF'] as [string, string],
-    accent: '#3B9DE7',
+    cardBg: ['#2E2140', '#1A1225'] as string[],           // dark plum, mystery/noir tone
+    theme: ['#A78BFA', '#6D28D9'] as [string, string],    // violet right-band gradient
+    accent: '#8B5CF6',
     emoji: '🕵️',
     image: null as number | null,
     available: false,
@@ -248,15 +248,13 @@ export default function GamesTab() {
   }, [fetchLiveRooms]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
+  // Every game opens the same product-detail screen (the Draughts pattern):
+  // hero + description + the 4 selectable play modes. Same flow as the Home tab.
   const handleGamePress = async (game: typeof GAMES[number]) => {
     if (!game.available) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     await new Promise(resolve => setTimeout(resolve, 150));
-    if (game.route) {
-      router.push(game.route as Parameters<typeof router.push>[0]);
-    } else {
-      router.push(`/setup/${game.id}` as any);
-    }
+    router.push(`/details/${game.id}` as any);
   };
 
   const handleLiveBadgePress = (game: typeof GAMES[number]) => {

@@ -16,7 +16,7 @@ const GAME_RULES: Record<string, { title: string; desc: string }> = {
   },
   'draughts': {
     title: 'Draughts',
-    desc: 'Classic checkers, one on one. Forced captures, multi-jump chains, and flying kings. Create a room to play a friend, or practice against the bot.',
+    desc: 'Classic checkers, one on one. Forced captures, multi-jump chains, and flying kings. Create a room to play a friend.',
   },
 };
 
@@ -54,28 +54,6 @@ export default function GameSetup() {
     }
 
     router.replace(`/room/${room.code}`);
-  };
-
-  const handlePlayBot = async () => {
-    if (creating) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-
-    // Draughts' bot is a local, single-device match (no room).
-    if (id === 'draughts') {
-      router.push('/game/draughts');
-      return;
-    }
-
-    setCreating(true);
-    const { data: room, error } = await supabase.rpc('create_bot_room', { p_state: settings });
-
-    if (error) {
-      Alert.alert('Error starting match', error.message);
-      setCreating(false);
-      return;
-    }
-
-    router.replace({ pathname: '/game/[id]', params: { id: room.game_kind, roomCode: room.code } });
   };
 
   const updateSetting = (key: keyof typeof settings, value: string | number) => {
@@ -183,16 +161,6 @@ export default function GameSetup() {
               <Text style={styles.ctaText}>Create Room & Invite →</Text>
             )}
           </Pressable>
-
-          {(id === 'number-duel' || id === 'draughts') && (
-            <Pressable
-              style={({ pressed }) => [styles.outlineBtn, creating && styles.ctaDisabled, pressed && styles.pressed]}
-              onPress={handlePlayBot}
-              disabled={creating}
-            >
-              <Text style={styles.outlineBtnText}>Practice vs Bot</Text>
-            </Pressable>
-          )}
 
           <Pressable
             style={({ pressed }) => [styles.outlineBtn, creating && styles.ctaDisabled, pressed && styles.pressed]}

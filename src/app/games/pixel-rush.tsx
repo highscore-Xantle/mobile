@@ -12,23 +12,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
-import PixelBoard from '../../components/PixelBoard';
 import { goBackOr } from '../../lib/navigation';
 import {
-  PUZZLE_IMAGES,
   createBotMatch,
   createPixelRushGame,
   enqueueOrMatch,
-  gridForRound,
   joinGame,
   leaveQueue,
 } from '../../lib/usePixelGame';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
-type Screen = 'menu' | 'solo' | 'mode' | 'group-size' | 'onevone' | 'searching';
+type Screen = 'menu' | 'mode' | 'group-size' | 'onevone' | 'searching';
 
 const SEARCH_SECONDS = 30;
 const MIN_GROUP = 3;
@@ -48,31 +44,10 @@ export default function PixelRushScreen() {
 
   const searchTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cancelledRef = useRef(false);
-
-  // Solo puzzle state — grid scales up each consecutive round, same progression as multiplayer.
-  const [soloSeed, setSoloSeed] = useState(0);
-  const [soloImage, setSoloImage] = useState(PUZZLE_IMAGES[0]);
-  const [soloRound, setSoloRound] = useState(1);
-  const [soloStartedAt, setSoloStartedAt] = useState(0);
-  const [soloResult, setSoloResult] = useState<number | null>(null);
-
-  function newSoloPuzzle() {
-    setSoloSeed((Math.random() * 0x7fffffff) | 0);
-    setSoloImage(PUZZLE_IMAGES[Math.floor(Math.random() * PUZZLE_IMAGES.length)]);
-    setSoloStartedAt(Date.now());
-    setSoloResult(null);
-  }
-
-  function startSolo() {
-    setSoloRound(1);
-    newSoloPuzzle();
-    setScreen('solo');
-  }
-
-  function nextSoloPuzzle() {
-    setSoloRound((r) => r + 1);
-    newSoloPuzzle();
-  }
+  // Set the instant either a real match or a bot match wins the race to
+  // navigate, so the other path (which may already be mid-flight) doesn't
+  // also push a second, different game once its own await resolves.
+  const matchedRef = useRef(false);
 
   function stopSearching() {
     if (searchTimerRef.current) { clearInterval(searchTimerRef.current); searchTimerRef.current = null; }
@@ -115,11 +90,12 @@ export default function PixelRushScreen() {
   // on their first call, so whoever polls next is what actually pairs them.
   // The RPC is idempotent for an already-matched caller, so repeat calls are safe.
   async function pollForMatch() {
-    if (cancelledRef.current) return;
+    if (cancelledRef.current || matchedRef.current) return;
     try {
       const game = await enqueueOrMatch('pixel_rush');
-      if (cancelledRef.current) return;
+      if (cancelledRef.current || matchedRef.current) return;
       if (game) {
+        matchedRef.current = true;
         stopSearching();
         router.push(`/game/${game.invite_code}`);
       }
@@ -134,10 +110,12 @@ export default function PixelRushScreen() {
     setBusy(true);
     setErr('');
     cancelledRef.current = false;
+    matchedRef.current = false;
     try {
       const game = await enqueueOrMatch('pixel_rush');
       if (cancelledRef.current) return;
       if (game) {
+        matchedRef.current = true;
         router.push(`/game/${game.invite_code}`);
         return;
       }
@@ -147,16 +125,20 @@ export default function PixelRushScreen() {
       setBusy(false);
 
       let tick = 0;
+      let remaining = SEARCH_SECONDS;
       searchTimerRef.current = setInterval(() => {
         tick += 1;
         if (tick % 3 === 0) pollForMatch();
-        setSecondsLeft((s) => {
-          if (s <= 1) {
-            handleSearchTimeout();
-            return 0;
-          }
-          return s - 1;
-        });
+        remaining -= 1;
+        setSecondsLeft(Math.max(0, remaining));
+        if (remaining <= 0) {
+          // Stop the interval synchronously, before any `await` below — otherwise
+          // it keeps ticking every second while handleSearchTimeout is still
+          // awaiting leaveQueue/createBotMatch, re-firing the timeout repeatedly
+          // and creating multiple bot matches + concurrent router.push calls.
+          stopSearching();
+          handleSearchTimeout();
+        }
       }, 1000);
     } catch (e) {
       setBusy(false);
@@ -167,9 +149,13 @@ export default function PixelRushScreen() {
 
   async function handleSearchTimeout() {
     stopSearching();
+    if (matchedRef.current) return; // a poll already paired us with a real opponent
     try {
       await leaveQueue('pixel_rush');
+      if (matchedRef.current) return;
       const game = await createBotMatch('pixel_rush');
+      if (matchedRef.current) return; // lost the race after all — the bot game is just abandoned
+      matchedRef.current = true;
       router.push(`/game/${game.invite_code}`);
     } catch (e) {
       setErr((e as Error).message);
@@ -197,67 +183,6 @@ export default function PixelRushScreen() {
     } finally {
       setBusy(false);
     }
-  }
-
-  // ── Solo ──────────────────────────────────────────────────────
-
-  if (screen === 'solo') {
-    return (
-      <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
-        <Confetti active={soloResult !== null} />
-        <SafeAreaView style={styles.safe}>
-          <View style={styles.topBar}>
-            <Pressable
-              style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-              onPress={() => setScreen('menu')}
-            >
-              <Text style={styles.backGlyph}>‹</Text>
-            </Pressable>
-            <View style={{ alignItems: 'center' }}>
-              <Text style={themeText.h2}>Solo Practice</Text>
-              <Text style={styles.soloGridHint}>Round {soloRound} · Grid {gridForRound(soloRound)}×{gridForRound(soloRound)}</Text>
-            </View>
-            <HeaderAvatar />
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.soloContent}>
-            <PixelBoard
-              image={soloImage}
-              seed={soloSeed}
-              grid={gridForRound(soloRound)}
-              startedAt={soloStartedAt}
-              locked={soloResult !== null}
-              onSolve={(ms) => setSoloResult(ms)}
-            />
-
-            {soloResult !== null && (
-              <View style={styles.resultCard}>
-                <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
-                <Text style={styles.resultLabel}>
-                  Finished in {(soloResult / 1000).toFixed(1)}s
-                </Text>
-                <View style={styles.resultActions}>
-                  <Pressable
-                    style={({ pressed }) => [styles.outlineBtn, pressed && styles.pressed]}
-                    onPress={() => setScreen('menu')}
-                  >
-                    <Text style={styles.outlineBtnText}>Menu</Text>
-                  </Pressable>
-                  <Pressable
-                    style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
-                    onPress={nextSoloPuzzle}
-                  >
-                    <GradientFill colors={gradients.button} />
-                    <Text style={styles.primaryBtnText}>Play again</Text>
-                  </Pressable>
-                </View>
-              </View>
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </View>
-    );
   }
 
   // ── Mode choice: Group vs 1v1 ──────────────────────────────────
@@ -483,21 +408,6 @@ export default function PixelRushScreen() {
             ))}
           </View>
 
-          <Text style={[themeText.label, styles.sectionLabel]}>SOLO</Text>
-          <Pressable
-            style={({ pressed }) => [styles.modeCard, pressed && styles.pressed]}
-            onPress={startSolo}
-          >
-            <GradientFill colors={[colors.surface, colors.surfaceAlt]} />
-            <View style={styles.modeCardInner}>
-              <View style={styles.modeText}>
-                <Text style={styles.modeTitle}>Solo practice</Text>
-                <Text style={styles.modeSub}>Beat the clock on your own. No invite needed.</Text>
-              </View>
-              <Text style={styles.modeChevron}>›</Text>
-            </View>
-          </Pressable>
-
           <Text style={[themeText.label, styles.sectionLabel]}>MULTIPLAYER</Text>
           <Pressable
             style={({ pressed }) => [styles.modeCard, styles.modeCardBlue, pressed && styles.pressed]}
@@ -574,19 +484,6 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.85, transform: [{ scale: 0.97 }] },
   center: { alignItems: 'center', justifyContent: 'center' },
 
-  // ── Solo layout
-  soloGridHint: { fontFamily: font.semibold, fontSize: 12, color: colors.textFaint, marginTop: 2 },
-  soloContent: { paddingBottom: space.xl, gap: space.lg, alignItems: 'center' },
-  resultCard: {
-    alignSelf: 'stretch',
-    borderRadius: radius.xl,
-    overflow: 'hidden',
-    padding: space.lg,
-    gap: space.md,
-    ...shadow.card,
-  },
-  resultLabel: { fontFamily: font.extrabold, fontSize: 20, color: colors.text, textAlign: 'center' },
-  resultActions: { flexDirection: 'row', gap: space.md },
   outlineBtn: {
     flex: 1,
     borderRadius: radius.md,

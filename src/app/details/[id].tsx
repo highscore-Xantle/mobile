@@ -1,26 +1,32 @@
-// Game detail screen (product-page layout). Themed hero + title + description.
-// For Draughts the feature grid becomes 4 SELECTABLE play modes that drive the
-// bottom CTA (label + price). Other games keep a static feature grid.
+// Game detail screen (product-page layout). Themed hero + title + description,
+// plus 4 SELECTABLE play modes (per game) that drive the bottom CTA (label +
+// price) - the same interactive pattern for every playable game, not just
+// Draughts. Games without a MODES_BY_GAME entry (e.g. an unreleased game)
+// fall back to a static feature grid instead.
 //
-// Mode wiring (stage 1):
-//   online → create a room and wait in the lobby (10s matchmaking + smart-bot
-//            fallback is a stage-2 enhancement of the lobby)
-//   invite → create a room; share the code from the lobby (full invite modal
-//            with username search / friends list / QR is stage 2)
-//   group  → $2 premium (payment is stage 2)
-//   join   → CTA becomes "Join now" → enter-code modal → join_room
+// Mode wiring:
+//   online → whatever that game's own real entry point already does
+//            (its dedicated screen if it has one, else /setup/[id])
+//   invite → games on the generic `rooms` schema (Draughts, Number Duel)
+//            create a room here directly and jump to the lobby; games with
+//            their own dedicated screen (Pixel Rush) defer to it instead,
+//            since it already has a real invite flow built in
+//   group  → $2 premium, not wired up yet (payment is a later stage)
+//   join   → shared JoinModal (already tries join_game then join_room, so
+//            it works for every game's schema without branching here)
 import { useState } from 'react';
 import {
-  ActivityIndicator, Alert, Dimensions, Modal, Pressable, ScrollView,
-  StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, Dimensions, Pressable, ScrollView,
+  StyleSheet, Text, View,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
-import Animated, { FadeInDown, FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import { supabase } from '../../lib/supabase';
 import { GradientFill } from '../../components/GradientFill';
+import { JoinModal } from '../../components/JoinModal';
 import { GAMES } from '../(tabs)/games';
 import { colors, font, radius, shadow, space } from '../../theme';
 
@@ -29,26 +35,58 @@ type FAIcon = React.ComponentProps<typeof FontAwesome>['name'];
 const SCREEN_H = Dimensions.get('window').height;
 const HERO_H = Math.round(SCREEN_H * 0.46);
 
-const META: { label: string; value: string }[] = [
-  { label: 'TYPE', value: 'Board' },
-  { label: 'STYLE', value: 'Strategy' },
-  { label: 'PACE', value: 'Turn-based' },
-];
+const META_BY_GAME: Record<string, { label: string; value: string }[]> = {
+  draughts: [
+    { label: 'TYPE', value: 'Board' },
+    { label: 'STYLE', value: 'Strategy' },
+    { label: 'PACE', value: 'Turn-based' },
+  ],
+  'number-duel': [
+    { label: 'TYPE', value: 'Mind Game' },
+    { label: 'STYLE', value: 'Guess & Deduce' },
+    { label: 'PACE', value: 'Fast-paced' },
+  ],
+  'pixel-rush': [
+    { label: 'TYPE', value: 'Arcade' },
+    { label: 'STYLE', value: 'Speed Puzzle' },
+    { label: 'PACE', value: 'Real-time' },
+  ],
+  spy: [
+    { label: 'TYPE', value: 'Party' },
+    { label: 'STYLE', value: 'Social Deduction' },
+    { label: 'PACE', value: 'Group' },
+  ],
+};
 
 type Mode = 'online' | 'invite' | 'group' | 'join';
-const MODES: { key: Mode; icon: FAIcon; title: string; sub: string; cta: string; price: string }[] = [
-  { key: 'online', icon: 'globe',     title: 'Play Online',    sub: 'Match with anyone',    cta: 'Play',     price: 'Free' },
-  { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Play someone you know', cta: 'Invite',  price: 'Free' },
-  { key: 'group',  icon: 'users',     title: 'Group',          sub: 'Up to 8 players',      cta: 'Create',   price: '$2' },
-  { key: 'join',   icon: 'sign-in',   title: 'Join a Game',    sub: 'Enter an invite code', cta: 'Join now', price: 'Free' },
-];
+interface ModeDef { key: Mode; icon: FAIcon; title: string; sub: string; cta: string; price: string; }
 
-// Static features for non-Draughts games.
+const MODES_BY_GAME: Record<string, ModeDef[]> = {
+  draughts: [
+    { key: 'online', icon: 'globe',     title: 'Play Online',    sub: 'Match with anyone',     cta: 'Play',     price: 'Free' },
+    { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Play someone you know', cta: 'Invite',  price: 'Free' },
+    { key: 'group',  icon: 'users',     title: 'Group',          sub: 'Up to 8 players',       cta: 'Create',   price: '$2' },
+    { key: 'join',   icon: 'sign-in',   title: 'Join a Game',    sub: 'Enter an invite code',  cta: 'Join now', price: 'Free' },
+  ],
+  'number-duel': [
+    { key: 'online', icon: 'globe',     title: 'Play Online',    sub: 'Set the rules & match',  cta: 'Play',     price: 'Free' },
+    { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Play someone you know',  cta: 'Invite',  price: 'Free' },
+    { key: 'group',  icon: 'users',     title: 'Group',          sub: 'Up to 8 players',        cta: 'Create',   price: '$2' },
+    { key: 'join',   icon: 'sign-in',   title: 'Join a Game',    sub: 'Enter an invite code',   cta: 'Join now', price: 'Free' },
+  ],
+  'pixel-rush': [
+    { key: 'online', icon: 'globe',     title: 'Play Online',    sub: '1v1 or vs the machine',  cta: 'Play',     price: 'Free' },
+    { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Private 1v1 by code',    cta: 'Invite',  price: 'Free' },
+    { key: 'group',  icon: 'users',     title: 'Group',          sub: 'Up to 8 players',        cta: 'Create',   price: '$2' },
+    { key: 'join',   icon: 'sign-in',   title: 'Join a Game',    sub: 'Enter an invite code',   cta: 'Join now', price: 'Free' },
+  ],
+};
+
+// Static fallback for games with no MODES_BY_GAME entry (e.g. unreleased ones).
 const FEATURES: { icon: FAIcon; title: string; sub: string }[] = [
   { icon: 'bolt', title: 'Fast Rounds', sub: 'Quick to play' },
   { icon: 'star', title: 'Rankings', sub: 'Climb the board' },
   { icon: 'users', title: 'Multiplayer', sub: 'Play friends' },
-  { icon: 'android', title: 'Practice', sub: 'Solo vs bot' },
 ];
 
 export default function GameDetail() {
@@ -56,12 +94,11 @@ export default function GameDetail() {
   const router = useRouter();
   const game = GAMES.find((g) => g.id === id);
 
-  const isDraughts = id === 'draughts';
+  const modes = game ? MODES_BY_GAME[game.id] : undefined;
+  const meta = game ? (META_BY_GAME[game.id] ?? []) : [];
   const [mode, setMode] = useState<Mode>('online');
-  const [joinOpen, setJoinOpen] = useState(false);
-  const [code, setCode] = useState('');
+  const [joinVisible, setJoinVisible] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
 
   if (!game) {
     return (
@@ -71,18 +108,22 @@ export default function GameDetail() {
     );
   }
 
-  const selected = MODES.find((m) => m.key === mode)!;
+  const selected = modes?.find((m) => m.key === mode);
 
+  // The generic entry point every game already has: its own dedicated screen
+  // if it built one (Pixel Rush), else the shared /setup/[id] configure-and-play flow.
   const playSimple = () => {
     if (!game.available) return;
     if (game.route) router.push(game.route as Parameters<typeof router.push>[0]);
     else router.push(`/setup/${game.id}` as any);
   };
 
+  // rooms-schema games (Draughts, Number Duel) with no dedicated screen of
+  // their own: create a private room here directly and jump to its lobby.
   const createRoom = async () => {
-    setBusy(true); setErr('');
+    setBusy(true);
     const { data: room, error } = await supabase.rpc('create_room', {
-      p_game_kind: 'draughts', p_state: {}, p_is_group: false, p_max: 2,
+      p_game_kind: game.id, p_state: {}, p_is_group: false, p_max: 2,
     });
     setBusy(false);
     if (error || !room) { Alert.alert('Could not start', error?.message ?? 'Please try again.'); return; }
@@ -91,21 +132,21 @@ export default function GameDetail() {
 
   const handleCta = () => {
     if (busy) return;
-    if (mode === 'online') { router.push('/game/draughts?mp=online' as any); return; }  // matchmaking
-    if (mode === 'invite') { createRoom(); return; }                                    // → lobby to share the code
+    if (mode === 'online') {
+      // Draughts has no configurable rules, so its own screen goes straight
+      // into matchmaking. Other games defer to their real entry point instead
+      // (Number Duel's setup screen still has rules worth seeing first).
+      if (game.id === 'draughts') { router.push('/game/draughts?mp=online' as any); return; }
+      playSimple();
+      return;
+    }
+    if (mode === 'invite') {
+      if (game.route) { playSimple(); return; }  // has its own invite flow already
+      createRoom();
+      return;
+    }
     if (mode === 'group') { Alert.alert('Group play', 'Group games ($2) are coming soon.'); return; }
-    if (mode === 'join') { setErr(''); setCode(''); setJoinOpen(true); return; }
-  };
-
-  const doJoin = async () => {
-    const c = code.trim().toUpperCase();
-    if (c.length < 4) { setErr('Enter a valid invite code.'); return; }
-    setBusy(true); setErr('');
-    const { error } = await supabase.rpc('join_room', { p_code: c });
-    setBusy(false);
-    if (error) { setErr(error.message); return; }
-    setJoinOpen(false);
-    router.push(`/room/${c}` as any);
+    if (mode === 'join') { setJoinVisible(true); return; }
   };
 
   return (
@@ -126,7 +167,7 @@ export default function GameDetail() {
           </SafeAreaView>
 
           <Animated.View entering={FadeInDown.delay(120).springify().damping(16)} style={styles.meta}>
-            {META.map((m) => (
+            {meta.map((m) => (
               <View key={m.label} style={styles.metaRow}>
                 <Text style={styles.metaLabel}>{m.label}</Text>
                 <Text style={styles.metaValue}>{m.value}</Text>
@@ -148,11 +189,11 @@ export default function GameDetail() {
             {game.tagline} Placeholder description — replace with the real copy.
           </Animated.Text>
 
-          {isDraughts && <Text style={styles.sectionLabel}>HOW DO YOU WANT TO PLAY?</Text>}
+          {modes && <Text style={styles.sectionLabel}>HOW DO YOU WANT TO PLAY?</Text>}
 
           <View style={styles.grid}>
-            {isDraughts
-              ? MODES.map((m, i) => {
+            {modes
+              ? modes.map((m, i) => {
                   const on = m.key === mode;
                   return (
                     <Animated.View key={m.key} entering={FadeInDown.delay(280 + i * 60).springify().damping(15)} style={{ width: '47%', flexGrow: 1 }}>
@@ -191,22 +232,22 @@ export default function GameDetail() {
         </View>
       </ScrollView>
 
-      {/* Bottom bar — reflects the selected mode (Draughts) */}
+      {/* Bottom bar — reflects the selected mode */}
       <View style={styles.bottomBar}>
         <View>
-          <Text style={styles.priceLabel}>{isDraughts ? selected.title.toUpperCase() : 'PRICE'}</Text>
-          <Text style={styles.price}>{isDraughts ? selected.price : 'Free'}</Text>
+          <Text style={styles.priceLabel}>{selected ? selected.title.toUpperCase() : 'PRICE'}</Text>
+          <Text style={styles.price}>{selected ? selected.price : 'Free'}</Text>
         </View>
         <Pressable
           style={({ pressed }) => [styles.cta, !game.available && styles.ctaDisabled, pressed && styles.pressed]}
-          onPress={isDraughts ? handleCta : playSimple}
+          onPress={modes ? handleCta : playSimple}
           disabled={!game.available || busy}
         >
           <View style={styles.ctaInner}>
             <GradientFill colors={game.theme} />
             {busy ? <ActivityIndicator color={colors.white} /> : (
               <>
-                <Text style={styles.ctaText}>{game.available ? (isDraughts ? selected.cta : 'Play') : 'Coming soon'}</Text>
+                <Text style={styles.ctaText}>{game.available ? (selected ? selected.cta : 'Play') : 'Coming soon'}</Text>
                 {game.available && <FontAwesome name="arrow-right" size={14} color={colors.white} />}
               </>
             )}
@@ -214,34 +255,7 @@ export default function GameDetail() {
         </Pressable>
       </View>
 
-      {/* Join-by-code modal */}
-      <Modal visible={joinOpen} transparent animationType="fade" onRequestClose={() => setJoinOpen(false)}>
-        <Pressable style={styles.scrim} onPress={() => setJoinOpen(false)} />
-        <Animated.View entering={SlideInDown.springify().damping(18)} style={styles.sheet}>
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle}>Join a game</Text>
-          <Text style={styles.sheetSub}>Enter the invite code your friend shared.</Text>
-          <View style={styles.codeInputWrap}>
-            <TextInput
-              style={styles.codeInput}
-              placeholder="CODE"
-              placeholderTextColor={colors.textFaint}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              maxLength={6}
-              value={code}
-              onChangeText={(t) => { setCode(t); setErr(''); }}
-            />
-          </View>
-          {err ? <Text style={styles.errText}>{err}</Text> : null}
-          <Pressable style={({ pressed }) => [styles.cta, pressed && styles.pressed]} onPress={doJoin} disabled={busy}>
-            <View style={styles.ctaInner}>
-              <GradientFill colors={game.theme} />
-              {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.ctaText}>Join now</Text>}
-            </View>
-          </Pressable>
-        </Animated.View>
-      </Modal>
+      <JoinModal visible={joinVisible} onClose={() => setJoinVisible(false)} />
     </View>
   );
 }
@@ -278,13 +292,4 @@ const styles = StyleSheet.create({
   ctaInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm, paddingVertical: 16, paddingHorizontal: 22 },
   ctaText: { fontFamily: font.extrabold, fontSize: 16, color: colors.white },
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
-
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: colors.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: space.lg, paddingBottom: 40, gap: space.sm },
-  sheetHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.hairline, marginBottom: space.sm },
-  sheetTitle: { fontFamily: font.extrabold, fontSize: 20, color: colors.text },
-  sheetSub: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, marginBottom: space.sm },
-  codeInputWrap: { backgroundColor: colors.surfaceAlt, borderRadius: radius.md, borderWidth: 1, borderColor: colors.hairline },
-  codeInput: { fontFamily: font.extrabold, fontSize: 22, color: colors.text, textAlign: 'center', letterSpacing: 6, paddingVertical: 16 },
-  errText: { fontFamily: font.semibold, fontSize: 13, color: colors.danger, textAlign: 'center' },
 });
