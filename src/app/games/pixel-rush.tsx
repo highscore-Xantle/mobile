@@ -17,7 +17,6 @@ import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
 import { goBackOr } from '../../lib/navigation';
-import { playSound } from '../../lib/sounds';
 import {
   PUZZLE_IMAGES,
   createBotMatch,
@@ -65,14 +64,12 @@ export default function PixelRushScreen() {
   }
 
   function startSolo() {
-    playSound('click');
     setSoloRound(1);
     newSoloPuzzle();
     setScreen('solo');
   }
 
   function nextSoloPuzzle() {
-    playSound('click');
     setSoloRound((r) => r + 1);
     newSoloPuzzle();
   }
@@ -84,7 +81,6 @@ export default function PixelRushScreen() {
   useEffect(() => stopSearching, []);
 
   async function handleCreateGroup() {
-    playSound('click');
     setBusy(true);
     setErr('');
     try {
@@ -98,7 +94,6 @@ export default function PixelRushScreen() {
   }
 
   async function handleContinueOneVOne() {
-    playSound('click');
     if (!anyoneCanJoin) {
       setBusy(true);
       setErr('');
@@ -192,7 +187,6 @@ export default function PixelRushScreen() {
   async function handleJoin() {
     const code = joinCode.trim().toUpperCase();
     if (code.length < 4) { setErr('Enter a valid invite code.'); return; }
-    playSound('click');
     setBusy(true);
     setErr('');
     try {
@@ -345,7 +339,7 @@ export default function PixelRushScreen() {
               <View style={styles.stepperRow}>
                 <Pressable
                   style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
-                  onPress={() => { playSound('click'); setGroupSize((n) => Math.max(MIN_GROUP, n - 1)); }}
+                  onPress={() => setGroupSize((n) => Math.max(MIN_GROUP, n - 1))}
                   disabled={groupSize <= MIN_GROUP}
                 >
                   <Text style={styles.stepperBtnText}>−</Text>
@@ -353,7 +347,7 @@ export default function PixelRushScreen() {
                 <Text style={styles.stepperValue}>{groupSize}</Text>
                 <Pressable
                   style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
-                  onPress={() => { playSound('click'); setGroupSize((n) => Math.min(MAX_GROUP, n + 1)); }}
+                  onPress={() => setGroupSize((n) => Math.min(MAX_GROUP, n + 1))}
                   disabled={groupSize >= MAX_GROUP}
                 >
                   <Text style={styles.stepperBtnText}>+</Text>

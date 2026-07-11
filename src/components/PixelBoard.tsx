@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { playSound } from '../lib/sounds';
 
 const PREVIEW_MS = 5000;
 const GAP = 2;
@@ -75,7 +74,6 @@ export default function PixelBoard({ image, seed, grid, startedAt, locked, onSol
 
   function tap(slot: number) {
     if (phase !== 'play' || locked) return;
-    playSound('click');
     if (selected === null) { setSelected(slot); return; }
     if (selected === slot) { setSelected(null); return; }
     const from = selected;
@@ -88,7 +86,6 @@ export default function PixelBoard({ image, seed, grid, startedAt, locked, onSol
         const timeMs = Math.max(0, Date.now() - raceStart);
         setPhase('solved');
         setElapsed(timeMs);
-        playSound('correct');
         onSolve(timeMs);
       }
       return next;
