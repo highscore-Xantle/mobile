@@ -18,6 +18,7 @@ import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { NumberKeypad } from '../../components/NumberKeypad';
 import { RoundScoreboard } from '../../components/RoundScoreboard';
+import { VersusSearch, randomBotOpponent, useMyVersusProfile, type VersusPlayer } from '../../components/VersusSearch';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -152,9 +153,11 @@ function VersusJoin() {
   const router = useRouter();
   const { session } = useSession();
   const meId = session?.user?.id ?? null;
+  const me = useMyVersusProfile();
 
   const [roomId, setRoomId] = useState<string | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(null);
+  const [botOpp, setBotOpp] = useState<VersusPlayer | null>(null);
   const [errored, setErrored] = useState(false);
 
   useEffect(() => {
@@ -174,9 +177,9 @@ function VersusJoin() {
     return () => { active = false; };
   }, [meId]);
 
-  // Listen for a real join; else fall back to a bot after MATCH_SECONDS.
+  // Listen for a real join; else settle on a (disguised) bot after MATCH_SECONDS.
   useEffect(() => {
-    if (!roomId || !roomCode) return;
+    if (!roomId || !roomCode || botOpp) return;
     const ch = supabase
       .channel(`nd_mm_${roomId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
@@ -188,10 +191,11 @@ function VersusJoin() {
       await supabase.rpc('cancel_matchmaking', { p_room: roomId });
       const { data: botRoom, error } = await supabase.rpc('create_bot_room', { p_state: {} });
       if (error || !botRoom) { setErrored(true); return; }
-      router.replace({ pathname: '/game/number-duel', params: { roomCode: botRoom.code } });
+      setBotOpp(randomBotOpponent());              // freeze the flashing photo on this identity
+      setTimeout(() => router.replace({ pathname: '/game/number-duel', params: { roomCode: botRoom.code } }), 1200);
     }, MATCH_SECONDS * 1000);
     return () => { void supabase.removeChannel(ch); clearTimeout(timer); };
-  }, [roomId, roomCode]);
+  }, [roomId, roomCode, botOpp]);
 
   const cancel = () => { if (roomId) supabase.rpc('cancel_matchmaking', { p_room: roomId }); router.back(); };
 
@@ -210,13 +214,8 @@ function VersusJoin() {
   return (
     <View style={s.root}>
       <GradientFill colors={gradients.background} />
-      <SafeAreaView style={[s.safe, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator color={colors.blue} size="large" />
-        <Text style={[s.phaseTitle, { marginTop: space.lg }]}>Finding an opponent…</Text>
-        <Text style={s.phaseSub}>Starting a match against the machine in {MATCH_SECONDS}s if nobody joins.</Text>
-        <Pressable style={({ pressed }) => [s.ctaOutline, { marginTop: space.xl, paddingHorizontal: space.xl }, pressed && s.pressed]} onPress={cancel}>
-          <Text style={s.ctaOutlineText}>Cancel</Text>
-        </Pressable>
+      <SafeAreaView style={[s.safe, { justifyContent: 'center' }]}>
+        <VersusSearch accent={colors.blue} me={me} matched={botOpp} onCancel={cancel} />
       </SafeAreaView>
     </View>
   );

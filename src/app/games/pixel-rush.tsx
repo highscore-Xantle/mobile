@@ -23,6 +23,7 @@ import {
   joinGame,
   matchmakePixelRush,
 } from '../../lib/usePixelGame';
+import { VersusSearch, randomBotOpponent, useMyVersusProfile, type VersusPlayer } from '../../components/VersusSearch';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
 type Screen = 'menu' | 'mode' | 'group-size' | 'onevone' | 'searching';
@@ -33,6 +34,7 @@ const MAX_GROUP = 8;
 
 export default function PixelRushScreen() {
   const router = useRouter();
+  const me = useMyVersusProfile();
   const [screen, setScreen] = useState<Screen>('menu');
   const [joinCode, setJoinCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -41,20 +43,18 @@ export default function PixelRushScreen() {
   // Group + 1v1 setup
   const [groupSize, setGroupSize] = useState(4);
   const [anyoneCanJoin, setAnyoneCanJoin] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(SEARCH_SECONDS);
+  const [botOpp, setBotOpp] = useState<VersusPlayer | null>(null);
 
   // Same shape as Draughts' VersusJoin (game/draughts.tsx): matchmake immediately
   // returns a real row (never null) — 'active' means paired now, 'lobby' means
   // wait for a postgres_changes update or the bot-fallback timeout, whichever
   // comes first. resolvedRef stops both from acting if they land at once.
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const matchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const matchChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const matchGameIdRef = useRef<string | null>(null);
   const resolvedRef = useRef(false);
 
   function stopWaiting() {
-    if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; }
     if (matchTimeoutRef.current) { clearTimeout(matchTimeoutRef.current); matchTimeoutRef.current = null; }
     if (matchChannelRef.current) { void supabase.removeChannel(matchChannelRef.current); matchChannelRef.current = null; }
   }
@@ -102,6 +102,7 @@ export default function PixelRushScreen() {
     setBusy(true);
     setErr('');
     resolvedRef.current = false;
+    setBotOpp(null);
     try {
       const game = await matchmakePixelRush();
       setBusy(false);
@@ -120,14 +121,6 @@ export default function PixelRushScreen() {
   function beginWaiting(gameId: string, code: string) {
     matchGameIdRef.current = gameId;
     setScreen('searching');
-    setSecondsLeft(SEARCH_SECONDS);
-
-    // Cosmetic countdown only — the bot-fallback decision below is a single timeout.
-    let remaining = SEARCH_SECONDS;
-    countdownRef.current = setInterval(() => {
-      remaining -= 1;
-      setSecondsLeft(Math.max(0, remaining));
-    }, 1000);
 
     // A real opponent joining flips this game's status to 'active'.
     matchChannelRef.current = supabase
@@ -143,7 +136,9 @@ export default function PixelRushScreen() {
         await cancelPixelRushMatch(gameId);
         if (resolvedRef.current) return;
         const bot = await createBotMatch('pixel_rush');
-        resolveMatch(bot.invite_code);
+        if (resolvedRef.current) return;
+        setBotOpp(randomBotOpponent());   // freeze the flashing photo on this identity
+        setTimeout(() => resolveMatch(bot.invite_code), 1200);
       } catch (e) {
         setErr((e as Error).message);
         setScreen('onevone');
@@ -351,18 +346,8 @@ export default function PixelRushScreen() {
     return (
       <View style={styles.root}>
         <GradientFill colors={gradients.background} />
-        <SafeAreaView style={[styles.safe, styles.center]}>
-          <ActivityIndicator color={colors.blue} size="large" />
-          <Text style={styles.searchingTitle}>Finding an opponent…</Text>
-          <Text style={styles.searchingSub}>
-            Starting a match against the machine in {secondsLeft}s if nobody joins.
-          </Text>
-          <Pressable
-            style={({ pressed }) => [styles.outlineBtn, { marginTop: space.xl }, pressed && styles.pressed]}
-            onPress={cancelSearching}
-          >
-            <Text style={styles.outlineBtnText}>Cancel</Text>
-          </Pressable>
+        <SafeAreaView style={[styles.safe, { justifyContent: 'center' }]}>
+          <VersusSearch accent={colors.blue} me={me} matched={botOpp} onCancel={cancelSearching} />
         </SafeAreaView>
       </View>
     );
@@ -597,21 +582,4 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-
-  // ── Searching
-  searchingTitle: {
-    fontFamily: font.extrabold,
-    fontSize: 20,
-    color: colors.text,
-    marginTop: space.lg,
-    textAlign: 'center',
-  },
-  searchingSub: {
-    fontFamily: font.semibold,
-    fontSize: 14,
-    color: colors.textMuted,
-    marginTop: space.sm,
-    textAlign: 'center',
-    paddingHorizontal: space.lg,
-  },
 });
