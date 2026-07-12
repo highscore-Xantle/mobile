@@ -22,6 +22,7 @@ import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PICK_SECONDS = 30;
+const MATCH_SECONDS = 15;
 
 type Phase = 'picking' | 'opponent_picking' | 'drama' | 'guessing' | 'round_end' | 'game_over';
 type Hint = 'higher' | 'lower' | 'correct' | 'hot' | 'warm' | 'cold' | 'timeout';
@@ -132,8 +133,97 @@ function botSolveDelayMs(allowDecimal: boolean, isHard: boolean): number {
   return base + Math.random() * 4000;
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── Route dispatcher ─────────────────────────────────────────────────────────
+// Same shape as Draughts (game/draughts.tsx):
+//   roomCode param  → online 1v1 (from invite / join / a resolved match).
+//   mp=online param → matchmaking "versus" join → live match, or a bot after
+//                     MATCH_SECONDS if no one joins.
 export default function NumberDuel() {
+  const { roomCode, mp } = useLocalSearchParams<{ roomCode?: string; mp?: string }>();
+  if (!roomCode && mp === 'online') return <VersusJoin />;
+  return <OnlineNumberDuel />;
+}
+
+// ─── Play Online: matchmake, or fall back to a bot ────────────────────────────
+// Copies Draughts' VersusJoin: matchmake_number_duel() always returns a real
+// room row (never SQL NULL) — 'active' means paired immediately, 'lobby'
+// means wait for a postgres_changes update or the timeout, whichever first.
+function VersusJoin() {
+  const router = useRouter();
+  const { session } = useSession();
+  const meId = session?.user?.id ?? null;
+
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const [roomCode, setRoomCode] = useState<string | null>(null);
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    if (!meId) return;
+    let active = true;
+    (async () => {
+      const { data: room, error } = await supabase.rpc('matchmake_number_duel');
+      if (!active) return;
+      if (error || !room) { setErrored(true); return; }
+      if (room.status === 'active') {
+        router.replace({ pathname: '/game/number-duel', params: { roomCode: room.code } });
+        return;
+      }
+      setRoomCode(room.code);
+      setRoomId(room.id);
+    })();
+    return () => { active = false; };
+  }, [meId]);
+
+  // Listen for a real join; else fall back to a bot after MATCH_SECONDS.
+  useEffect(() => {
+    if (!roomId || !roomCode) return;
+    const ch = supabase
+      .channel(`nd_mm_${roomId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
+        ({ new: row }: any) => {
+          if (row?.status === 'active') router.replace({ pathname: '/game/number-duel', params: { roomCode } });
+        })
+      .subscribe();
+    const timer = setTimeout(async () => {
+      await supabase.rpc('cancel_matchmaking', { p_room: roomId });
+      const { data: botRoom, error } = await supabase.rpc('create_bot_room', { p_state: {} });
+      if (error || !botRoom) { setErrored(true); return; }
+      router.replace({ pathname: '/game/number-duel', params: { roomCode: botRoom.code } });
+    }, MATCH_SECONDS * 1000);
+    return () => { void supabase.removeChannel(ch); clearTimeout(timer); };
+  }, [roomId, roomCode]);
+
+  const cancel = () => { if (roomId) supabase.rpc('cancel_matchmaking', { p_room: roomId }); router.back(); };
+
+  if (errored) {
+    return (
+      <View style={[s.root, { justifyContent: 'center', alignItems: 'center' }]}>
+        <GradientFill colors={gradients.background} />
+        <Text style={s.phaseTitle}>Couldn't start matchmaking</Text>
+        <Pressable style={({ pressed }) => [s.ctaOutline, { marginTop: space.lg, paddingHorizontal: space.xl }, pressed && s.pressed]} onPress={() => router.back()}>
+          <Text style={s.ctaOutlineText}>Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={s.root}>
+      <GradientFill colors={gradients.background} />
+      <SafeAreaView style={[s.safe, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator color={colors.blue} size="large" />
+        <Text style={[s.phaseTitle, { marginTop: space.lg }]}>Finding an opponent…</Text>
+        <Text style={s.phaseSub}>Starting a match against the machine in {MATCH_SECONDS}s if nobody joins.</Text>
+        <Pressable style={({ pressed }) => [s.ctaOutline, { marginTop: space.xl, paddingHorizontal: space.xl }, pressed && s.pressed]} onPress={cancel}>
+          <Text style={s.ctaOutlineText}>Cancel</Text>
+        </Pressable>
+      </SafeAreaView>
+    </View>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+function OnlineNumberDuel() {
   const { roomCode } = useLocalSearchParams<{ roomCode: string }>();
 
   const router = useRouter();

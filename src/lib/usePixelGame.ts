@@ -229,22 +229,24 @@ export async function leaveGame(gameId: string): Promise<void> {
 }
 
 /**
- * Pairs with another open-matchmaking player if one's waiting; otherwise
- * queues the caller. Idempotent — safe (and expected) to call repeatedly
- * while waiting, since two players who queue moments apart won't discover
- * each other until one of them polls again.
+ * "Play Online" matchmaking — same pattern as Draughts' matchmake_draughts():
+ * joins a recent open 1v1 game if one's waiting, otherwise creates one and
+ * returns it in 'lobby' status. ALWAYS returns a real row (never SQL NULL),
+ * so there's no PostgREST null-composite ambiguity to guard against — check
+ * `.status` to know whether you were paired immediately or are now waiting.
  */
-export async function enqueueOrMatch(type: string = 'pixel_rush'): Promise<Game | null> {
+export async function matchmakePixelRush(): Promise<Game> {
   const { data, error } = await supabase
-    .rpc('enqueue_or_match', { p_type: type })
+    .rpc('matchmake_pixel_rush')
     .select()
-    .maybeSingle();
+    .single();
   if (error) throw error;
-  return (data as Game) ?? null;
+  return data as Game;
 }
 
-export async function leaveQueue(type: string = 'pixel_rush'): Promise<void> {
-  const { error } = await supabase.rpc('leave_queue', { p_type: type });
+/** Drop a still-waiting lobby game created by matchmakePixelRush (bot-fallback timeout, or backing out). */
+export async function cancelPixelRushMatch(gameId: string): Promise<void> {
+  const { error } = await supabase.rpc('cancel_pixel_rush_match', { p_game: gameId });
   if (error) throw error;
 }
 

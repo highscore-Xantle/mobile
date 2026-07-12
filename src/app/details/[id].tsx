@@ -69,8 +69,8 @@ const MODES_BY_GAME: Record<string, ModeDef[]> = {
     { key: 'join',   icon: 'sign-in',   title: 'Join a Game',    sub: 'Enter an invite code',  cta: 'Join now', price: 'Free' },
   ],
   'number-duel': [
-    { key: 'online', icon: 'globe',     title: 'Play Online',    sub: 'Set the rules & match',  cta: 'Play',     price: 'Free' },
-    { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Play someone you know',  cta: 'Invite',  price: 'Free' },
+    { key: 'online', icon: 'globe',     title: 'Play Online',    sub: 'Match with anyone',      cta: 'Play',     price: 'Free' },
+    { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Set the rules & invite', cta: 'Invite',  price: 'Free' },
     { key: 'group',  icon: 'users',     title: 'Group',          sub: 'Up to 8 players',        cta: 'Create',   price: '$2' },
     { key: 'join',   icon: 'sign-in',   title: 'Join a Game',    sub: 'Enter an invite code',   cta: 'Join now', price: 'Free' },
   ],
@@ -133,10 +133,11 @@ export default function GameDetail() {
   const handleCta = () => {
     if (busy) return;
     if (mode === 'online') {
-      // Draughts has no configurable rules, so its own screen goes straight
-      // into matchmaking. Other games defer to their real entry point instead
-      // (Number Duel's setup screen still has rules worth seeing first).
+      // Draughts and Number Duel matchmake straight into a live match (or a
+      // bot after a short wait) with default rules — same "Play Online"
+      // pattern for both. Custom rules live under "Invite a Friend" instead.
       if (game.id === 'draughts') { router.push('/game/draughts?mp=online' as any); return; }
+      if (game.id === 'number-duel') { router.push('/game/number-duel?mp=online' as any); return; }
       playSimple();
       return;
     }

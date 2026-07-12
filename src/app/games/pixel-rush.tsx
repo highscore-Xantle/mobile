@@ -15,12 +15,13 @@ import { useRouter } from 'expo-router';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { goBackOr } from '../../lib/navigation';
+import { supabase } from '../../lib/supabase';
 import {
+  cancelPixelRushMatch,
   createBotMatch,
   createPixelRushGame,
-  enqueueOrMatch,
   joinGame,
-  leaveQueue,
+  matchmakePixelRush,
 } from '../../lib/usePixelGame';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
@@ -42,18 +43,23 @@ export default function PixelRushScreen() {
   const [anyoneCanJoin, setAnyoneCanJoin] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(SEARCH_SECONDS);
 
-  const searchTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const cancelledRef = useRef(false);
-  // Set the instant either a real match or a bot match wins the race to
-  // navigate, so the other path (which may already be mid-flight) doesn't
-  // also push a second, different game once its own await resolves.
-  const matchedRef = useRef(false);
+  // Same shape as Draughts' VersusJoin (game/draughts.tsx): matchmake immediately
+  // returns a real row (never null) — 'active' means paired now, 'lobby' means
+  // wait for a postgres_changes update or the bot-fallback timeout, whichever
+  // comes first. resolvedRef stops both from acting if they land at once.
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const matchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const matchChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const matchGameIdRef = useRef<string | null>(null);
+  const resolvedRef = useRef(false);
 
-  function stopSearching() {
-    if (searchTimerRef.current) { clearInterval(searchTimerRef.current); searchTimerRef.current = null; }
+  function stopWaiting() {
+    if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; }
+    if (matchTimeoutRef.current) { clearTimeout(matchTimeoutRef.current); matchTimeoutRef.current = null; }
+    if (matchChannelRef.current) { void supabase.removeChannel(matchChannelRef.current); matchChannelRef.current = null; }
   }
 
-  useEffect(() => stopSearching, []);
+  useEffect(() => stopWaiting, []);
 
   async function handleCreateGroup() {
     setBusy(true);
@@ -85,61 +91,25 @@ export default function PixelRushScreen() {
     await startMatchmaking();
   }
 
-  // Polls enqueue_or_match every few seconds instead of matching only once —
-  // two players who tap "anyone can join" moments apart won't see each other
-  // on their first call, so whoever polls next is what actually pairs them.
-  // The RPC is idempotent for an already-matched caller, so repeat calls are safe.
-  async function pollForMatch() {
-    if (cancelledRef.current || matchedRef.current) return;
-    try {
-      const game = await enqueueOrMatch('pixel_rush');
-      if (cancelledRef.current || matchedRef.current) return;
-      if (game) {
-        matchedRef.current = true;
-        stopSearching();
-        router.push(`/game/${game.invite_code}`);
-      }
-    } catch (e) {
-      stopSearching();
-      setErr((e as Error).message);
-      setScreen('onevone');
-    }
+  function resolveMatch(code: string) {
+    if (resolvedRef.current) return;
+    resolvedRef.current = true;
+    stopWaiting();
+    router.push(`/game/${code}`);
   }
 
   async function startMatchmaking() {
     setBusy(true);
     setErr('');
-    cancelledRef.current = false;
-    matchedRef.current = false;
+    resolvedRef.current = false;
     try {
-      const game = await enqueueOrMatch('pixel_rush');
-      if (cancelledRef.current) return;
-      if (game) {
-        matchedRef.current = true;
-        router.push(`/game/${game.invite_code}`);
+      const game = await matchmakePixelRush();
+      setBusy(false);
+      if (game.status === 'active') {
+        resolveMatch(game.invite_code);
         return;
       }
-
-      setScreen('searching');
-      setSecondsLeft(SEARCH_SECONDS);
-      setBusy(false);
-
-      let tick = 0;
-      let remaining = SEARCH_SECONDS;
-      searchTimerRef.current = setInterval(() => {
-        tick += 1;
-        if (tick % 3 === 0) pollForMatch();
-        remaining -= 1;
-        setSecondsLeft(Math.max(0, remaining));
-        if (remaining <= 0) {
-          // Stop the interval synchronously, before any `await` below — otherwise
-          // it keeps ticking every second while handleSearchTimeout is still
-          // awaiting leaveQueue/createBotMatch, re-firing the timeout repeatedly
-          // and creating multiple bot matches + concurrent router.push calls.
-          stopSearching();
-          handleSearchTimeout();
-        }
-      }, 1000);
+      beginWaiting(game.id, game.invite_code);
     } catch (e) {
       setBusy(false);
       setErr((e as Error).message);
@@ -147,26 +117,45 @@ export default function PixelRushScreen() {
     }
   }
 
-  async function handleSearchTimeout() {
-    stopSearching();
-    if (matchedRef.current) return; // a poll already paired us with a real opponent
-    try {
-      await leaveQueue('pixel_rush');
-      if (matchedRef.current) return;
-      const game = await createBotMatch('pixel_rush');
-      if (matchedRef.current) return; // lost the race after all — the bot game is just abandoned
-      matchedRef.current = true;
-      router.push(`/game/${game.invite_code}`);
-    } catch (e) {
-      setErr((e as Error).message);
-      setScreen('onevone');
-    }
+  function beginWaiting(gameId: string, code: string) {
+    matchGameIdRef.current = gameId;
+    setScreen('searching');
+    setSecondsLeft(SEARCH_SECONDS);
+
+    // Cosmetic countdown only — the bot-fallback decision below is a single timeout.
+    let remaining = SEARCH_SECONDS;
+    countdownRef.current = setInterval(() => {
+      remaining -= 1;
+      setSecondsLeft(Math.max(0, remaining));
+    }, 1000);
+
+    // A real opponent joining flips this game's status to 'active'.
+    matchChannelRef.current = supabase
+      .channel(`pixelrush_match_${gameId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
+        ({ new: row }: any) => { if (row?.status === 'active') resolveMatch(code); })
+      .subscribe();
+
+    matchTimeoutRef.current = setTimeout(async () => {
+      if (resolvedRef.current) return;
+      stopWaiting();
+      try {
+        await cancelPixelRushMatch(gameId);
+        if (resolvedRef.current) return;
+        const bot = await createBotMatch('pixel_rush');
+        resolveMatch(bot.invite_code);
+      } catch (e) {
+        setErr((e as Error).message);
+        setScreen('onevone');
+      }
+    }, SEARCH_SECONDS * 1000);
   }
 
   function cancelSearching() {
-    cancelledRef.current = true;
-    stopSearching();
-    leaveQueue('pixel_rush').catch(() => {});
+    const gameId = matchGameIdRef.current;
+    resolvedRef.current = true;
+    stopWaiting();
+    if (gameId) cancelPixelRushMatch(gameId).catch(() => {});
     setScreen('onevone');
   }
 
