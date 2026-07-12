@@ -74,7 +74,8 @@
         {
           "photosPermission": "Xantle needs access to your photos so you can set a profile picture."
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

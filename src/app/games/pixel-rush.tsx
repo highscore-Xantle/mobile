@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { goBackOr } from '../../lib/navigation';
+import { playSound } from '../../lib/sounds';
 import { supabase } from '../../lib/supabase';
 import {
   cancelPixelRushMatch,
@@ -62,6 +63,7 @@ export default function PixelRushScreen() {
   useEffect(() => stopWaiting, []);
 
   async function handleCreateGroup() {
+    playSound('click');
     setBusy(true);
     setErr('');
     try {
@@ -75,6 +77,7 @@ export default function PixelRushScreen() {
   }
 
   async function handleContinueOneVOne() {
+    playSound('click');
     if (!anyoneCanJoin) {
       setBusy(true);
       setErr('');
@@ -99,6 +102,7 @@ export default function PixelRushScreen() {
   }
 
   async function startMatchmaking() {
+    playSound('click');
     setBusy(true);
     setErr('');
     resolvedRef.current = false;
@@ -155,6 +159,7 @@ export default function PixelRushScreen() {
   }
 
   async function handleJoin() {
+    playSound('click');
     const code = joinCode.trim().toUpperCase();
     if (code.length < 4) { setErr('Enter a valid invite code.'); return; }
     setBusy(true);

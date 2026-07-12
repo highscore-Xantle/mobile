@@ -5,6 +5,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+import { playSound } from '../lib/sounds';
 import { colors, font, radius, shadow, space } from '../theme';
 
 interface NumberKeypadProps {
@@ -96,6 +97,7 @@ export function NumberKeypad({
 
   const handleKey = (key: string) => {
     if (disabled) return;
+    playSound('click');
 
     if (key === '⌫') {
       onChange(value.slice(0, -1));

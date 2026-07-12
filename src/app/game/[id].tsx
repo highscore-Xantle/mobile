@@ -23,6 +23,7 @@ import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
 import { computeBotSolveDelayMs, getRecentWinRate } from '../../lib/botOpponent';
+import { playSound } from '../../lib/sounds';
 import {
   DEFAULT_PUZZLE_IMAGE,
   autoAdvanceRound,
@@ -71,6 +72,11 @@ export default function GameScreen() {
 
   // Reset solved flag when a new round starts.
   useEffect(() => { setMySolved(false); }, [round?.round_no]);
+
+  // Match-over win sound — fires once when the finished screen is reached as the winner.
+  useEffect(() => {
+    if (game?.status === 'finished' && iWon) playSound('win');
+  }, [game?.status, iWon]);
 
   // Auto-join: landing here via a QR scan / deep link seats the scanner as a
   // player instead of leaving them as a bystander.
