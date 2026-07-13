@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 import { playSound } from '../../lib/sounds';
 import { useSession } from '../../lib/useSession';
+import { usePresence } from '../../lib/usePresence';
 import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
@@ -253,6 +254,7 @@ function OnlineNumberDuel() {
 
   const router = useRouter();
   const { session } = useSession();
+  const { isOnline } = usePresence();
   const { style: shakeStyle, shake } = useShake();
 
   const [roomId,        setRoomId]        = useState<string | null>(null);
@@ -261,6 +263,19 @@ function OnlineNumberDuel() {
   const [opponentId,    setOpponentId]    = useState<string | null>(null);
   const [isBot,         setIsBot]         = useState(false);
   const [isHost,        setIsHost]        = useState(false);
+  // Surfaces "opponent seems to have left" instead of leaving the other
+  // player waiting forever with zero indication anything's wrong — there was
+  // previously no timeout or signal at all for the opponent_picking wait or
+  // the non-host round_end wait. A short grace period avoids flagging a
+  // brief background/foreground blip as a disconnect.
+  const [opponentOffline, setOpponentOffline] = useState(false);
+  useEffect(() => {
+    if (isBot || !opponentId) { setOpponentOffline(false); return; }
+    if (isOnline(opponentId)) { setOpponentOffline(false); return; }
+    const t = setTimeout(() => setOpponentOffline(true), 10000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBot, opponentId, isOnline(opponentId)]);
   const [inputValue,    setInputValue]    = useState('');
   const [loading,       setLoading]       = useState(true);
   const [submitting,    setSubmitting]    = useState(false);
@@ -806,6 +821,14 @@ function OnlineNumberDuel() {
           <ActivityIndicator color={colors.blue} />
           <Text style={s.waitingText}>Waiting for {opponentName}…</Text>
         </View>
+        {opponentOffline && (
+          <View style={s.disconnectBanner}>
+            <Text style={s.disconnectText}>{opponentName} appears to have disconnected.</Text>
+            <Pressable style={s.disconnectBtn} onPress={() => router.replace('/home')}>
+              <Text style={s.disconnectBtnText}>Leave match</Text>
+            </Pressable>
+          </View>
+        )}
       </Animated.View>
     );
 
@@ -904,9 +927,19 @@ function OnlineNumberDuel() {
         </Pressable>
       );
       return (
-        <View style={s.waitingCta}>
-          <ActivityIndicator color={colors.blue} />
-          <Text style={s.waitingText}>Waiting for host…</Text>
+        <View style={{ gap: space.sm }}>
+          <View style={s.waitingCta}>
+            <ActivityIndicator color={colors.blue} />
+            <Text style={s.waitingText}>Waiting for host…</Text>
+          </View>
+          {opponentOffline && (
+            <View style={s.disconnectBanner}>
+              <Text style={s.disconnectText}>{opponentName} (the host) appears to have disconnected.</Text>
+              <Pressable style={s.disconnectBtn} onPress={() => router.replace('/home')}>
+                <Text style={s.disconnectBtnText}>Leave match</Text>
+              </Pressable>
+            </View>
+          )}
         </View>
       );
     }
@@ -1045,6 +1078,19 @@ const s = StyleSheet.create({
   waitingCta: { flexDirection: 'row', gap: space.sm, alignItems: 'center', justifyContent: 'center', paddingVertical: 18, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline },
   waitingRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
   waitingText: { fontFamily: font.semibold, fontSize: 15, color: colors.textMuted },
+  disconnectBanner: {
+    marginTop: space.md,
+    padding: space.md,
+    borderRadius: radius.lg,
+    backgroundColor: 'rgba(248,113,113,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.30)',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  disconnectText: { fontFamily: font.semibold, fontSize: 13, color: colors.danger, textAlign: 'center' },
+  disconnectBtn: { paddingVertical: 10, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: colors.danger },
+  disconnectBtnText: { fontFamily: font.bold, fontSize: 13, color: colors.white },
   // Share to Feed
   ctaShare: {
     borderRadius: radius.lg,

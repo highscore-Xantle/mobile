@@ -1,9 +1,8 @@
-import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from './GradientFill';
 import { DocSection } from '../content/legal';
-import { goBackOr } from '../lib/navigation';
+import { useGoBackOr } from '../lib/navigation';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../theme';
 
 /** Shared renderer for Settings → About / Terms / Privacy — same topBar as profile.tsx/settings.tsx. */
@@ -16,7 +15,7 @@ export function LegalDoc({
   intro?: string;
   sections: DocSection[];
 }) {
-  const router = useRouter();
+  const goBack = useGoBackOr('/settings');
 
   return (
     <View style={styles.root}>
@@ -25,7 +24,7 @@ export function LegalDoc({
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            onPress={() => goBackOr(router, '/settings')}
+            onPress={goBack}
           >
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>

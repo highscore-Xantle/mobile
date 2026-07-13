@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { GradientFill } from '../../components/GradientFill';
 import { RoundScoreboard } from '../../components/RoundScoreboard';
 import { gridForRound } from '../../lib/usePixelGame';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
-import { goBackOr } from '../../lib/navigation';
+import { useGoBackOr } from '../../lib/navigation';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 // Normalizes a Pixel Rush `games` row into the same shape the rest of this
@@ -32,7 +32,7 @@ function normalizePixelRushMatch(data: any) {
 }
 
 export default function MatchDetails() {
-  const router = useRouter();
+  const goBack = useGoBackOr('/(tabs)/home');
   const { id, gameType } = useLocalSearchParams<{ id: string; gameType?: string }>();
 
   const [loading, setLoading] = useState(true);
@@ -95,7 +95,7 @@ export default function MatchDetails() {
       <View style={styles.root}>
         <GradientFill colors={gradients.background} />
         <SafeAreaView style={styles.safe}>
-          <Header router={router} />
+          <Header onBack={goBack} />
           <View style={styles.center}>
             <ActivityIndicator size="large" color={colors.blue} />
           </View>
@@ -109,7 +109,7 @@ export default function MatchDetails() {
       <View style={styles.root}>
         <GradientFill colors={gradients.background} />
         <SafeAreaView style={styles.safe}>
-          <Header router={router} />
+          <Header onBack={goBack} />
           <View style={styles.center}>
             <FontAwesome name="exclamation-circle" size={48} color={colors.danger} />
             <Text style={styles.errorText}>{error || 'Match not found.'}</Text>
@@ -142,7 +142,7 @@ export default function MatchDetails() {
     <View style={styles.root}>
       <GradientFill colors={gradients.background} />
       <SafeAreaView style={styles.safe}>
-        <Header router={router} />
+        <Header onBack={goBack} />
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <Animated.View entering={FadeInDown.springify().damping(15)}>
@@ -256,12 +256,12 @@ export default function MatchDetails() {
   );
 }
 
-function Header({ router }: { router: any }) {
+function Header({ onBack }: { onBack: () => void }) {
   return (
     <View style={styles.header}>
       <Pressable
         style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-        onPress={() => goBackOr(router, '/(tabs)/home')}
+        onPress={onBack}
         accessibilityLabel="Go back"
         accessibilityRole="button"
       >

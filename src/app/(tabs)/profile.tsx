@@ -1,10 +1,9 @@
-import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
-import { goBackOr } from '../../lib/navigation';
+import { useGoBackOr } from '../../lib/navigation';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
 import { usePresence } from '../../lib/usePresence';
@@ -17,7 +16,7 @@ const VALID_RE = /^[a-z0-9_]+$/;
 type CheckState = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 
 export default function Profile() {
-  const router = useRouter();
+  const goBack = useGoBackOr('/home');
   const { session, loading: sessionLoading } = useSession();
 
   const [loading, setLoading] = useState(true);
@@ -176,7 +175,7 @@ export default function Profile() {
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            onPress={() => goBackOr(router, '/home')}
+            onPress={goBack}
           >
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>

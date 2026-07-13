@@ -1,4 +1,3 @@
-import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
-import { goBackOr } from '../../lib/navigation';
+import { useGoBackOr } from '../../lib/navigation';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
@@ -22,7 +21,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RESEND_COOLDOWN_S = 30;
 
 export default function ChangeEmail() {
-  const router = useRouter();
+  const goBack = useGoBackOr('/settings');
   const { session } = useSession();
 
   const [step, setStep] = useState<'email' | 'otp'>('email');
@@ -95,7 +94,7 @@ export default function ChangeEmail() {
       }
 
       Alert.alert('Email updated', 'Your email address has been changed.');
-      goBackOr(router, '/settings');
+      goBack();
     } catch (e: any) {
       setErrorMsg(e?.message ?? 'Could not reach the server. Check your connection and try again.');
       setOtp('');
@@ -118,7 +117,7 @@ export default function ChangeEmail() {
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            onPress={() => goBackOr(router, '/settings')}
+            onPress={goBack}
           >
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>

@@ -70,6 +70,19 @@ export default function GameScreen() {
   const [copied, setCopied] = useState(false);
   const botTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Only the host calls setRoundImage — if the host's app closes right when a
+  // new round needs one, everyone else was stuck on "Setting up round…"
+  // forever with no indication why. A short grace period avoids flagging a
+  // brief background/foreground blip as a real disconnect.
+  const [hostOffline, setHostOffline] = useState(false);
+  useEffect(() => {
+    if (isHost || !game?.host_id) { setHostOffline(false); return; }
+    if (isOnline(game.host_id)) { setHostOffline(false); return; }
+    const t = setTimeout(() => setHostOffline(true), 10000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, game?.host_id, isOnline(game?.host_id)]);
+
   // Reset solved flag when a new round starts.
   useEffect(() => { setMySolved(false); }, [round?.round_no]);
 
@@ -351,9 +364,14 @@ export default function GameScreen() {
             <View style={styles.scoreRow}>
               {players.map((p) => (
                 <View key={p.id} style={[styles.scoreChip, p.user_id === myId && styles.scoreChipMe]}>
-                  <Text style={styles.scoreName} numberOfLines={1}>
-                    {p.user_id === myId ? 'You' : playerLabel(p)}
-                  </Text>
+                  <View style={styles.scoreNameRow}>
+                    {!p.is_bot && p.user_id !== myId && (
+                      <View style={[styles.presenceDotSmall, { backgroundColor: isOnline(p.user_id) ? colors.success : colors.textFaint }]} />
+                    )}
+                    <Text style={styles.scoreName} numberOfLines={1}>
+                      {p.user_id === myId ? 'You' : playerLabel(p)}
+                    </Text>
+                  </View>
                   <Text style={styles.scoreValue}>{p.score}</Text>
                 </View>
               ))}
@@ -361,9 +379,19 @@ export default function GameScreen() {
 
             {/* Board or setup indicator */}
             {(!round || round.status === 'awaiting_image') ? (
-              <View style={styles.setupRow}>
-                <ActivityIndicator color={colors.blue} />
-                <Text style={styles.setupText}>Setting up round…</Text>
+              <View style={{ gap: space.sm }}>
+                <View style={styles.setupRow}>
+                  <ActivityIndicator color={colors.blue} />
+                  <Text style={styles.setupText}>Setting up round…</Text>
+                </View>
+                {hostOffline && (
+                  <View style={styles.disconnectBanner}>
+                    <Text style={styles.disconnectText}>The host appears to have disconnected.</Text>
+                    <Pressable style={styles.disconnectBtn} onPress={() => router.replace('/home')}>
+                      <Text style={styles.disconnectBtnText}>Leave match</Text>
+                    </Pressable>
+                  </View>
+                )}
               </View>
             ) : (
               <PixelBoard
@@ -659,6 +687,8 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   scoreChipMe: { borderWidth: 1.5, borderColor: colors.blue },
+  scoreNameRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  presenceDotSmall: { width: 7, height: 7, borderRadius: 4 },
   scoreName: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted },
   scoreValue: { fontFamily: font.black, fontSize: 28, color: colors.text },
 
@@ -670,6 +700,18 @@ const styles = StyleSheet.create({
     paddingVertical: space.xl,
   },
   setupText: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted },
+  disconnectBanner: {
+    padding: space.md,
+    borderRadius: radius.lg,
+    backgroundColor: 'rgba(248,113,113,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.30)',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  disconnectText: { fontFamily: font.semibold, fontSize: 13, color: colors.danger, textAlign: 'center' },
+  disconnectBtn: { paddingVertical: 10, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: colors.danger },
+  disconnectBtnText: { fontFamily: font.bold, fontSize: 13, color: colors.white },
 
   roundResultCard: {
     borderRadius: radius.xl,

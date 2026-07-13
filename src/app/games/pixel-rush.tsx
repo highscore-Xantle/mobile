@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
-import { goBackOr } from '../../lib/navigation';
+import { useGoBackOr } from '../../lib/navigation';
 import { playSound } from '../../lib/sounds';
 import { supabase } from '../../lib/supabase';
 import {
@@ -35,6 +35,7 @@ const MAX_GROUP = 8;
 
 export default function PixelRushScreen() {
   const router = useRouter();
+  const goBack = useGoBackOr('/home');
   const me = useMyVersusProfile();
   const [screen, setScreen] = useState<Screen>('menu');
   const [joinCode, setJoinCode] = useState('');
@@ -373,7 +374,7 @@ export default function PixelRushScreen() {
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            onPress={() => goBackOr(router, '/home')}
+            onPress={goBack}
           >
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
