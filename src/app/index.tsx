@@ -1,193 +1,333 @@
-import { Link } from 'expo-router';
+/**
+ * Landing — the front door.
+ *
+ * ONE route, three platforms. On web this IS the website (rich, multi-section,
+ * desktop-wide). On phones it's the welcome screen (tight hero, thumb-reachable
+ * CTAs). Same tokens, same motion, same identity — it just gets denser as the
+ * viewport grows. See ../../DESIGN-SYSTEM.md.
+ *
+ * Signed-in users never see it: we redirect straight to /home.
+ */
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withDelay,
-  withTiming,
-} from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View,
+  type ViewStyle,
+} from 'react-native';
 import { useRouter } from 'expo-router';
-import { GradientFill } from '../components/GradientFill';
+import { Image } from 'expo-image';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { Users, Zap, Trophy, ArrowRight, Gamepad2 } from 'lucide-react-native';
+import { AmbientCanvas } from '../components/ui/AmbientCanvas';
+import { GlassCard, PressableGlass } from '../components/ui/Glass';
+import { useBreakpoint, useType } from '../lib/useBreakpoint';
 import { supabase } from '../lib/supabase';
-import { colors, font, gradients, radius, shadow } from '../theme';
+import { GAMES } from './(tabs)/games';
+import { colors, font, gradients, maxContentWidth, motion, radius, space } from '../theme';
 
-const LINE_TUCK = 18;
-const LINE_H = 7;
-const ANTLE_LIFT = 8;
+const HOW = [
+  { icon: Users,  title: 'Get everyone in', body: 'One host opens a room. Everyone else joins with a code or a QR scan — nobody gets left setting up.' },
+  { icon: Zap,    title: 'Play in seconds', body: 'Pick a game and go. If nobody’s around, you’re matched with an opponent instantly.' },
+  { icon: Trophy, title: 'Settle it',       body: 'Live scores, a real winner, and bragging rights that last until the next round.' },
+];
 
 export default function Landing() {
   const router = useRouter();
-  const [antleW, setAntleW] = useState(0);
-  const [xW, setXW] = useState(0);
-  // Three states: 'checking' (session check in progress), 'show' (no session, show landing), 'redirect' (has session, navigate away)
-  const [authState, setAuthState] = useState<'checking' | 'show'>('checking');
+  const { isDesktop, isPhone, gutter } = useBreakpoint();
+  const t = useType();
+  const [checking, setChecking] = useState(true);
 
-  // ── Session check — runs once on mount ─────────────────────────────────────
+  // Signed in already → skip the front door entirely.
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        // Valid session in AsyncStorage → skip landing entirely
-        router.replace('/home');
-      } else {
-        // No session → show landing animation
-        setAuthState('show');
-      }
+      if (session) router.replace('/home');
+      else setChecking(false);
     });
-  }, []);
+  }, [router]);
 
-  // ── Animation values — only used when 'show' ─────────────────────────────
-  const antleIn = useSharedValue(0);
-  const xIn     = useSharedValue(0);
-  const line    = useSharedValue(0);
-  const cta     = useSharedValue(0);
-
-  useEffect(() => {
-    if (authState !== 'show') return;
-    antleIn.value = withTiming(1, { duration: 1500, easing: Easing.out(Easing.cubic) });
-    xIn.value     = withDelay(1700, withTiming(1, { duration: 1700, easing: Easing.out(Easing.back(1.3)) }));
-    line.value    = withDelay(4000, withTiming(1, { duration: 2400, easing: Easing.inOut(Easing.cubic) }));
-    cta.value     = withDelay(7000, withTiming(1, { duration: 1200, easing: Easing.out(Easing.cubic) }));
-  }, [authState]);
-
-  const xStyle     = useAnimatedStyle(() => ({
-    opacity: xIn.value,
-    transform: [{ translateX: (1 - xIn.value) * -80 }, { scale: 0.9 + xIn.value * 0.1 }],
-  }));
-  const antleStyle = useAnimatedStyle(() => ({
-    opacity: antleIn.value,
-    transform: [{ translateY: (1 - antleIn.value) * 14 - ANTLE_LIFT }],
-  }));
-  const lineStyle  = useAnimatedStyle(() => ({
-    width: line.value * (antleW + LINE_TUCK),
-    opacity: line.value,
-  }));
-  const ctaStyle   = useAnimatedStyle(() => ({
-    opacity: cta.value,
-    transform: [{ translateY: (1 - cta.value) * 18 }],
-  }));
-
-  // ── Session check loading spinner ─────────────────────────────────────────
-  if (authState === 'checking') {
+  if (checking) {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
-        <ActivityIndicator color={colors.blue} style={styles.spinner} />
+        <AmbientCanvas />
+        <View style={styles.center}><ActivityIndicator color={colors.blue} /></View>
       </View>
     );
   }
 
-  // ── Landing animation ─────────────────────────────────────────────────────
+  const playable = GAMES.filter((g) => g.available);
+
   return (
     <View style={styles.root}>
-      <GradientFill colors={gradients.background} />
+      <AmbientCanvas />
 
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.center}>
-          <View style={styles.logoBox}>
-            <Animated.Text
-              style={[styles.xBig, xStyle]}
-              onLayout={(e) => setXW(e.nativeEvent.layout.width)}
-            >
-              X
-            </Animated.Text>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        {/* ── Top bar ─────────────────────────────────────────────── */}
+        <View style={[styles.bar, { paddingHorizontal: gutter }]}>
+          <View style={styles.brandRow}>
+            <View style={styles.brandMark}>
+              <Gamepad2 size={18} color={colors.white} strokeWidth={2.4} />
+            </View>
+            <Text style={styles.brand}>Xantle</Text>
+          </View>
 
-            <Animated.Text
-              style={[styles.antle, antleStyle]}
-              onLayout={(e) => setAntleW(e.nativeEvent.layout.width)}
-            >
-              antle
-            </Animated.Text>
-
-            <Animated.View style={[styles.legLine, { left: xW - LINE_TUCK }, lineStyle]} />
+          <View style={styles.barActions}>
+            {isDesktop && (
+              <Pressable onPress={() => router.push('/login')} style={webCursor}>
+                <Text style={styles.barLink}>Sign in</Text>
+              </Pressable>
+            )}
+            <CTA label="Get started" onPress={() => router.push('/login')} compact />
           </View>
         </View>
 
-        <Animated.View style={[styles.ctaWrap, ctaStyle]}>
-          <Link href="/login" asChild>
-            <Pressable style={({ pressed }) => [styles.ctaBtn, pressed && styles.ctaPressed]}>
-              <View style={styles.ctaInner}>
-                <GradientFill colors={gradients.button} />
-                <Text style={styles.ctaText}>Get started</Text>
-                <View style={styles.ctaArrowChip}>
-                  <Text style={styles.ctaArrow}>→</Text>
+        <ScrollView contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>
+          <View style={[styles.page, { paddingHorizontal: gutter }]}>
+
+            {/* ── Hero ──────────────────────────────────────────────── */}
+            <View style={[styles.hero, isDesktop && styles.heroDesktop]}>
+              <Animated.View
+                entering={FadeInDown.duration(motion.duration.enter).springify().damping(18)}
+                style={isDesktop ? { flex: 1 } : undefined}
+              >
+                <View style={styles.eyebrow}>
+                  <View style={styles.dot} />
+                  <Text style={styles.eyebrowText}>PARTY GAMES · IN THE SAME ROOM</Text>
                 </View>
+
+                <Text style={[t.display, styles.headline]}>
+                  The night is{'\n'}
+                  <Text style={{ color: colors.blue }}>yours to win.</Text>
+                </Text>
+
+                <Text style={[t.body, styles.sub, isDesktop && { maxWidth: 520 }]}>
+                  Xantle turns any gathering into a tournament. Fast games, live scores,
+                  and one winner everybody argues about on the way home.
+                </Text>
+
+                <View style={[styles.ctaRow, isPhone && styles.ctaRowPhone]}>
+                  <CTA label="Play free" onPress={() => router.push('/login')} />
+                  <Pressable onPress={() => router.push('/login')} style={[styles.ghost, webCursor]}>
+                    <Text style={styles.ghostText}>I have a code</Text>
+                  </Pressable>
+                </View>
+
+                <Text style={styles.finePrint}>Free to play · No download needed on the web</Text>
+              </Animated.View>
+
+              {/* The product, shown rather than described. */}
+              <Animated.View
+                entering={FadeIn.delay(160).duration(motion.duration.enter)}
+                style={[styles.cluster, isDesktop && { flex: 1, marginTop: 0 }]}
+              >
+                {playable.slice(0, 3).map((g, i) => (
+                  <GlassCard
+                    key={g.id}
+                    raised
+                    glow={g.accent}
+                    radius={radius.lg}
+                    style={[
+                      styles.clusterCard,
+                      isDesktop ? { marginLeft: i * 28 } : null,
+                    ]}
+                  >
+                    <LinearGradient colors={g.theme} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.clusterThumb}>
+                      {g.image ? <Image source={g.image} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}
+                    </LinearGradient>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.clusterTitle}>{g.title}</Text>
+                      <Text style={styles.clusterTag} numberOfLines={1}>{g.tagline}</Text>
+                    </View>
+                    <View style={[styles.livePill, { backgroundColor: `${g.accent}22` }]}>
+                      <Text style={[styles.livePillText, { color: g.accent }]}>PLAY</Text>
+                    </View>
+                  </GlassCard>
+                ))}
+              </Animated.View>
+            </View>
+
+            {/* ── How it works ──────────────────────────────────────── */}
+            <Text style={[t.h2, styles.section]}>Three taps to chaos</Text>
+            <View style={[styles.grid, isDesktop && styles.gridRow]}>
+              {HOW.map((h, i) => {
+                const Icon = h.icon;
+                return (
+                  <Animated.View
+                    key={h.title}
+                    entering={FadeInDown.delay(i * motion.stagger).duration(motion.duration.enter)}
+                    style={{ flex: 1 }}
+                  >
+                    <GlassCard style={styles.howCard} radius={radius.lg}>
+                      <View style={styles.howIcon}>
+                        <Icon size={20} color={colors.blue} strokeWidth={2.2} />
+                      </View>
+                      <Text style={styles.howTitle}>{h.title}</Text>
+                      <Text style={styles.howBody}>{h.body}</Text>
+                    </GlassCard>
+                  </Animated.View>
+                );
+              })}
+            </View>
+
+            {/* ── The line-up ───────────────────────────────────────── */}
+            <Text style={[t.h2, styles.section]}>The line-up</Text>
+            <View style={[styles.grid, !isPhone && styles.gridWrap]}>
+              {GAMES.map((g, i) => (
+                <Animated.View
+                  key={g.id}
+                  entering={FadeInDown.delay(i * motion.stagger).duration(motion.duration.enter)}
+                  style={!isPhone ? { width: isDesktop ? '31.5%' : '48%' } : undefined}
+                >
+                  <PressableGlass
+                    radius={radius.lg}
+                    glow={g.available ? g.accent : undefined}
+                    onPress={() => router.push('/login')}
+                    disabled={!g.available}
+                    style={styles.gameCard}
+                  >
+                    <LinearGradient colors={g.cardBg as [string, string, ...string[]]} style={styles.gameArt}>
+                      {g.image
+                        ? <Image source={g.image} style={styles.gameArtImg} contentFit="contain" />
+                        : <Gamepad2 size={28} color={g.accent} strokeWidth={1.6} />}
+                    </LinearGradient>
+                    <View style={styles.gameMeta}>
+                      <Text style={styles.gameTag}>{g.available ? g.tag : 'COMING SOON'}</Text>
+                      <Text style={styles.gameTitle}>{g.title}</Text>
+                      <Text style={styles.gameTagline} numberOfLines={2}>{g.tagline}</Text>
+                    </View>
+                  </PressableGlass>
+                </Animated.View>
+              ))}
+            </View>
+
+            {/* ── Closing CTA ───────────────────────────────────────── */}
+            <GlassCard raised glow={colors.blue} radius={radius.xl} style={styles.closer}>
+              <Text style={[t.h1, styles.closerTitle]}>Someone in the room is about to lose.</Text>
+              <Text style={[t.body, styles.closerSub]}>Make it official.</Text>
+              <View style={[styles.closerCta, isPhone && { alignSelf: 'stretch' }]}>
+                <CTA label="Start playing" onPress={() => router.push('/login')} />
               </View>
-            </Pressable>
-          </Link>
-          <Text style={styles.tagline}>Games for every gathering</Text>
-        </Animated.View>
+            </GlassCard>
+
+            <Text style={styles.footer}>© {new Date().getFullYear()} Xantle · Highscore Tech</Text>
+          </View>
+        </ScrollView>
       </SafeAreaView>
     </View>
   );
 }
 
+/* ── Bits ──────────────────────────────────────────────────────────────── */
+
+const webCursor = (Platform.OS === 'web' ? { cursor: 'pointer' } : undefined) as ViewStyle;
+
+function CTA({ label, onPress, compact }: { label: string; onPress: () => void; compact?: boolean }) {
+  return (
+    <Pressable onPress={onPress} style={webCursor}>
+      {({ pressed }) => (
+        <LinearGradient
+          colors={gradients.button}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[
+            styles.cta,
+            compact ? { paddingVertical: 10, paddingHorizontal: space.md } : null,
+            pressed ? { opacity: 0.9, transform: [{ scale: motion.pressScale }] } : null,
+          ]}
+        >
+          <Text style={[styles.ctaText, compact ? { fontSize: 13 } : null]}>{label}</Text>
+          {!compact && <ArrowRight size={18} color={colors.white} strokeWidth={2.4} />}
+        </LinearGradient>
+      )}
+    </Pressable>
+  );
+}
+
+/* ── Styles ────────────────────────────────────────────────────────────── */
+
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg, overflow: 'hidden' },
-  safe: { flex: 1, paddingHorizontal: 28, paddingBottom: 34 },
-  spinner: { flex: 1 },
+  root: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  page: { width: '100%', maxWidth: maxContentWidth, alignSelf: 'center' },
 
-  logoBox: { flexDirection: 'row', alignItems: 'center', position: 'relative' },
-  xBig: {
-    fontFamily: font.display,
-    fontSize: 104,
-    lineHeight: 104,
-    color: colors.text,
-    includeFontPadding: false,
+  bar: {
+    height: 64,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    width: '100%', maxWidth: maxContentWidth, alignSelf: 'center',
   },
-  antle: {
-    fontFamily: font.display,
-    fontSize: 60,
-    lineHeight: 60,
-    color: colors.text,
-    letterSpacing: -1,
-    includeFontPadding: false,
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  brandMark: {
+    width: 32, height: 32, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: colors.blue,
   },
-  legLine: {
-    position: 'absolute',
-    bottom: 28,
-    height: LINE_H,
-    borderRadius: LINE_H / 2,
-    backgroundColor: colors.text,
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 6,
-  },
+  brand: { fontFamily: font.display, fontSize: 20, color: colors.text, letterSpacing: 0.5 },
+  barActions: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  barLink: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted },
 
-  ctaWrap: { alignSelf: 'stretch', alignItems: 'stretch', gap: 18 },
-  ctaBtn: { borderRadius: radius.lg + 2, ...shadow.blueGlow },
-  ctaPressed: { transform: [{ scale: 0.97 }], opacity: 0.97 },
-  ctaInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    borderRadius: radius.lg + 2,
-    paddingVertical: 20,
-    paddingHorizontal: 26,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    overflow: 'hidden',
+  hero: { paddingTop: space.xl, paddingBottom: space.xxl },
+  heroDesktop: {
+    flexDirection: 'row', alignItems: 'center', gap: space.xxl,
+    paddingTop: space.xxxl, paddingBottom: space.xxxl,
   },
-  ctaText: { color: colors.white, fontFamily: font.extrabold, fontSize: 18.5, letterSpacing: 0.4 },
-  ctaArrowChip: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.22)',
+  eyebrow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: space.md },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success },
+  eyebrowText: { fontFamily: font.bold, fontSize: 11, letterSpacing: 1.2, color: colors.textFaint },
+  headline: { marginBottom: space.md },
+  sub: { color: colors.textMuted, marginBottom: space.xl },
+  ctaRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  ctaRowPhone: { flexDirection: 'column', alignItems: 'stretch' },
+  ghost: {
+    paddingVertical: 14, paddingHorizontal: space.lg,
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline,
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  ctaArrow: { color: colors.white, fontFamily: font.extrabold, fontSize: 17, marginTop: -1 },
-  tagline: {
-    fontFamily: font.semibold,
-    color: colors.textMuted,
-    fontSize: 14,
-    letterSpacing: 0.3,
-    textAlign: 'center',
+  ghostText: { fontFamily: font.semibold, fontSize: 15, color: colors.text },
+  finePrint: { fontFamily: font.regular, fontSize: 12, color: colors.textFaint, marginTop: space.md },
+
+  cta: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm,
+    paddingVertical: 14, paddingHorizontal: space.xl, borderRadius: radius.pill,
+  },
+  ctaText: { fontFamily: font.bold, fontSize: 15, color: colors.white },
+
+  cluster: { marginTop: space.xl, gap: space.md },
+  clusterCard: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md },
+  clusterThumb: { width: 44, height: 44, borderRadius: 12, overflow: 'hidden' },
+  clusterTitle: { fontFamily: font.bold, fontSize: 15, color: colors.text },
+  clusterTag: { fontFamily: font.regular, fontSize: 12, color: colors.textFaint, marginTop: 2 },
+  livePill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
+  livePillText: { fontFamily: font.bold, fontSize: 10, letterSpacing: 0.8 },
+
+  section: { marginTop: space.xxl, marginBottom: space.lg },
+  grid: { gap: space.md },
+  gridRow: { flexDirection: 'row' },
+  gridWrap: { flexDirection: 'row', flexWrap: 'wrap' },
+
+  howCard: { padding: space.lg, gap: space.sm, height: '100%' },
+  howIcon: {
+    width: 40, height: 40, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(59,157,231,0.12)', marginBottom: space.xs,
+  },
+  howTitle: { fontFamily: font.bold, fontSize: 17, color: colors.text },
+  howBody: { fontFamily: font.regular, fontSize: 14, lineHeight: 21, color: colors.textMuted },
+
+  gameCard: { overflow: 'hidden' },
+  gameArt: { height: 132, alignItems: 'center', justifyContent: 'center' },
+  gameArtImg: { width: '100%', height: '100%' },
+  gameMeta: { padding: space.md, gap: 2 },
+  gameTag: { fontFamily: font.bold, fontSize: 10, letterSpacing: 1, color: colors.textFaint },
+  gameTitle: { fontFamily: font.display, fontSize: 18, color: colors.text },
+  gameTagline: { fontFamily: font.regular, fontSize: 13, lineHeight: 19, color: colors.textMuted },
+
+  closer: { padding: space.xl, marginTop: space.xxl, alignItems: 'flex-start' },
+  closerTitle: { marginBottom: space.xs },
+  closerSub: { color: colors.textMuted },
+  closerCta: { marginTop: space.lg },
+
+  footer: {
+    fontFamily: font.regular, fontSize: 12, color: colors.textFaint,
+    textAlign: 'center', marginTop: space.xxl,
   },
 });
