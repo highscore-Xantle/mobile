@@ -19,7 +19,7 @@ export function JoinModal({ visible, onClose }: JoinModalProps) {
   const handleJoin = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (code.length !== 5) {
-      Alert.alert('Invalid Code', 'Room codes are exactly 5 letters.');
+      Alert.alert('Invalid Code', 'Room codes are exactly 5 characters.');
       return;
     }
 
@@ -65,12 +65,12 @@ export function JoinModal({ visible, onClose }: JoinModalProps) {
         
         <View style={styles.card}>
           <Text style={styles.title}>Join a Game</Text>
-          <Text style={styles.sub}>Enter the 5-letter room code from the host.</Text>
+          <Text style={styles.sub}>Enter the 5-character room code from the host.</Text>
 
           <View style={styles.inputWrap}>
             <TextInput
               style={styles.input}
-              placeholder="A B C D E"
+              placeholder="A3 F9 C"
               placeholderTextColor={colors.textFaint}
               autoCapitalize="characters"
               maxLength={5}

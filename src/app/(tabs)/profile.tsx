@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
 import { goBackOr } from '../../lib/navigation';
@@ -22,6 +23,7 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [username, setUsername] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
 
   const { isOnline } = usePresence();
@@ -47,7 +49,7 @@ export default function Profile() {
     let active = true;
     supabase
       .from('profiles')
-      .select('username, created_at')
+      .select('username, avatar_url, created_at')
       .eq('id', session.user.id)
       .single()
       .then(({ data, error }) => {
@@ -56,6 +58,7 @@ export default function Profile() {
           setErrorMsg('Could not load your profile.');
         } else {
           setUsername(data.username);
+          setAvatarUrl(data.avatar_url);
           setJoinedAt(data.created_at);
         }
         setLoading(false);
@@ -195,8 +198,14 @@ export default function Profile() {
             contentContainerStyle={styles.content}
           >
             <View style={styles.avatar}>
-              <GradientFill colors={gradients.featured} />
-              <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
+              {avatarUrl ? (
+                <Image source={{ uri: avatarUrl }} style={styles.avatarImage} contentFit="cover" />
+              ) : (
+                <>
+                  <GradientFill colors={gradients.featured} />
+                  <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
+                </>
+              )}
             </View>
             <View style={[styles.statusBadge, online ? styles.statusOnline : styles.statusOffline]}>
               <View style={[styles.statusDot, { backgroundColor: online ? colors.success : colors.textMuted }]} />
@@ -354,6 +363,7 @@ const styles = StyleSheet.create({
     ...shadow.blueGlow,
   },
   avatarLetter: { fontFamily: font.extrabold, fontSize: 38, color: colors.white },
+  avatarImage: { width: 96, height: 96 },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',

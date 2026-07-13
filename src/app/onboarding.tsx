@@ -142,24 +142,26 @@ export default function Onboarding() {
     setErrorMsg('');
     const { error } = await supabase
       .from('profiles')
-      .update({
-        username,
-        address: loc.address,
-        city: loc.city,
-        region: loc.region,
-        country: loc.country,
-        latitude: loc.latitude,
-        longitude: loc.longitude,
-      })
+      .update({ username })
       .eq('id', session.user.id);
-    setSaving(false);
     if (error) {
+      setSaving(false);
       if (error.code === '23505') {
         setCheckState('taken');
         setStep('username');
       } else {
         setErrorMsg(error.message);
       }
+      return;
+    }
+    // Location/address lives in its own self-only table (profile_location),
+    // not on profiles — that table is readable by every authenticated user.
+    const { error: locWriteError } = await supabase
+      .from('profile_location')
+      .upsert({ user_id: session.user.id, ...loc });
+    setSaving(false);
+    if (locWriteError) {
+      setErrorMsg(locWriteError.message);
       return;
     }
     // Username + location saved — send them to the profile-photo step.
@@ -486,9 +488,9 @@ const styles = StyleSheet.create({
 
   // Error
   errorBox: {
-    backgroundColor: 'rgba(239,68,68,0.10)',
+    backgroundColor: 'rgba(248,113,113,0.10)', // colors.danger tint
     borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.30)',
+    borderColor: 'rgba(248,113,113,0.30)',
     borderRadius: radius.sm,
     padding: space.md,
   },

@@ -57,41 +57,45 @@ export function useWinsFeed(currentUserId: string | undefined) {
     error: null,
   });
 
-  // Cursor: ISO timestamp of the oldest post currently loaded.
-  const cursorRef = useRef<string | null>(null);
+  // Cursor: (created_at, id) of the oldest post currently loaded. Both fields
+  // are needed — created_at alone silently drops every row that ties with the
+  // cursor value (plausible for bulk-inserted/same-transaction rows) since a
+  // strict `lt` excludes all of them, not just the ones already seen.
+  const cursorRef = useRef<{ createdAt: string; id: string } | null>(null);
   // Guard against concurrent pagination calls.
   const fetchingRef = useRef(false);
 
   // ── Core fetch ──────────────────────────────────────────────────────────────
   const fetchPage = useCallback(
-    async (opts: { cursor: string | null; replace: boolean }) => {
+    async (opts: { cursor: { createdAt: string; id: string } | null; replace: boolean }) => {
       if (fetchingRef.current) return;
       fetchingRef.current = true;
 
       try {
         let query = supabase
           .from('posts')
-          .select(
-            `
-              id,
-              user_id,
-              game_type,
-              match_id,
-              result_text,
-              media_url,
-              created_at,
-              profiles:user_id ( username ),
-              post_likes ( user_id ),
-              post_comments ( id )
-            `,
-            // TODO(samuel): restore avatar_url in profiles select once the
-            // profiles.avatar_url column + Cloudinary migration has landed.
-          )
+          .select(`
+            id,
+            user_id,
+            game_type,
+            match_id,
+            result_text,
+            media_url,
+            created_at,
+            profiles:user_id ( username, avatar_url ),
+            post_likes ( user_id ),
+            post_comments ( id )
+          `)
           .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
           .limit(PAGE_SIZE);
 
         if (opts.cursor) {
-          query = query.lt('created_at', opts.cursor);
+          // created_at alone would drop every row tied with the cursor value;
+          // id is the tiebreaker, matching the ORDER BY above exactly.
+          query = query.or(
+            `created_at.lt.${opts.cursor.createdAt},and(created_at.eq.${opts.cursor.createdAt},id.lt.${opts.cursor.id})`,
+          );
         }
 
         const { data, error } = await query;
@@ -110,7 +114,7 @@ export function useWinsFeed(currentUserId: string | undefined) {
           created_at: r.created_at,
           author: {
             username: r.profiles?.username ?? null,
-            avatar_url: null, // TODO(samuel): r.profiles?.avatar_url ?? null
+            avatar_url: r.profiles?.avatar_url ?? null,
           },
           like_count: (r.post_likes ?? []).length,
           comment_count: (r.post_comments ?? []).length,
@@ -119,8 +123,8 @@ export function useWinsFeed(currentUserId: string | undefined) {
             : false,
         }));
 
-        const newCursor = mapped.length > 0 ? mapped[mapped.length - 1].created_at : null;
-        if (newCursor) cursorRef.current = newCursor;
+        const last = mapped.length > 0 ? mapped[mapped.length - 1] : null;
+        if (last) cursorRef.current = { createdAt: last.created_at, id: last.id };
 
         setState((prev) => ({
           ...prev,

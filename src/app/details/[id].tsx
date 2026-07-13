@@ -70,7 +70,7 @@ const MODES_BY_GAME: Record<string, ModeDef[]> = {
   ],
   'number-duel': [
     { key: 'online', icon: 'globe',     title: 'Play Online',    sub: 'Match with anyone',      cta: 'Play',     price: 'Free' },
-    { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Set the rules & invite', cta: 'Invite',  price: 'Free' },
+    { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Invite',                 cta: 'Invite',  price: 'Free' },
     { key: 'group',  icon: 'users',     title: 'Group',          sub: 'Up to 8 players',        cta: 'Create',   price: '$2' },
     { key: 'join',   icon: 'sign-in',   title: 'Join a Game',    sub: 'Enter an invite code',   cta: 'Join now', price: 'Free' },
   ],

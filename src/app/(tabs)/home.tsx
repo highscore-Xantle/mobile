@@ -138,7 +138,14 @@ function GameCard({
 export default function Home() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { session } = useSession();
+  const { session, loading: sessionLoading } = useSession();
+
+  // A session that goes null after mount (token refresh failure, signed out
+  // elsewhere, account deleted) used to just render a blank screen forever —
+  // nothing ever sent the user back to login.
+  useEffect(() => {
+    if (!sessionLoading && !session) router.replace('/login');
+  }, [sessionLoading, session, router]);
 
   const [activeCat, setActiveCat] = useState(0);
 

@@ -6,11 +6,7 @@ import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
 import { colors, font, shadow } from '../theme';
 
-interface Props {
-  showOnlineDot?: boolean;
-}
-
-export function HeaderAvatar({ showOnlineDot = false }: Props) {
+export function HeaderAvatar() {
   const router = useRouter();
   const { session } = useSession();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -22,6 +18,11 @@ export function HeaderAvatar({ showOnlineDot = false }: Props) {
   ).toUpperCase();
 
   useEffect(() => {
+    // Reset immediately on user change — otherwise the PREVIOUS user's photo
+    // (or a stale one from before it loads) stays on screen until/unless the
+    // new fetch happens to resolve with a truthy value, which reads like an
+    // identity leak right after switching accounts.
+    setAvatarUrl(null);
     if (!session?.user?.id) return;
     let active = true;
     supabase
@@ -30,7 +31,7 @@ export function HeaderAvatar({ showOnlineDot = false }: Props) {
       .eq('id', session.user.id)
       .maybeSingle()
       .then(({ data }) => {
-        if (active && data?.avatar_url) setAvatarUrl(data.avatar_url);
+        if (active) setAvatarUrl(data?.avatar_url ?? null);
       });
     return () => { active = false; };
   }, [session?.user?.id]);
@@ -47,7 +48,6 @@ export function HeaderAvatar({ showOnlineDot = false }: Props) {
           <Text style={styles.initial}>{initial}</Text>
         </View>
       )}
-      {showOnlineDot && <View style={styles.onlineDot} />}
     </Pressable>
   );
 }
@@ -83,16 +83,5 @@ const styles = StyleSheet.create({
     fontFamily: font.extrabold,
     fontSize: 15,
     color: colors.blue,
-  },
-  onlineDot: {
-    position: 'absolute',
-    bottom: 1,
-    right: 1,
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    backgroundColor: colors.success,
-    borderWidth: 2,
-    borderColor: colors.bg,
   },
 });

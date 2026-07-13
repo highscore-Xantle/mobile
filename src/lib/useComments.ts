@@ -51,9 +51,14 @@ export function useComments(postId: string | null) {
   });
 
   const fetchingRef = useRef(false);
+  // If a reload is requested while one's already in flight (e.g. addComment's
+  // post-submit reload landing during a realtime-triggered refresh), it used
+  // to just no-op and get silently dropped — leaving the optimistic temp
+  // comment stuck forever. Now it's queued and re-run once the current load finishes.
+  const pendingReloadRef = useRef(false);
 
   const load = useCallback(async (id: string) => {
-    if (fetchingRef.current) return;
+    if (fetchingRef.current) { pendingReloadRef.current = true; return; }
     fetchingRef.current = true;
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
@@ -63,13 +68,10 @@ export function useComments(postId: string | null) {
       // self-referential FK schema-cache issue entirely.
       const { data, error } = await supabase
         .from('post_comments')
-        .select(
-          `
-            id, post_id, user_id, parent_id, body, created_at,
-            profiles:user_id ( username )
-          `,
-          // TODO(samuel): add avatar_url back once profiles.avatar_url lands.
-        )
+        .select(`
+          id, post_id, user_id, parent_id, body, created_at,
+          profiles:user_id ( username, avatar_url )
+        `)
         .eq('post_id', id)
         .order('created_at', { ascending: true });
 
@@ -82,7 +84,7 @@ export function useComments(postId: string | null) {
       (data ?? []).forEach((c: any) => {
         const author: CommentAuthor = {
           username: c.profiles?.username ?? null,
-          avatar_url: null, // TODO(samuel): c.profiles?.avatar_url ?? null
+          avatar_url: c.profiles?.avatar_url ?? null,
         };
         if (!c.parent_id) {
           roots.push({
@@ -121,6 +123,10 @@ export function useComments(postId: string | null) {
       }));
     } finally {
       fetchingRef.current = false;
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        load(id);
+      }
     }
   }, []);
 

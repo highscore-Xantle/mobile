@@ -48,8 +48,11 @@ export default function Settings() {
           );
         }
       } else {
-        await unregisterPushNotifications(session.user.id);
-        setNotifEnabled(false);
+        const ok = await unregisterPushNotifications(session.user.id);
+        setNotifEnabled(!ok);
+        if (!ok) {
+          Alert.alert('Something went wrong', 'Could not turn off notifications. Try again.');
+        }
       }
     } catch (err) {
       console.warn('[settings] notification toggle failed:', err);

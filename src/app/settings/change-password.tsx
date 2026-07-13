@@ -167,9 +167,9 @@ const styles = StyleSheet.create({
   },
 
   errorBox: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: 'rgba(248, 113, 113, 0.1)', // colors.danger tint
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderColor: 'rgba(248, 113, 113, 0.3)',
     borderRadius: radius.sm,
     padding: space.md,
     marginBottom: space.md,

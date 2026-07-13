@@ -4,6 +4,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
   Easing,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -25,9 +26,21 @@ export function MenuDrawer({ visible, onClose }: { visible: boolean; onClose: ()
   const { session } = useSession();
   const open = useSharedValue(0);
   const [username, setUsername] = useState<string | null>(null);
+  // The Modal's own `visible` used to be bound straight to the `visible`
+  // prop, so onClose() unmounted it instantly — the 260ms slide-out
+  // animation below never got a chance to play, it just vanished. Now the
+  // Modal stays mounted until the close animation actually finishes.
+  const [mounted, setMounted] = useState(visible);
 
   useEffect(() => {
-    open.value = withTiming(visible ? 1 : 0, { duration: 260, easing: Easing.out(Easing.cubic) });
+    if (visible) {
+      setMounted(true);
+      open.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) });
+    } else {
+      open.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.cubic) }, (finished) => {
+        if (finished) runOnJS(setMounted)(false);
+      });
+    }
   }, [visible]);
 
   useEffect(() => {
@@ -61,7 +74,7 @@ export function MenuDrawer({ visible, onClose }: { visible: boolean; onClose: ()
   const displayName = username ?? session?.user?.email ?? 'Player';
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
+    <Modal visible={mounted} transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.root}>
         <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />

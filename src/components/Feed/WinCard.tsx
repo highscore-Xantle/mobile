@@ -154,13 +154,16 @@ export const WinCard = memo(function WinCard({ post, onLike, onComment }: WinCar
   };
 
   // ── Double-tap gesture ──────────────────────────────────────────────────────
+  // Instagram-style semantics: double-tap only ever LIKES, never un-likes.
+  // triggerLike toggles, so this used to silently un-like an already-liked
+  // post on a double-tap — no animation (correctly gated), but the like was
+  // removed anyway since triggerLike() always fired regardless.
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
       'worklet';
-      if (!post.viewer_has_liked) {
-        animateHeart();
-      }
+      if (post.viewer_has_liked) return;
+      animateHeart();
       runOnJS(triggerLike)();
     });
 

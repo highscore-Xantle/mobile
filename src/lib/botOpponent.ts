@@ -1,3 +1,4 @@
+import { PREVIEW_MS } from '../components/PixelBoard';
 import { supabase } from './supabase';
 import { seedFor } from './usePixelGame';
 
@@ -25,10 +26,16 @@ export async function getRecentWinRate(userId: string): Promise<number> {
   return Math.max(0, Math.min(1, trophies / matches));
 }
 
-const GRID_DELAY_RANGE_MS: Record<number, [number, number]> = {
-  3: [3000, 6000],
-  4: [5000, 9000],
-  5: [8000, 14000],
+// Solve time counted from when the puzzle actually scrambles for the human
+// (started_at + PREVIEW_MS), NOT from started_at itself — the bot's overall
+// setTimeout delay adds PREVIEW_MS back on below. Getting this wrong let the
+// bot "solve" during the 5s preview, before the human's tiles had even
+// shuffled — an unbeatable bot. Ranges are generous vs. a real solve (a 3x3
+// "swap any two tiles" puzzle takes a human several look-tap-look cycles).
+const GRID_SOLVE_RANGE_MS: Record<number, [number, number]> = {
+  3: [9000, 16000],
+  4: [15000, 26000],
+  5: [24000, 40000],
 };
 
 /**
@@ -43,10 +50,10 @@ export function computeBotSolveDelayMs(
   grid: number,
   winRate: number,
 ): number {
-  const [min, max] = GRID_DELAY_RANGE_MS[grid] ?? GRID_DELAY_RANGE_MS[5];
+  const [min, max] = GRID_SOLVE_RANGE_MS[grid] ?? GRID_SOLVE_RANGE_MS[5];
   const seed = (seedFor(gameId, round) ^ BOT_SEED_SALT) >>> 0;
   const t = mulberry32(seed)();
   // Higher win rate skews the roll toward the fast end of the range.
   const skewed = Math.pow(t, 1 + winRate * 2);
-  return Math.round(min + skewed * (max - min));
+  return PREVIEW_MS + Math.round(min + skewed * (max - min));
 }

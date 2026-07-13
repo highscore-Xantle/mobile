@@ -129,10 +129,14 @@ function randomSecret(allowDecimal: boolean, isHard: boolean): number {
   return parseFloat((Math.random() * 100).toFixed(isHard ? 2 : 1));
 }
 
-/** How long the bot takes to land on the human's secret — longer when decimals are in play. */
+/** How long the bot takes to land on the human's secret — longer when decimals are in play.
+ * A human needs several guess-and-hint round trips to close in on a 0-100
+ * secret (or a 2-decimal one), so this needs to stay well above "a couple
+ * guesses' worth" of time or the bot solves before the human gets a fair
+ * shot. */
 function botSolveDelayMs(allowDecimal: boolean, isHard: boolean): number {
-  const base = !allowDecimal ? 6000 : isHard ? 12000 : 9000;
-  return base + Math.random() * 4000;
+  const base = !allowDecimal ? 35000 : isHard ? 55000 : 45000;
+  return base + Math.random() * 20000;
 }
 
 // ─── Route dispatcher ─────────────────────────────────────────────────────────
@@ -165,15 +169,22 @@ function VersusJoin() {
     if (!meId) return;
     let active = true;
     (async () => {
-      const { data: room, error } = await supabase.rpc('matchmake_number_duel');
-      if (!active) return;
-      if (error || !room) { setErrored(true); return; }
-      if (room.status === 'active') {
-        router.replace({ pathname: '/game/number-duel', params: { roomCode: room.code } });
-        return;
+      try {
+        const { data: room, error } = await supabase.rpc('matchmake_number_duel');
+        if (!active) return;
+        if (error || !room) { setErrored(true); return; }
+        if (room.status === 'active') {
+          router.replace({ pathname: '/game/number-duel', params: { roomCode: room.code } });
+          return;
+        }
+        setRoomCode(room.code);
+        setRoomId(room.id);
+      } catch {
+        // Without this catch, a rejected (not just errored) RPC call here left
+        // roomId/roomCode unset — the bot-fallback timer below never even
+        // starts, so the searching screen never resolves at all.
+        if (active) setErrored(true);
       }
-      setRoomCode(room.code);
-      setRoomId(room.id);
     })();
     return () => { active = false; };
   }, [meId]);
@@ -187,13 +198,27 @@ function VersusJoin() {
         ({ new: row }: any) => {
           if (row?.status === 'active') router.replace({ pathname: '/game/number-duel', params: { roomCode } });
         })
-      .subscribe();
+      .subscribe((status) => {
+        // If this errors/times out, a real opponent joining won't be noticed
+        // until the bot-fallback timer fires — the timer is the safety net,
+        // this is just so a flaky realtime connection is visible, not silent.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[number-duel matchmaking] realtime subscribe failed:', status);
+        }
+      });
     const timer = setTimeout(async () => {
-      await supabase.rpc('cancel_matchmaking', { p_room: roomId });
-      const { data: botRoom, error } = await supabase.rpc('create_bot_room', { p_state: {} });
-      if (error || !botRoom) { setErrored(true); return; }
-      setBotOpp(randomBotOpponent());              // freeze the flashing photo on this identity
-      setTimeout(() => router.replace({ pathname: '/game/number-duel', params: { roomCode: botRoom.code } }), 1200);
+      try {
+        await supabase.rpc('cancel_matchmaking', { p_room: roomId });
+        const { data: botRoom, error } = await supabase.rpc('create_bot_room', { p_state: {} });
+        if (error || !botRoom) { setErrored(true); return; }
+        setBotOpp(randomBotOpponent());              // freeze the flashing photo on this identity
+        setTimeout(() => router.replace({ pathname: '/game/number-duel', params: { roomCode: botRoom.code } }), 1200);
+      } catch {
+        // Without this catch, any rejected RPC call here (network blip, etc.)
+        // left the user stuck on "Finding an opponent…" forever — nothing
+        // else would ever rescue them from that state.
+        setErrored(true);
+      }
     }, MATCH_SECONDS * 1000);
     return () => { void supabase.removeChannel(ch); clearTimeout(timer); };
   }, [roomId, roomCode, botOpp]);
@@ -576,11 +601,9 @@ function OnlineNumberDuel() {
   }, [isBot, roomCode, session, isHost, roomId, gameRules]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
-  const handleLockSecret = () => {
-    if (!inputValue) return;
+  const lockSecret = (secret: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     playSound('click');
-    const secret = parseFloat(inputValue);
     setGs(prev => ({
       ...prev,
       mySecret: secret,
@@ -593,12 +616,22 @@ function OnlineNumberDuel() {
     });
   };
 
+  const handleLockSecret = () => {
+    if (!inputValue) return;
+    lockSecret(parseFloat(inputValue));
+  };
+
+  // Countdown expiring means the player never locked one in — auto-pick and
+  // actually lock it, the same as tapping "Lock In" ourselves. Previously
+  // this only filled the input box, so the round could never leave the
+  // picking phase if a player just let the timer run out.
   const handleAutoSecret = () => {
+    if (gs.mySecret !== null) return; // already locked before the timer fired
     const v = !allowDecimal
-      ? String(Math.floor(Math.random() * 101))
-      : isHard ? (Math.random() * 100).toFixed(2)
-      : (Math.random() * 100).toFixed(1);
-    setInputValue(v);
+      ? Math.floor(Math.random() * 101)
+      : isHard ? parseFloat((Math.random() * 100).toFixed(2))
+      : parseFloat((Math.random() * 100).toFixed(1));
+    lockSecret(v);
   };
 
   const handleSubmitGuess = () => {

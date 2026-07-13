@@ -38,10 +38,10 @@ export const GAMES = [
     title: 'Number Duel',
     tag: 'MIND GAME',
     tagline: 'Pick a secret. Race to guess.',
-    gradient: ['#3B9DE7', '#4967E0'] as [string, string],
-    cardBg: ['#26314A', '#161B2E'] as string[],           // deep indigo-navy
-    theme: ['#4F7FE0', '#3546A8'] as [string, string],    // indigo-blue right-band gradient
-    accent: '#4967E0',                                    // royal indigo pill / active-icon color
+    gradient: ['#3D8BE0', '#1E5FA8'] as [string, string],
+    cardBg: ['#3B2A1D', '#150E08'] as string[],           // warm bronze-black, matches the keypad's board background
+    theme: ['#3D8BE0', '#1E5FA8'] as [string, string],    // cobalt-blue glow, sampled from the keypad's lit keys
+    accent: '#3D8BE0',                                    // same cobalt blue for the pill / active-icon color
     emoji: '🔢',
     image: require('../../../assets/games-icon/number-duel.png') as number | null,
     available: true,

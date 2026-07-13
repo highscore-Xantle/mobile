@@ -131,7 +131,13 @@ export default function PixelRushScreen() {
       .channel(`pixelrush_match_${gameId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
         ({ new: row }: any) => { if (row?.status === 'active') resolveMatch(code); })
-      .subscribe();
+      .subscribe((status) => {
+        // The bot-fallback timeout is still the safety net either way — this
+        // just makes a flaky realtime connection visible instead of silent.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[pixel-rush matchmaking] realtime subscribe failed:', status);
+        }
+      });
 
     matchTimeoutRef.current = setTimeout(async () => {
       if (resolvedRef.current) return;
