@@ -115,27 +115,26 @@ export default function Landing() {
                 <Text style={styles.finePrint}>Free to play · No download needed on the web</Text>
               </Animated.View>
 
-              {/* The product, shown rather than described. */}
+              {/* The product, shown rather than described. Fixed width on desktop —
+                  a card deck, not three banners stretched across the column. */}
               <Animated.View
                 entering={FadeIn.delay(160).duration(motion.duration.enter)}
-                style={[styles.cluster, isDesktop && { flex: 1, marginTop: 0 }]}
+                style={[styles.cluster, isDesktop && styles.clusterDesktop]}
               >
                 {playable.slice(0, 3).map((g, i) => (
                   <GlassCard
                     key={g.id}
                     raised
-                    glow={g.accent}
+                    glow={i === 0 ? g.accent : undefined}
                     radius={radius.lg}
-                    style={[
-                      styles.clusterCard,
-                      isDesktop ? { marginLeft: i * 28 } : null,
-                    ]}
+                    outerStyle={isDesktop ? { marginLeft: i * 22 } : undefined}
+                    style={styles.clusterCard}
                   >
                     <LinearGradient colors={g.theme} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.clusterThumb}>
                       {g.image ? <Image source={g.image} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}
                     </LinearGradient>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.clusterTitle}>{g.title}</Text>
+                    <View style={styles.clusterText}>
+                      <Text style={styles.clusterTitle} numberOfLines={1}>{g.title}</Text>
                       <Text style={styles.clusterTag} numberOfLines={1}>{g.tagline}</Text>
                     </View>
                     <View style={[styles.livePill, { backgroundColor: `${g.accent}22` }]}>
@@ -157,7 +156,7 @@ export default function Landing() {
                     entering={FadeInDown.delay(i * motion.stagger).duration(motion.duration.enter)}
                     style={{ flex: 1 }}
                   >
-                    <GlassCard style={styles.howCard} radius={radius.lg}>
+                    <GlassCard style={styles.howCard} outerStyle={{ flex: 1 }} radius={radius.lg}>
                       <View style={styles.howIcon}>
                         <Icon size={20} color={colors.blue} strokeWidth={2.2} />
                       </View>
@@ -201,7 +200,13 @@ export default function Landing() {
             </View>
 
             {/* ── Closing CTA ───────────────────────────────────────── */}
-            <GlassCard raised glow={colors.blue} radius={radius.xl} style={styles.closer}>
+            <GlassCard
+              raised
+              glow={colors.blue}
+              radius={radius.xl}
+              outerStyle={{ marginTop: space.xxl }}
+              style={styles.closer}
+            >
               <Text style={[t.h1, styles.closerTitle]}>Someone in the room is about to lose.</Text>
               <Text style={[t.body, styles.closerSub]}>Make it official.</Text>
               <View style={[styles.closerCta, isPhone && { alignSelf: 'stretch' }]}>
@@ -292,8 +297,11 @@ const styles = StyleSheet.create({
   ctaText: { fontFamily: font.bold, fontSize: 15, color: colors.white },
 
   cluster: { marginTop: space.xl, gap: space.md },
+  // A 420px card deck pinned right — not three banners stretched to the column.
+  clusterDesktop: { marginTop: 0, width: 420, marginLeft: 'auto' },
   clusterCard: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md },
-  clusterThumb: { width: 44, height: 44, borderRadius: 12, overflow: 'hidden' },
+  clusterThumb: { width: 46, height: 46, borderRadius: 12, overflow: 'hidden' },
+  clusterText: { flex: 1, minWidth: 0 },
   clusterTitle: { fontFamily: font.bold, fontSize: 15, color: colors.text },
   clusterTag: { fontFamily: font.regular, fontSize: 12, color: colors.textFaint, marginTop: 2 },
   livePill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
@@ -304,7 +312,7 @@ const styles = StyleSheet.create({
   gridRow: { flexDirection: 'row' },
   gridWrap: { flexDirection: 'row', flexWrap: 'wrap' },
 
-  howCard: { padding: space.lg, gap: space.sm, height: '100%' },
+  howCard: { padding: space.lg, gap: space.sm, flex: 1 },
   howIcon: {
     width: 40, height: 40, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',
@@ -321,7 +329,7 @@ const styles = StyleSheet.create({
   gameTitle: { fontFamily: font.display, fontSize: 18, color: colors.text },
   gameTagline: { fontFamily: font.regular, fontSize: 13, lineHeight: 19, color: colors.textMuted },
 
-  closer: { padding: space.xl, marginTop: space.xxl, alignItems: 'flex-start' },
+  closer: { padding: space.xl, alignItems: 'flex-start' },
   closerTitle: { marginBottom: space.xs },
   closerSub: { color: colors.textMuted },
   closerCta: { marginTop: space.lg },
