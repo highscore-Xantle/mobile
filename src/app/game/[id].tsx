@@ -22,11 +22,13 @@ import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
+import { AV_POOL } from '../../components/VersusSearch';
 import { computeBotSolveDelayMs, getRecentWinRate } from '../../lib/botOpponent';
 import { playSound } from '../../lib/sounds';
 import {
   DEFAULT_PUZZLE_IMAGE,
   autoAdvanceRound,
+  forfeitGame,
   gridForRound,
   joinGame,
   leaveGame,
@@ -74,14 +76,25 @@ export default function GameScreen() {
   // new round needs one, everyone else was stuck on "Setting up round…"
   // forever with no indication why. A short grace period avoids flagging a
   // brief background/foreground blip as a real disconnect.
-  const [hostOffline, setHostOffline] = useState(false);
+  // Scoped to 1v1 — for a group match, "the host is gone" doesn't have a
+  // single obvious winner, so this only auto-resolves the common 1v1 case.
+  const opponent1v1 = game?.max_players === 2 ? players.find((p) => p.user_id !== myId && !p.is_bot) ?? null : null;
+  const [opponentOffline, setOpponentOffline] = useState(false);
   useEffect(() => {
-    if (isHost || !game?.host_id) { setHostOffline(false); return; }
-    if (isOnline(game.host_id)) { setHostOffline(false); return; }
-    const t = setTimeout(() => setHostOffline(true), 10000);
+    if (!opponent1v1?.user_id || game?.status !== 'active') { setOpponentOffline(false); return; }
+    if (isOnline(opponent1v1.user_id)) { setOpponentOffline(false); return; }
+    const t = setTimeout(() => setOpponentOffline(true), 10000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHost, game?.host_id, isOnline(game?.host_id)]);
+  }, [opponent1v1?.user_id, game?.status, isOnline(opponent1v1?.user_id)]);
+
+  // Auto-forfeit to whoever's still here — previously there was no way for
+  // the game to ever finish if the host disconnected (only the host can call
+  // setRoundImage), and no signal at all that the opponent was even gone.
+  useEffect(() => {
+    if (!opponentOffline || !game || game.status !== 'active') return;
+    forfeitGame(game.id).catch(console.warn);
+  }, [opponentOffline, game?.id, game?.status]);
 
   // Reset solved flag when a new round starts.
   useEffect(() => { setMySolved(false); }, [round?.round_no]);
@@ -364,6 +377,11 @@ export default function GameScreen() {
             <View style={styles.scoreRow}>
               {players.map((p) => (
                 <View key={p.id} style={[styles.scoreChip, p.user_id === myId && styles.scoreChipMe]}>
+                  <Avatar
+                    letter={playerLabel(p).charAt(0)}
+                    imageUrl={p.is_bot ? AV_POOL[seedFor(game?.id ?? p.id, 0) % AV_POOL.length] : p.profile?.avatar_url ?? null}
+                    size={32}
+                  />
                   <View style={styles.scoreNameRow}>
                     {!p.is_bot && p.user_id !== myId && (
                       <View style={[styles.presenceDotSmall, { backgroundColor: isOnline(p.user_id) ? colors.success : colors.textFaint }]} />
@@ -379,19 +397,9 @@ export default function GameScreen() {
 
             {/* Board or setup indicator */}
             {(!round || round.status === 'awaiting_image') ? (
-              <View style={{ gap: space.sm }}>
-                <View style={styles.setupRow}>
-                  <ActivityIndicator color={colors.blue} />
-                  <Text style={styles.setupText}>Setting up round…</Text>
-                </View>
-                {hostOffline && (
-                  <View style={styles.disconnectBanner}>
-                    <Text style={styles.disconnectText}>The host appears to have disconnected.</Text>
-                    <Pressable style={styles.disconnectBtn} onPress={() => router.replace('/home')}>
-                      <Text style={styles.disconnectBtnText}>Leave match</Text>
-                    </Pressable>
-                  </View>
-                )}
+              <View style={styles.setupRow}>
+                <ActivityIndicator color={colors.blue} />
+                <Text style={styles.setupText}>Setting up round…</Text>
               </View>
             ) : (
               <PixelBoard
@@ -683,7 +691,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: space.md,
     alignItems: 'center',
-    gap: 2,
+    gap: 4,
     ...shadow.card,
   },
   scoreChipMe: { borderWidth: 1.5, borderColor: colors.blue },
@@ -700,18 +708,6 @@ const styles = StyleSheet.create({
     paddingVertical: space.xl,
   },
   setupText: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted },
-  disconnectBanner: {
-    padding: space.md,
-    borderRadius: radius.lg,
-    backgroundColor: 'rgba(248,113,113,0.10)',
-    borderWidth: 1,
-    borderColor: 'rgba(248,113,113,0.30)',
-    alignItems: 'center',
-    gap: space.sm,
-  },
-  disconnectText: { fontFamily: font.semibold, fontSize: 13, color: colors.danger, textAlign: 'center' },
-  disconnectBtn: { paddingVertical: 10, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: colors.danger },
-  disconnectBtnText: { fontFamily: font.bold, fontSize: 13, color: colors.white },
 
   roundResultCard: {
     borderRadius: radius.xl,

@@ -228,6 +228,12 @@ export async function leaveGame(gameId: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Ends the match with the caller as winner — used when the other player has disconnected. */
+export async function forfeitGame(gameId: string): Promise<void> {
+  const { error } = await supabase.rpc('forfeit_game', { p_game_id: gameId });
+  if (error) throw error;
+}
+
 /**
  * "Play Online" matchmaking — same pattern as Draughts' matchmake_draughts():
  * joins a recent open 1v1 game if one's waiting, otherwise creates one and

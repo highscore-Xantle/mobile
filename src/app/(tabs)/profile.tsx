@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FontAwesome } from '@expo/vector-icons';
 import { GradientFill } from '../../components/GradientFill';
 import { useGoBackOr } from '../../lib/navigation';
+import { uploadImage } from '../../lib/cloudinary';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
 import { usePresence } from '../../lib/usePresence';
@@ -24,6 +27,7 @@ export default function Profile() {
   const [username, setUsername] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const { isOnline } = usePresence();
   const online = !!session?.user && isOnline(session.user.id);
@@ -84,6 +88,37 @@ export default function Profile() {
       });
     return () => { active = false; };
   }, [session?.user?.id]);
+
+  // Onboarding only offers the photo picker once, during first-time signup —
+  // skip it there and it was gone for good. This is the way back in.
+  const handleChangePhoto = async () => {
+    if (!session?.user || uploadingPhoto) return;
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Photo access denied', 'Enable photo access in Settings to change your picture.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+      });
+      if (result.canceled || !result.assets[0]?.uri) return;
+
+      setUploadingPhoto(true);
+      const uploadedUrl = await uploadImage(result.assets[0].uri);
+      const { error } = await supabase
+        .from('profiles').update({ avatar_url: uploadedUrl }).eq('id', session.user.id);
+      if (error) throw error;
+      setAvatarUrl(uploadedUrl);
+    } catch (e: any) {
+      Alert.alert('Could not update photo', e?.message ?? 'Please try again.');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
 
   const startEditing = () => {
     setDraft(username ?? '');
@@ -196,16 +231,32 @@ export default function Profile() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.content}
           >
-            <View style={styles.avatar}>
-              {avatarUrl ? (
-                <Image source={{ uri: avatarUrl }} style={styles.avatarImage} contentFit="cover" />
-              ) : (
-                <>
-                  <GradientFill colors={gradients.featured} />
-                  <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
-                </>
-              )}
-            </View>
+            <Pressable
+              style={({ pressed }) => [styles.avatarWrap, pressed && styles.pressed]}
+              onPress={handleChangePhoto}
+              disabled={uploadingPhoto}
+              accessibilityLabel="Change profile picture"
+              accessibilityRole="button"
+            >
+              <View style={styles.avatar}>
+                {avatarUrl ? (
+                  <Image source={{ uri: avatarUrl }} style={styles.avatarImage} contentFit="cover" />
+                ) : (
+                  <>
+                    <GradientFill colors={gradients.featured} />
+                    <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
+                  </>
+                )}
+                {uploadingPhoto && (
+                  <View style={styles.avatarUploadOverlay}>
+                    <ActivityIndicator color={colors.white} />
+                  </View>
+                )}
+              </View>
+              <View style={styles.avatarEditBadge}>
+                <FontAwesome name="camera" size={12} color={colors.white} />
+              </View>
+            </Pressable>
             <View style={[styles.statusBadge, online ? styles.statusOnline : styles.statusOffline]}>
               <View style={[styles.statusDot, { backgroundColor: online ? colors.success : colors.textMuted }]} />
               <Text style={[styles.statusText, { color: online ? colors.success : colors.textMuted }]}>
@@ -351,6 +402,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   content: { alignItems: 'center', paddingTop: space.md, paddingBottom: space.xl },
+  avatarWrap: { marginBottom: space.sm },
   avatar: {
     width: 96,
     height: 96,
@@ -358,11 +410,29 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: space.sm,
     ...shadow.blueGlow,
   },
   avatarLetter: { fontFamily: font.extrabold, fontSize: 38, color: colors.white },
   avatarImage: { width: 96, height: 96 },
+  avatarUploadOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: space.sm,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.bg,
+  },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',

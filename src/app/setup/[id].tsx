@@ -28,7 +28,7 @@ export default function GameSetup() {
   const [creating, setCreating] = useState(false);
   const [joinVisible, setJoinVisible] = useState(false);
   const [settings, setSettings] = useState({
-    rounds: 12,
+    rounds: 5,
     difficulty: 'auto', // 'auto', 'easy', 'hardcore'
     mode: 'classic',    // 'classic', 'time_attack', 'blind_duel'
   });
@@ -109,22 +109,6 @@ export default function GameSetup() {
               </View>
               {settings.mode === 'time_attack' && <Text style={styles.settingNote}>15s limit per guess. Timeout = instant loss.</Text>}
               {settings.mode === 'blind_duel' && <Text style={styles.settingNote}>No higher/lower hints. Only Hot/Warm/Cold.</Text>}
-            </View>
-
-            {/* Rounds */}
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Rounds</Text>
-              <View style={styles.segmentedControl}>
-                {[3, 5, 12].map((r) => (
-                  <Pressable 
-                    key={r} 
-                    onPress={() => updateSetting('rounds', r)}
-                    style={[styles.segment, settings.rounds === r && styles.segmentActive]}
-                  >
-                    <Text style={[styles.segmentText, settings.rounds === r && styles.segmentTextActive]}>{r}</Text>
-                  </Pressable>
-                ))}
-              </View>
             </View>
 
             {/* Difficulty */}

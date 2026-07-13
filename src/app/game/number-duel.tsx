@@ -20,7 +20,8 @@ import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { NumberKeypad } from '../../components/NumberKeypad';
 import { RoundScoreboard } from '../../components/RoundScoreboard';
-import { VersusSearch, randomBotOpponent, useMyVersusProfile, type VersusPlayer } from '../../components/VersusSearch';
+import { AV_POOL, VersusSearch, randomBotOpponent, useMyVersusProfile, type VersusPlayer } from '../../components/VersusSearch';
+import { seedFor } from '../../lib/usePixelGame';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -260,14 +261,17 @@ function OnlineNumberDuel() {
   const [roomId,        setRoomId]        = useState<string | null>(null);
   const [myName,        setMyName]        = useState('You');
   const [opponentName,  setOpponentName]  = useState('Opponent');
+  const [myAvatar,      setMyAvatar]      = useState<string | null>(null);
+  const [opponentAvatar,setOpponentAvatar]= useState<string | null>(null);
   const [opponentId,    setOpponentId]    = useState<string | null>(null);
   const [isBot,         setIsBot]         = useState(false);
   const [isHost,        setIsHost]        = useState(false);
-  // Surfaces "opponent seems to have left" instead of leaving the other
+  // Detects "opponent seems to have left" instead of leaving the other
   // player waiting forever with zero indication anything's wrong — there was
   // previously no timeout or signal at all for the opponent_picking wait or
   // the non-host round_end wait. A short grace period avoids flagging a
-  // brief background/foreground blip as a disconnect.
+  // brief background/foreground blip as a disconnect. Once confirmed, the
+  // match auto-forfeits to whoever's still here (see effect below).
   const [opponentOffline, setOpponentOffline] = useState(false);
   useEffect(() => {
     if (isBot || !opponentId) { setOpponentOffline(false); return; }
@@ -276,6 +280,35 @@ function OnlineNumberDuel() {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBot, opponentId, isOnline(opponentId)]);
+
+  const [forfeitReason, setForfeitReason] = useState<'disconnect' | 'timeout' | null>(null);
+  useEffect(() => {
+    if (!opponentOffline || gs.phase === 'game_over') return;
+    setForfeitReason('disconnect');
+    setGs(prev => {
+      const nextState = { ...prev, phase: 'game_over' as const, winner: 'me' as const };
+      if (isHost && roomId) {
+        supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+          ...gameRules, round: nextState.round,
+          hostScore: isHost ? nextState.myScore : nextState.opponentScore,
+          guestScore: isHost ? nextState.opponentScore : nextState.myScore,
+        }});
+      }
+      return nextState;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opponentOffline]);
+
+  // Pick-timer forfeit escalation: letting the "pick a secret" countdown run
+  // out is now an automatic loss of that round (not "auto-fill and keep
+  // playing"), and stacks toward forfeiting the whole match. The timer also
+  // shrinks each time it happens, so an opponent who's clearly not coming
+  // back doesn't make the other player sit through the full countdown again.
+  const MAX_PICK_TIMEOUTS = 3;
+  const PICK_TIMEOUT_SHRINK_S = 10;
+  const [myPickTimeouts, setMyPickTimeouts] = useState(0);
+  const pickSeconds = Math.max(10, PICK_SECONDS - myPickTimeouts * PICK_TIMEOUT_SHRINK_S);
+
   const [inputValue,    setInputValue]    = useState('');
   const [loading,       setLoading]       = useState(true);
   const [submitting,    setSubmitting]    = useState(false);
@@ -288,7 +321,7 @@ function OnlineNumberDuel() {
   const botLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const botSolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [gameRules, setGameRules] = useState({ rounds: 12, difficulty: 'auto', mode: 'classic' });
+  const [gameRules, setGameRules] = useState({ rounds: 5, difficulty: 'auto', mode: 'classic' });
 
   const [gs, setGs] = useState<GameState>({
     round: 1, phase: 'picking',
@@ -326,7 +359,7 @@ function OnlineNumberDuel() {
 
       const { data: players } = await supabase
         .from('room_players')
-        .select('user_id, display_name, is_bot, profiles(username)')
+        .select('user_id, display_name, is_bot, profiles(username, avatar_url)')
         .eq('room_id', room.id);
 
       setRoomId(room.id);
@@ -337,7 +370,7 @@ function OnlineNumberDuel() {
       // Hydrate rules and state from Database
       if (room.state) {
         setGameRules({
-          rounds: room.state.rounds || 12,
+          rounds: room.state.rounds || 5,
           difficulty: room.state.difficulty || 'auto',
           mode: room.state.mode || 'classic'
         });
@@ -357,6 +390,12 @@ function OnlineNumberDuel() {
       const opp = players?.find((p: any) => p.user_id !== session.user.id);
       setMyName(me?.display_name  || (me?.profiles  as any)?.username || 'You');
       setOpponentName(opp?.display_name || (opp?.profiles as any)?.username || 'Opponent');
+      setMyAvatar((me?.profiles as any)?.avatar_url ?? null);
+      setOpponentAvatar(
+        (opp as any)?.is_bot
+          ? AV_POOL[seedFor(roomCode ?? room.id, 0) % AV_POOL.length]
+          : (opp?.profiles as any)?.avatar_url ?? null,
+      );
       setOpponentId(opp?.user_id ?? null);
       setIsBot(!!(opp as any)?.is_bot);
       setLoading(false);
@@ -550,6 +589,37 @@ function OnlineNumberDuel() {
       });
     });
 
+    // Opponent's pick-secret timer ran out — they lose this round automatically.
+    ch.on('broadcast', { event: 'pick_timeout' }, ({ payload }) => {
+      if (payload.userId === session.user.id) return;
+      setGs(prev => {
+        const nextState = { ...prev, myScore: prev.myScore + 1, roundWinner: 'me' as const, phase: 'round_end' as const };
+        if (isHost && roomId) {
+          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+            ...gameRules, round: nextState.round,
+            hostScore: nextState.myScore, guestScore: nextState.opponentScore,
+          }});
+        }
+        return nextState;
+      });
+    });
+
+    // Opponent hit MAX_PICK_TIMEOUTS — they forfeit the whole match.
+    ch.on('broadcast', { event: 'pick_forfeit' }, ({ payload }) => {
+      if (payload.userId === session.user.id) return;
+      setForfeitReason('timeout');
+      setGs(prev => {
+        const nextState = { ...prev, phase: 'game_over' as const, winner: 'me' as const };
+        if (isHost && roomId) {
+          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+            ...gameRules, round: nextState.round,
+            hostScore: nextState.myScore, guestScore: nextState.opponentScore,
+          }});
+        }
+        return nextState;
+      });
+    });
+
     ch.on('broadcast', { event: 'round_end' }, ({ payload }) => {
       setGs(prev => {
         // secretA = the LOSER's secret (broadcast by the loser's device).
@@ -636,17 +706,36 @@ function OnlineNumberDuel() {
     lockSecret(parseFloat(inputValue));
   };
 
-  // Countdown expiring means the player never locked one in — auto-pick and
-  // actually lock it, the same as tapping "Lock In" ourselves. Previously
-  // this only filled the input box, so the round could never leave the
-  // picking phase if a player just let the timer run out.
-  const handleAutoSecret = () => {
+  // Countdown expiring means the player never locked a secret in — that's
+  // now an automatic loss of the round (not "auto-fill a random one and
+  // keep playing", which let a player who'd walked away stall the match
+  // indefinitely). Stacks toward MAX_PICK_TIMEOUTS strikes, which forfeits
+  // the whole match instead of just the round.
+  const handlePickTimeout = () => {
     if (gs.mySecret !== null) return; // already locked before the timer fired
-    const v = !allowDecimal
-      ? Math.floor(Math.random() * 101)
-      : isHard ? parseFloat((Math.random() * 100).toFixed(2))
-      : parseFloat((Math.random() * 100).toFixed(1));
-    lockSecret(v);
+    const strikes = myPickTimeouts + 1;
+    setMyPickTimeouts(strikes);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+
+    if (strikes >= MAX_PICK_TIMEOUTS) {
+      chRef.current?.send({ type: 'broadcast', event: 'pick_forfeit', payload: { userId: session?.user.id } });
+      setForfeitReason('timeout');
+      setGs(prev => {
+        const nextState = { ...prev, phase: 'game_over' as const, winner: 'opponent' as const };
+        if (isHost && roomId) {
+          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+            ...gameRules, round: nextState.round,
+            hostScore: isHost ? nextState.myScore : nextState.opponentScore,
+            guestScore: isHost ? nextState.opponentScore : nextState.myScore,
+          }});
+        }
+        return nextState;
+      });
+      return;
+    }
+
+    chRef.current?.send({ type: 'broadcast', event: 'pick_timeout', payload: { userId: session?.user.id } });
+    setGs(prev => ({ ...prev, opponentScore: prev.opponentScore + 1, roundWinner: 'opponent', phase: 'round_end' }));
   };
 
   const handleSubmitGuess = () => {
@@ -804,7 +893,12 @@ function OnlineNumberDuel() {
           {!allowDecimal ? 'Whole numbers (0–100)' :
            isHard ? '2 decimals (e.g. 42.75)' : '1 decimal (e.g. 42.5)'}
         </Text>
-        <Countdown seconds={PICK_SECONDS} onExpire={handleAutoSecret} />
+        {myPickTimeouts > 0 && (
+          <Text style={s.strikeWarning}>
+            ⚠️ {myPickTimeouts}/{MAX_PICK_TIMEOUTS} timeouts — {MAX_PICK_TIMEOUTS - myPickTimeouts} more forfeits the match
+          </Text>
+        )}
+        <Countdown key={myPickTimeouts} seconds={pickSeconds} onExpire={handlePickTimeout} />
         <View style={s.display}>
           <Text style={s.displayText}>{inputValue || '—'}</Text>
         </View>
@@ -821,14 +915,6 @@ function OnlineNumberDuel() {
           <ActivityIndicator color={colors.blue} />
           <Text style={s.waitingText}>Waiting for {opponentName}…</Text>
         </View>
-        {opponentOffline && (
-          <View style={s.disconnectBanner}>
-            <Text style={s.disconnectText}>{opponentName} appears to have disconnected.</Text>
-            <Pressable style={s.disconnectBtn} onPress={() => router.replace('/home')}>
-              <Text style={s.disconnectBtnText}>Leave match</Text>
-            </Pressable>
-          </View>
-        )}
       </Animated.View>
     );
 
@@ -892,6 +978,13 @@ function OnlineNumberDuel() {
           {gs.winner === 'me' ? '🏆' : gs.winner === 'draw' ? '🤝' : '😔'}
         </Animated.Text>
         <Text style={s.phaseTitle}>{gs.winner === 'me' ? 'You Win!' : gs.winner === 'draw' ? "It's a Draw!" : `${opponentName} Wins!`}</Text>
+        {forfeitReason && (
+          <Text style={s.forfeitNote}>
+            {forfeitReason === 'disconnect'
+              ? (gs.winner === 'me' ? `${opponentName} disconnected — you win by forfeit.` : `You disconnected — ${opponentName} wins by forfeit.`)
+              : (gs.winner === 'me' ? `${opponentName} ran out of time too many times — you win by forfeit.` : `You ran out of time too many times — ${opponentName} wins by forfeit.`)}
+          </Text>
+        )}
         <Text style={s.scoreLabel}>Final: {gs.myScore} — {gs.opponentScore}</Text>
         <View style={s.statsCard}>
           <Text style={s.statsHeader}>Match Stats</Text>
@@ -927,19 +1020,9 @@ function OnlineNumberDuel() {
         </Pressable>
       );
       return (
-        <View style={{ gap: space.sm }}>
-          <View style={s.waitingCta}>
-            <ActivityIndicator color={colors.blue} />
-            <Text style={s.waitingText}>Waiting for host…</Text>
-          </View>
-          {opponentOffline && (
-            <View style={s.disconnectBanner}>
-              <Text style={s.disconnectText}>{opponentName} (the host) appears to have disconnected.</Text>
-              <Pressable style={s.disconnectBtn} onPress={() => router.replace('/home')}>
-                <Text style={s.disconnectBtnText}>Leave match</Text>
-              </Pressable>
-            </View>
-          )}
+        <View style={s.waitingCta}>
+          <ActivityIndicator color={colors.blue} />
+          <Text style={s.waitingText}>Waiting for host…</Text>
         </View>
       );
     }
@@ -1022,7 +1105,7 @@ function OnlineNumberDuel() {
           <HeaderAvatar />
         </View>
         <View style={s.scoreboardWrap}>
-          <RoundScoreboard round={gs.round} totalRounds={gameRules.rounds} scoreA={gs.myScore} scoreB={gs.opponentScore} nameA={myName} nameB={opponentName} difficulty={diffDisplay} />
+          <RoundScoreboard round={gs.round} totalRounds={gameRules.rounds} scoreA={gs.myScore} scoreB={gs.opponentScore} nameA={myName} nameB={opponentName} avatarA={myAvatar} avatarB={opponentAvatar} difficulty={diffDisplay} />
         </View>
         <Animated.View style={[s.gameArea, shakeStyle]}>
           <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
@@ -1050,6 +1133,7 @@ const s = StyleSheet.create({
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: space.xl },
   phaseTitle: { fontFamily: font.black, fontSize: 22, color: colors.text, textAlign: 'center' },
   phaseSub: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, textAlign: 'center' },
+  strikeWarning: { fontFamily: font.semibold, fontSize: 12, color: colors.warning, textAlign: 'center' },
   display: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: space.md, alignItems: 'center', borderWidth: 1, borderColor: colors.hairline, ...shadow.card },
   displayText: { fontFamily: font.display, fontSize: 42, color: colors.text, letterSpacing: 6 },
   secretLockedBig: { fontFamily: font.display, fontSize: 72, color: colors.blue },
@@ -1078,19 +1162,7 @@ const s = StyleSheet.create({
   waitingCta: { flexDirection: 'row', gap: space.sm, alignItems: 'center', justifyContent: 'center', paddingVertical: 18, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline },
   waitingRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
   waitingText: { fontFamily: font.semibold, fontSize: 15, color: colors.textMuted },
-  disconnectBanner: {
-    marginTop: space.md,
-    padding: space.md,
-    borderRadius: radius.lg,
-    backgroundColor: 'rgba(248,113,113,0.10)',
-    borderWidth: 1,
-    borderColor: 'rgba(248,113,113,0.30)',
-    alignItems: 'center',
-    gap: space.sm,
-  },
-  disconnectText: { fontFamily: font.semibold, fontSize: 13, color: colors.danger, textAlign: 'center' },
-  disconnectBtn: { paddingVertical: 10, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: colors.danger },
-  disconnectBtnText: { fontFamily: font.bold, fontSize: 13, color: colors.white },
+  forfeitNote: { fontFamily: font.semibold, fontSize: 13, color: colors.danger, textAlign: 'center', marginTop: -4 },
   // Share to Feed
   ctaShare: {
     borderRadius: radius.lg,

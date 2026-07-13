@@ -284,7 +284,7 @@ export default function RoomLobby() {
 
               <View style={styles.ruleItem}>
                 <Text style={styles.ruleLabel}>Rounds</Text>
-                <Text style={styles.ruleValue}>{room.state?.rounds || 12}</Text>
+                <Text style={styles.ruleValue}>{room.state?.rounds || 5}</Text>
               </View>
 
               <View style={styles.ruleItem}>
