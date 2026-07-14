@@ -41,7 +41,7 @@ export const GAMES = [
     gradient: ['#8B5A2B', '#3B2A1D'] as [string, string],
     cardBg: ['#3B2A1D', '#150E08'] as string[],           // warm bronze-black, matches the keypad's board background
     theme: ['#8B5A2B', '#3B2A1D'] as [string, string],    // warm copper-bronze — this is the hero/background gradient, has to actually match the image's own dark warm tone, not just a pop color
-    accent: '#3D8BE0',                                    // cobalt blue, sampled from the keypad's lit keys — used for highlight/pill pops, not backgrounds
+    accent: '#D98F3B',                                     // warm amber-copper, sampled from the keypad's lit "5" key — same warm family as theme, matches Draughts' accent/theme pairing
     emoji: '🔢',
     image: require('../../../assets/games-icon/number-duel.png') as number | null,
     available: true,
