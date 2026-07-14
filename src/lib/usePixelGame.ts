@@ -234,6 +234,14 @@ export async function forfeitGame(gameId: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Ends the match with the caller as LOSER — used when the caller quits a
+ *  live 1v1 via the Leave button, so the opponent gets the win instead of
+ *  being stranded in a game that can never finish. */
+export async function concedeGame(gameId: string): Promise<void> {
+  const { error } = await supabase.rpc('concede_game', { p_game_id: gameId });
+  if (error) throw error;
+}
+
 /**
  * "Play Online" matchmaking — same pattern as Draughts' matchmake_draughts():
  * joins a recent open 1v1 game if one's waiting, otherwise creates one and

@@ -8,11 +8,16 @@ type PresencePayload = { user_id: string; online_at: string };
 interface PresenceContextValue {
   isOnline: (id: string | null | undefined) => boolean;
   onlineIds: Set<string>;
+  /** False until the first presence sync arrives. Before that, onlineIds is
+   *  empty — which reads as "everyone is offline". Anything that PENALIZES
+   *  a user for being offline (e.g. auto-forfeit) must wait for this. */
+  synced: boolean;
 }
 
 const PresenceContext = createContext<PresenceContextValue>({
   isOnline: () => false,
   onlineIds: new Set(),
+  synced: false,
 });
 
 /**
@@ -25,9 +30,11 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
   const userId = session?.user?.id ?? null;
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [synced, setSynced] = useState(false);
 
   useEffect(() => {
-    if (!userId) { setOnlineIds(new Set()); return; }
+    if (!userId) { setOnlineIds(new Set()); setSynced(false); return; }
+    setSynced(false);
 
     const channel = supabase.channel('global-presence', {
       config: { presence: { key: userId } },
@@ -37,6 +44,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState<PresencePayload>();
         setOnlineIds(new Set(Object.keys(state)));
+        setSynced(true);
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
@@ -64,7 +72,8 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
   const value = useMemo<PresenceContextValue>(() => ({
     isOnline: (id) => !!id && onlineIds.has(id),
     onlineIds,
-  }), [onlineIds]);
+    synced,
+  }), [onlineIds, synced]);
 
   return <PresenceContext.Provider value={value}>{children}</PresenceContext.Provider>;
 }

@@ -46,8 +46,12 @@ export default function Landing() {
       // actually finished (same check login.tsx does). Backgrounding/killing
       // the app mid-onboarding used to drop a user into /home with no
       // username ever set.
-      const { data: profile } = await supabase
+      const { data: profile, error } = await supabase
         .from('profiles').select('username').eq('id', session.user.id).single();
+      // A FAILED fetch (network flake) is not "no username" — routing an
+      // existing user into onboarding on an error let them overwrite their
+      // own profile. Only a real "row fetched, username empty" goes there.
+      if (error) { router.replace('/home'); return; }
       router.replace(profile?.username ? '/home' : '/onboarding');
     });
   }, [router]);

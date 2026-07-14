@@ -14,7 +14,7 @@
 //   group  → $2 premium, not wired up yet (payment is a later stage)
 //   join   → shared JoinModal (already tries join_game then join_room, so
 //            it works for every game's schema without branching here)
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, Dimensions, Pressable, ScrollView,
   StyleSheet, Text, View,
@@ -99,6 +99,10 @@ export default function GameDetail() {
   const [mode, setMode] = useState<Mode>('online');
   const [joinVisible, setJoinVisible] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Double-tapping the CTA pushed the target screen twice — two stacked
+  // matchmaking screens each created a lobby and armed a bot-fallback timer,
+  // and the buried one could later hijack navigation out of the live match.
+  const navLockRef = useRef(0);
 
   if (!game) {
     return (
@@ -132,6 +136,9 @@ export default function GameDetail() {
 
   const handleCta = () => {
     if (busy) return;
+    const now = Date.now();
+    if (now - navLockRef.current < 1000) return;
+    navLockRef.current = now;
     if (mode === 'online') {
       // Draughts and Number Duel matchmake straight into a live match (or a
       // bot after a short wait) with default rules — same "Play Online"

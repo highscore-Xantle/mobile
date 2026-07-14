@@ -49,13 +49,29 @@ drop policy if exists "profile_location self update" on public.profile_location;
 create policy "profile_location self update" on public.profile_location
   for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
--- ── 2. Duplicate lobby rooms from a double-tap / client retry ───────────────
--- Neither matchmake_pixel_rush nor matchmake_number_duel checked whether the
--- caller already had an open lobby before creating a new one. A double-tap on
--- "Play Online" (or a retry after a dropped response) could leave the same
--- user hosting two lobby rows — a third real player matching into the
--- orphaned one would wait forever for a host who's actually already playing
--- elsewhere. Now idempotent: return the existing open lobby instead.
+-- ── 2. Matchmaking fixes ─────────────────────────────────────────────────────
+-- (a) "Play Online" hijacked PRIVATE invite lobbies: matchmake_* matched into
+--     ANY 1-player lobby of that game type — including one someone had just
+--     created to invite a friend into. A stranger could take the friend's
+--     seat within the 40s window and the game auto-started without the host
+--     ever pressing anything. Lobbies now carry a `matchmade` flag and
+--     matchmaking only ever touches its own kind.
+-- (b) Neither function checked whether the caller already had an open lobby
+--     before creating a new one (double-tap / dropped-response retry left
+--     orphaned lobbies a third player could match into and wait forever).
+--     Now idempotent — but a stale own-lobby (older than the 40s matchable
+--     window, e.g. after a crash) is deleted and recreated fresh, otherwise
+--     the caller could never be matched again.
+-- (c) A partial unique index backstops the double-tap race two concurrent
+--     transactions could still win; the unique_violation is caught and the
+--     surviving lobby returned.
+alter table public.games add column if not exists matchmade boolean not null default false;
+alter table public.rooms add column if not exists matchmade boolean not null default false;
+create unique index if not exists games_one_matchmade_lobby_per_host
+  on public.games (host_id) where (status = 'lobby' and matchmade);
+create unique index if not exists rooms_one_matchmade_lobby_per_host
+  on public.rooms (host_id) where (status = 'lobby' and matchmade);
+
 create or replace function public.matchmake_pixel_rush()
 returns public.games language plpgsql security definer set search_path = public as $$
 declare me uuid := auth.uid(); g public.games; c text;
@@ -67,6 +83,7 @@ begin
    where gm.game_type = 'pixel_rush'
      and gm.kind = '1v1'
      and gm.status = 'lobby'
+     and gm.matchmade
      and gm.host_id <> me
      and gm.created_at > now() - interval '40 seconds'
      and (select count(*) from public.game_players gp where gp.game_id = gm.id) = 1
@@ -84,18 +101,31 @@ begin
 
   select gm.* into g
     from public.games gm
-   where gm.game_type = 'pixel_rush' and gm.kind = '1v1' and gm.status = 'lobby' and gm.host_id = me
+   where gm.game_type = 'pixel_rush' and gm.kind = '1v1' and gm.status = 'lobby'
+     and gm.matchmade and gm.host_id = me
    order by gm.created_at desc limit 1;
-  if g.id is not null then return g; end if;
+  if g.id is not null then
+    if g.created_at > now() - interval '40 seconds' then return g; end if;
+    -- Stale (crash leftover): older than the matchable window, so nobody can
+    -- ever pair into it — recreate fresh instead of returning a dead lobby.
+    delete from public.games where id = g.id;
+  end if;
 
   loop
     c := upper(substring(md5(random()::text) for 5));
     exit when not exists (select 1 from public.games where invite_code = c and status <> 'finished');
   end loop;
-  insert into public.games (host_id, kind, game_type, max_players, invite_code, status)
-       values (me, '1v1', 'pixel_rush', 2, c, 'lobby')
-    returning * into g;
-  insert into public.game_players (game_id, user_id, is_host) values (g.id, me, true);
+  begin
+    insert into public.games (host_id, kind, game_type, max_players, invite_code, status, matchmade)
+         values (me, '1v1', 'pixel_rush', 2, c, 'lobby', true)
+      returning * into g;
+    insert into public.game_players (game_id, user_id, is_host) values (g.id, me, true);
+  exception when unique_violation then
+    -- A concurrent call from this same user created the lobby first — return it.
+    select gm.* into g from public.games gm
+     where gm.game_type = 'pixel_rush' and gm.status = 'lobby' and gm.matchmade and gm.host_id = me
+     order by gm.created_at desc limit 1;
+  end;
   return g;
 end $$;
 grant execute on function public.matchmake_pixel_rush() to authenticated;
@@ -110,6 +140,7 @@ begin
     from public.rooms rm
    where rm.game_kind = 'number-duel'
      and rm.status = 'lobby'
+     and rm.matchmade
      and rm.host_id <> me
      and rm.created_at > now() - interval '40 seconds'
      and (select count(*) from public.room_players rp where rp.room_id = rm.id) = 1
@@ -125,18 +156,28 @@ begin
 
   select rm.* into r
     from public.rooms rm
-   where rm.game_kind = 'number-duel' and rm.status = 'lobby' and rm.host_id = me
+   where rm.game_kind = 'number-duel' and rm.status = 'lobby'
+     and rm.matchmade and rm.host_id = me
    order by rm.created_at desc limit 1;
-  if r.id is not null then return r; end if;
+  if r.id is not null then
+    if r.created_at > now() - interval '40 seconds' then return r; end if;
+    delete from public.rooms where id = r.id;
+  end if;
 
   loop
     c := upper(substring(md5(random()::text) for 5));
     exit when not exists (select 1 from public.rooms where code = c and status <> 'finished');
   end loop;
-  insert into public.rooms (code, host_id, game_kind, state, is_group, max_players, status)
-       values (c, me, 'number-duel', '{}'::jsonb, false, 2, 'lobby')
-    returning * into r;
-  insert into public.room_players (room_id, user_id, is_host) values (r.id, me, true);
+  begin
+    insert into public.rooms (code, host_id, game_kind, state, is_group, max_players, status, matchmade)
+         values (c, me, 'number-duel', '{}'::jsonb, false, 2, 'lobby', true)
+      returning * into r;
+    insert into public.room_players (room_id, user_id, is_host) values (r.id, me, true);
+  exception when unique_violation then
+    select rm.* into r from public.rooms rm
+     where rm.game_kind = 'number-duel' and rm.status = 'lobby' and rm.matchmade and rm.host_id = me
+     order by rm.created_at desc limit 1;
+  end;
   return r;
 end $$;
 grant execute on function public.matchmake_number_duel() to authenticated;

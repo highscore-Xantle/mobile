@@ -250,8 +250,15 @@ export default function GamesTab() {
   // ── Handlers ─────────────────────────────────────────────────────────────────
   // Every game opens the same product-detail screen (the Draughts pattern):
   // hero + description + the 4 selectable play modes. Same flow as the Home tab.
+  // The 150ms haptic pause made this an easy double-tap target: two taps in
+  // the window pushed /details twice, seeding duplicate stack entries that
+  // broke back-navigation further in. Lock re-entry for a beat.
+  const gamePressLockRef = useRef(0);
   const handleGamePress = async (game: typeof GAMES[number]) => {
     if (!game.available) return;
+    const now = Date.now();
+    if (now - gamePressLockRef.current < 1000) return;
+    gamePressLockRef.current = now;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     await new Promise(resolve => setTimeout(resolve, 150));
     router.push(`/details/${game.id}` as any);

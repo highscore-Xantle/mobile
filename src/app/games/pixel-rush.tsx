@@ -22,6 +22,7 @@ import {
   createBotMatch,
   createPixelRushGame,
   joinGame,
+  leaveGame,
   matchmakePixelRush,
 } from '../../lib/usePixelGame';
 import { VersusSearch, randomBotOpponent, useMyVersusProfile, type VersusPlayer } from '../../components/VersusSearch';
@@ -52,12 +53,15 @@ export default function PixelRushScreen() {
   // wait for a postgres_changes update or the bot-fallback timeout, whichever
   // comes first. resolvedRef stops both from acting if they land at once.
   const matchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const botRevealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const matchChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const matchGameIdRef = useRef<string | null>(null);
+  const botGameIdRef = useRef<string | null>(null);
   const resolvedRef = useRef(false);
 
   function stopWaiting() {
     if (matchTimeoutRef.current) { clearTimeout(matchTimeoutRef.current); matchTimeoutRef.current = null; }
+    if (botRevealTimeoutRef.current) { clearTimeout(botRevealTimeoutRef.current); botRevealTimeoutRef.current = null; }
     if (matchChannelRef.current) { void supabase.removeChannel(matchChannelRef.current); matchChannelRef.current = null; }
   }
 
@@ -132,10 +136,16 @@ export default function PixelRushScreen() {
       .channel(`pixelrush_match_${gameId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
         ({ new: row }: any) => { if (row?.status === 'active') resolveMatch(code); })
-      .subscribe((status) => {
-        // The bot-fallback timeout is still the safety net either way — this
-        // just makes a flaky realtime connection visible instead of silent.
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          // An opponent can pair into this game in the gap BEFORE the
+          // subscription went live — that UPDATE is never delivered and they
+          // end up stranded against an empty seat. Re-check once now.
+          const { data } = await supabase.from('games').select('status').eq('id', gameId).maybeSingle();
+          if (data?.status === 'active') resolveMatch(code);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          // The bot-fallback timeout is still the safety net either way — this
+          // just makes a flaky realtime connection visible instead of silent.
           console.warn('[pixel-rush matchmaking] realtime subscribe failed:', status);
         }
       });
@@ -145,11 +155,17 @@ export default function PixelRushScreen() {
       stopWaiting();
       try {
         await cancelPixelRushMatch(gameId);
+        // cancel only deletes games still in 'lobby' — if an opponent flipped
+        // this one 'active' at the same instant, we're already matched; join
+        // THEM instead of leaving them stranded and playing a bot.
+        const { data: g } = await supabase.from('games').select('status').eq('id', gameId).maybeSingle();
         if (resolvedRef.current) return;
+        if (g?.status === 'active') { resolveMatch(code); return; }
         const bot = await createBotMatch('pixel_rush');
         if (resolvedRef.current) return;
+        botGameIdRef.current = bot.id;
         setBotOpp(randomBotOpponent());   // freeze the flashing photo on this identity
-        setTimeout(() => resolveMatch(bot.invite_code), 1200);
+        botRevealTimeoutRef.current = setTimeout(() => resolveMatch(bot.invite_code), 1200);
       } catch (e) {
         setErr((e as Error).message);
         setScreen('onevone');
@@ -159,9 +175,14 @@ export default function PixelRushScreen() {
 
   function cancelSearching() {
     const gameId = matchGameIdRef.current;
+    const botGameId = botGameIdRef.current;
     resolvedRef.current = true;
     stopWaiting();
     if (gameId) cancelPixelRushMatch(gameId).catch(() => {});
+    // Cancelling during the 1.2s bot reveal: the bot game already exists and
+    // is 'active' — leave it so it doesn't linger as a ghost "live room".
+    if (botGameId) { leaveGame(botGameId).catch(() => {}); botGameIdRef.current = null; }
+    setBotOpp(null);
     setScreen('onevone');
   }
 

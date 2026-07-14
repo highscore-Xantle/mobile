@@ -28,6 +28,7 @@ import { playSound } from '../../lib/sounds';
 import {
   DEFAULT_PUZZLE_IMAGE,
   autoAdvanceRound,
+  concedeGame,
   forfeitGame,
   gridForRound,
   joinGame,
@@ -47,6 +48,11 @@ import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
+// Disconnect forfeit grace. 30s (not 10s): a phone call or an app switch
+// backgrounds the app and untracks presence — losing the match over a
+// 12-second interruption is worse than the winner waiting a little longer.
+const DISCONNECT_GRACE_MS = 30000;
+
 export default function GameScreen() {
   const { id: code } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -54,7 +60,7 @@ export default function GameScreen() {
   const myId = session?.user?.id ?? null;
 
   const { game, players, round, loading, error } = useGame(code);
-  const { isOnline } = usePresence();
+  const { isOnline, synced } = usePresence();
   const isHost = game?.host_id === myId;
   const botPlayer = players.find((p) => p.is_bot) ?? null;
   const overallWinner = game?.winner_is_bot
@@ -80,20 +86,38 @@ export default function GameScreen() {
   // single obvious winner, so this only auto-resolves the common 1v1 case.
   const opponent1v1 = game?.max_players === 2 ? players.find((p) => p.user_id !== myId && !p.is_bot) ?? null : null;
   const [opponentOffline, setOpponentOffline] = useState(false);
+  const [graceRearm, setGraceRearm] = useState(0);
   useEffect(() => {
-    if (!opponent1v1?.user_id || game?.status !== 'active') { setOpponentOffline(false); return; }
+    // `synced` gate: before the first presence sync EVERYONE reads as
+    // offline — arming the timer then would forfeit an online opponent
+    // straight after mount/reconnect.
+    if (!opponent1v1?.user_id || game?.status !== 'active' || !synced) { setOpponentOffline(false); return; }
     if (isOnline(opponent1v1.user_id)) { setOpponentOffline(false); return; }
-    const t = setTimeout(() => setOpponentOffline(true), 10000);
+    const armedAt = Date.now();
+    const t = setTimeout(() => {
+      // A timer suspended by backgrounding flushes late on resume, before a
+      // fresh presence sync arrives — if far more real time passed than the
+      // grace we armed, don't trust the stale state; re-arm instead.
+      if (Date.now() - armedAt > DISCONNECT_GRACE_MS + 5000) { setGraceRearm(x => x + 1); return; }
+      setOpponentOffline(true);
+    }, DISCONNECT_GRACE_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opponent1v1?.user_id, game?.status, isOnline(opponent1v1?.user_id)]);
+  }, [opponent1v1?.user_id, game?.status, synced, graceRearm, isOnline(opponent1v1?.user_id)]);
 
   // Auto-forfeit to whoever's still here — previously there was no way for
   // the game to ever finish if the host disconnected (only the host can call
   // setRoundImage), and no signal at all that the opponent was even gone.
+  // Fire at most once, and re-verify at call time: the opponent may have
+  // come back in the moment between the grace expiring and this effect.
+  const forfeitFiredRef = useRef(false);
   useEffect(() => {
     if (!opponentOffline || !game || game.status !== 'active') return;
-    forfeitGame(game.id).catch(console.warn);
+    if (forfeitFiredRef.current) return;
+    if (opponent1v1?.user_id && isOnline(opponent1v1.user_id)) return;
+    forfeitFiredRef.current = true;
+    forfeitGame(game.id).catch((e) => { forfeitFiredRef.current = false; console.warn(e); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opponentOffline, game?.id, game?.status]);
 
   // Reset solved flag when a new round starts.
@@ -165,6 +189,10 @@ export default function GameScreen() {
       await submitSolve(game.id, round.round_no, timeMs);
       await autoAdvanceRound(game.id, round.round_no);
     } catch (e) {
+      // If the submit never reached the server (network drop), unlock the
+      // board so the player can re-solve — otherwise they sit frozen on
+      // "Solved!" while the round is silently lost.
+      setMySolved(false);
       console.warn('[game] submitSolve error:', e);
     }
   }
@@ -180,6 +208,13 @@ export default function GameScreen() {
           text: 'Leave',
           style: 'destructive',
           onPress: async () => {
+            // Quitting a live 1v1 concedes it — otherwise the game stays
+            // 'active' with one player, the opponent gets no win and no
+            // signal, and (since the quitter is still online in the app)
+            // the disconnect auto-forfeit never fires either.
+            if (game.status === 'active' && game.max_players === 2 && opponent1v1) {
+              await concedeGame(game.id).catch(console.warn);
+            }
             await leaveGame(game.id).catch(console.warn);
             router.replace('/home');
           },

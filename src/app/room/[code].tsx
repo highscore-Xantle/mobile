@@ -3,7 +3,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as Linking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import Animated, { Easing, FadeInDown, interpolate, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
@@ -27,6 +27,7 @@ export default function RoomLobby() {
   const [room, setRoom] = useState<any>(null);
   const [players, setPlayers] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   // Hooks must all be declared before any early return (Rules of Hooks)
   const pulse = useSharedValue(0.5);
@@ -57,6 +58,16 @@ export default function RoomLobby() {
   // Derive isHost from state so we can use it in an effect before early return
   const isHost = !!room && room.host_id === session?.user.id;
 
+  // The start RPC resolving AND the realtime 'active' UPDATE both navigate
+  // into the game — whichever lands second remounted the game screen
+  // mid-handshake (channel resubscribe, state reset). Navigate exactly once.
+  const navigatedRef = useRef(false);
+  const goToGame = (gameKind: string) => {
+    if (navigatedRef.current) return;
+    navigatedRef.current = true;
+    router.replace({ pathname: '/game/[id]', params: { id: gameKind, roomCode: code } });
+  };
+
   useEffect(() => {
     if (!isHost && !loading && room) {
       pulse.value = withRepeat(
@@ -79,7 +90,7 @@ export default function RoomLobby() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${code}` }, (payload) => {
         setRoom(payload.new);
         if (payload.new.status === 'active') {
-          router.replace({ pathname: '/game/[id]', params: { id: payload.new.game_kind, roomCode: code } });
+          goToGame(payload.new.game_kind);
         }
       })
       .subscribe();
@@ -118,10 +129,26 @@ export default function RoomLobby() {
 
     setRoom(roomData);
     await fetchPlayers(roomData.id);
+
+    // Auto-join: arriving via the shared deep link / QR ("Tap to join →")
+    // landed people here as pure spectators — never inserted into
+    // room_players, host stuck at 1/2, guest waiting forever. Mirror the
+    // Pixel Rush screen's behavior and seat them on arrival.
+    if (roomData.status === 'lobby' && session) {
+      const { data: existing } = await supabase
+        .from('room_players').select('user_id')
+        .eq('room_id', roomData.id).eq('user_id', session.user.id).maybeSingle();
+      if (!existing) {
+        const { error: joinErr } = await supabase.rpc('join_room', { p_code: code });
+        if (!joinErr) await fetchPlayers(roomData.id);
+        // join_room raising (room full, etc.) just leaves them a spectator, as before
+      }
+    }
+
     setLoading(false);
 
     if (roomData.status === 'active') {
-      router.replace({ pathname: '/game/[id]', params: { id: roomData.game_kind, roomCode: code } });
+      goToGame(roomData.game_kind);
     }
   };
 
@@ -136,17 +163,19 @@ export default function RoomLobby() {
   };
 
   const handleStartGame = async () => {
-    if (!room || !canStart) return;
+    if (!room || !canStart || starting) return;
+    setStarting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     playSound('click');
 
     const { error } = await supabase.rpc('start_room', { p_room: room.id });
     if (error) {
+      setStarting(false);
       Alert.alert('Error starting game', error.message);
       return;
     }
 
-    router.replace({ pathname: '/game/[id]', params: { id: room.game_kind, roomCode: code } });
+    goToGame(room.game_kind);
   };
 
   const handleToggleFlip = () => {
