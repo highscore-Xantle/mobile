@@ -38,10 +38,10 @@ export const GAMES = [
     title: 'Number Duel',
     tag: 'MIND GAME',
     tagline: 'Pick a secret. Race to guess.',
-    gradient: ['#3D8BE0', '#1E5FA8'] as [string, string],
+    gradient: ['#8B5A2B', '#3B2A1D'] as [string, string],
     cardBg: ['#3B2A1D', '#150E08'] as string[],           // warm bronze-black, matches the keypad's board background
-    theme: ['#3D8BE0', '#1E5FA8'] as [string, string],    // cobalt-blue glow, sampled from the keypad's lit keys
-    accent: '#3D8BE0',                                    // same cobalt blue for the pill / active-icon color
+    theme: ['#8B5A2B', '#3B2A1D'] as [string, string],    // warm copper-bronze — this is the hero/background gradient, has to actually match the image's own dark warm tone, not just a pop color
+    accent: '#3D8BE0',                                    // cobalt blue, sampled from the keypad's lit keys — used for highlight/pill pops, not backgrounds
     emoji: '🔢',
     image: require('../../../assets/games-icon/number-duel.png') as number | null,
     available: true,
