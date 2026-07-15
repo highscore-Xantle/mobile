@@ -376,6 +376,11 @@ function OnlineNumberDuel() {
   const [shared,        setShared]        = useState(false); // post shared to feed
   const [isEditingShare,setIsEditingShare]= useState(false);
   const [shareText,     setShareText]     = useState('');
+  // Rematch handshake. 'offering' = we asked, waiting on them; 'incoming' =
+  // they asked, we're being prompted; 'declined' = they said no. Replaces the
+  // old one-tap flow that yanked the opponent into the lobby without asking.
+  const [rematchState, setRematchState] = useState<'idle' | 'offering' | 'incoming' | 'declined'>('idle');
+  const rematchNavRef = useRef(false);
   const guessStartTimeRef = useRef<number>(0);
   // Round numbers in which WE timed out (guess-stage / pick-stage). Used to
   // reconcile the mutual-timeout race: if the opponent's timeout event for
@@ -384,6 +389,12 @@ function OnlineNumberDuel() {
   // one-sided scores on the two devices.
   const myGuessTimeoutRoundRef = useRef<number | null>(null);
   const myPickTimeoutRoundRef = useRef<number | null>(null);
+  // Round in which WE guessed the opponent's secret correctly. Mirrors the
+  // timeout refs: if the opponent ALSO guessed correctly in the same round
+  // (both solved at once), the two events would otherwise race to a
+  // non-deterministic winner that the two devices disagree on. When we see
+  // both, reconcile to a draw.
+  const myCorrectRoundRef = useRef<number | null>(null);
   const botSecretRef = useRef<number | null>(null);
   const botLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const botSolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -571,10 +582,25 @@ function OnlineNumberDuel() {
 
     ch.on('broadcast', { event: 'player_guess' }, ({ payload }) => {
       if (payload.userId === session.user.id) return;
-      // Round already decided (their timeout, our win, or game over) — a
-      // late in-flight guess must not re-open it or score a second point.
       const ph = gsRef.current.phase;
-      if (ph === 'round_end' || ph === 'game_over') return;
+      if (ph === 'game_over') return;
+      // Round already ended on this device. The one case we still act on:
+      // WE ended it by guessing correctly this same round, and now the
+      // opponent's correct guess arrives too → both solved → draw, not a
+      // one-sided win the two clients would disagree on. Evaluate their
+      // guess first to know if it was correct.
+      if (ph === 'round_end') {
+        const secretR = gsRef.current.mySecret;
+        if (secretR === null) return;
+        const gR = parseFloat(payload.guess);
+        const correctR = gameRules.mode === 'blind_duel' ? Math.abs(gR - secretR) === 0 : gR === secretR;
+        if (correctR && gsRef.current.roundWinner === 'me' && myCorrectRoundRef.current === gsRef.current.round) {
+          ch.send({ type: 'broadcast', event: 'hint_for_opponent',
+            payload: { forUserId: payload.userId, guess: payload.guess, hint: 'correct', dist: 0 } });
+          setGs(prev => ({ ...prev, myScore: prev.myScore - 1, roundWinner: null }));
+        }
+        return;
+      }
       const secret = gsRef.current.mySecret;
       if (secret === null) return;
 
@@ -618,10 +644,20 @@ function OnlineNumberDuel() {
 
     ch.on('broadcast', { event: 'hint_for_opponent' }, ({ payload }) => {
       if (payload.forUserId !== session.user.id) return;
-      // If the round ended while this reply was in flight (opponent timed
-      // out, forfeit, etc.), don't score off it — just unblock the input.
-      if (gsRef.current.phase !== 'guessing') { setSubmitting(false); return; }
       const hint: Hint = payload.hint;
+      // If the round already ended while this reply was in flight, don't
+      // score off it — EXCEPT the both-solved-at-once case: the opponent
+      // ended the round by guessing correctly this same round, and now our
+      // own correct reply arrives → draw, not a loss the clients disagree on.
+      if (gsRef.current.phase !== 'guessing') {
+        if (hint === 'correct' && gsRef.current.phase === 'round_end'
+            && gsRef.current.roundWinner === 'opponent') {
+          myCorrectRoundRef.current = gsRef.current.round;
+          setGs(prev => ({ ...prev, opponentScore: prev.opponentScore - 1, roundWinner: null }));
+        }
+        setSubmitting(false);
+        return;
+      }
       const timeSpent = Date.now() - guessStartTimeRef.current;
       // Per-guess timing: restart the clock now this guess is resolved, so
       // "Avg Guess Time" measures each guess, not cumulative time since the
@@ -641,9 +677,10 @@ function OnlineNumberDuel() {
           guessCount: prev.guessCount + 1,
           closestMiss: payload.dist !== 0 ? newMiss : prev.closestMiss,
           myGuesses: [{ value: payload.guess, hint }, ...prev.myGuesses],
-          ...(hint === 'correct' ? { myScore: prev.myScore + 1, roundWinner: 'me', phase: 'round_end' } : {}),
+          ...(hint === 'correct' ? { myScore: prev.myScore + 1, roundWinner: 'me' as const, phase: 'round_end' as const } : {}),
         };
       });
+      if (hint === 'correct') myCorrectRoundRef.current = gsRef.current.round;
 
       // We just won by guessing correctly. Broadcast OUR secret so the
       // opponent can display the correct "Their secret" on their round-end screen.
@@ -801,7 +838,30 @@ function OnlineNumberDuel() {
       setGs(prev => prev.phase === 'game_over' ? prev : { ...prev, phase: 'game_over', winner: 'me' });
     });
 
-    ch.on('broadcast', { event: 'rematch_requested' }, () => {
+    // ── Rematch handshake ──────────────────────────────────────────────
+    ch.on('broadcast', { event: 'rematch_offer' }, ({ payload }) => {
+      if (payload.userId === session.user.id) return;
+      setRematchState('incoming');
+    });
+    ch.on('broadcast', { event: 'rematch_cancel' }, ({ payload }) => {
+      if (payload.userId === session.user.id) return;
+      // The offerer withdrew — dismiss our incoming prompt if we hadn't answered.
+      setRematchState(prev => prev === 'incoming' ? 'idle' : prev);
+    });
+    ch.on('broadcast', { event: 'rematch_decline' }, ({ payload }) => {
+      if (payload.userId === session.user.id) return;
+      setRematchState('declined');
+    });
+    ch.on('broadcast', { event: 'rematch_accept' }, ({ payload }) => {
+      if (payload.userId === session.user.id) return;
+      // Opponent accepted our offer → proceed. The host (either side) resets
+      // the room and fires rematch_go so neither client navigates to a
+      // stale/finished lobby before the reset lands.
+      proceedToRematch();
+    });
+    ch.on('broadcast', { event: 'rematch_go' }, () => {
+      if (rematchNavRef.current) return;
+      rematchNavRef.current = true;
       router.replace({ pathname: '/room/[code]', params: { code: roomCode } });
     });
 
@@ -965,12 +1025,38 @@ function OnlineNumberDuel() {
     }));
   };
 
-  const handleRematch = async () => {
+  // Whoever is host resets the room, then signals both clients to move to the
+  // lobby — guaranteeing nobody navigates into a still-'finished' room. The
+  // guest just waits for rematch_go.
+  const proceedToRematch = async () => {
     if (isHost && roomId) {
       await supabase.rpc('reset_room', { p_room: roomId, p_state: gameRules });
+      chRef.current?.send({ type: 'broadcast', event: 'rematch_go', payload: {} });
+      if (!rematchNavRef.current) {
+        rematchNavRef.current = true;
+        router.replace({ pathname: '/room/[code]', params: { code: roomCode } });
+      }
     }
-    chRef.current?.send({ type: 'broadcast', event: 'rematch_requested', payload: {} });
-    router.replace({ pathname: '/room/[code]', params: { code: roomCode } });
+    // non-host: navigation happens when rematch_go arrives
+  };
+
+  const offerRematch = () => {
+    playSound('click');
+    setRematchState('offering');
+    chRef.current?.send({ type: 'broadcast', event: 'rematch_offer', payload: { userId: session?.user.id } });
+  };
+  const cancelRematchOffer = () => {
+    setRematchState('idle');
+    chRef.current?.send({ type: 'broadcast', event: 'rematch_cancel', payload: { userId: session?.user.id } });
+  };
+  const acceptRematch = () => {
+    playSound('click');
+    chRef.current?.send({ type: 'broadcast', event: 'rematch_accept', payload: { userId: session?.user.id } });
+    proceedToRematch();
+  };
+  const declineRematch = () => {
+    setRematchState('idle');
+    chRef.current?.send({ type: 'broadcast', event: 'rematch_decline', payload: { userId: session?.user.id } });
   };
 
   // ── Share game result to the Wins Feed ───────────────────────────────────
@@ -1208,8 +1294,23 @@ function OnlineNumberDuel() {
             <GradientFill colors={gradients.button} />
             <Text style={s.ctaText}>Find another match</Text>
           </Pressable>
+        ) : rematchState === 'offering' ? (
+          <View style={s.rematchWaiting}>
+            <ActivityIndicator color={colors.blue} />
+            <Text style={s.rematchWaitingText}>Waiting for {opponentName} to accept…</Text>
+            <Pressable onPress={cancelRematchOffer} hitSlop={8}>
+              <Text style={s.rematchCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : rematchState === 'declined' ? (
+          <View style={s.rematchWaiting}>
+            <Text style={s.rematchWaitingText}>{opponentName} declined the rematch.</Text>
+            <Pressable style={({ pressed }) => [s.ctaOutline, pressed && s.pressed]} onPress={() => setRematchState('idle')}>
+              <Text style={s.ctaOutlineText}>OK</Text>
+            </Pressable>
+          </View>
         ) : (
-          <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={handleRematch}>
+          <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={offerRematch}>
             <GradientFill colors={gradients.button} />
             <Text style={s.ctaText}>Rematch 🔄</Text>
           </Pressable>
@@ -1259,6 +1360,26 @@ function OnlineNumberDuel() {
           <View style={s.ctaWrap}>{renderCTA()}</View>
         </Animated.View>
       </SafeAreaView>
+
+      {/* Incoming rematch prompt — the opponent asked, we choose. */}
+      {rematchState === 'incoming' && (
+        <View style={s.rematchOverlay}>
+          <Animated.View entering={FadeInUp.springify().damping(16)} style={s.rematchCard}>
+            <Text style={s.rematchEmoji}>🔄</Text>
+            <Text style={s.rematchTitle}>{opponentName} wants a rematch!</Text>
+            <Text style={s.rematchSub}>Play another {gameRules.rounds}-round duel?</Text>
+            <View style={s.rematchBtnRow}>
+              <Pressable style={({ pressed }) => [s.rematchDecline, pressed && s.pressed]} onPress={declineRematch}>
+                <Text style={s.rematchDeclineText}>No thanks</Text>
+              </Pressable>
+              <Pressable style={({ pressed }) => [s.rematchAccept, pressed && s.pressed]} onPress={acceptRematch}>
+                <GradientFill colors={gradients.button} />
+                <Text style={s.rematchAcceptText}>Rematch</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -1267,6 +1388,19 @@ function OnlineNumberDuel() {
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1 },
+  rematchWaiting: { alignItems: 'center', gap: space.sm, paddingVertical: space.md },
+  rematchWaitingText: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted, textAlign: 'center' },
+  rematchCancelText: { fontFamily: font.bold, fontSize: 14, color: colors.textFaint, padding: space.xs },
+  rematchOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: space.lg },
+  rematchCard: { width: '100%', maxWidth: 360, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline, padding: space.xl, alignItems: 'center', gap: space.sm, ...shadow.card },
+  rematchEmoji: { fontSize: 44 },
+  rematchTitle: { fontFamily: font.display, fontSize: 20, color: colors.text, textAlign: 'center' },
+  rematchSub: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted, textAlign: 'center', marginBottom: space.sm },
+  rematchBtnRow: { flexDirection: 'row', gap: space.md, alignSelf: 'stretch' },
+  rematchDecline: { flex: 1, paddingVertical: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline, alignItems: 'center' },
+  rematchDeclineText: { fontFamily: font.bold, fontSize: 15, color: colors.text },
+  rematchAccept: { flex: 1, paddingVertical: 14, borderRadius: radius.lg, alignItems: 'center', overflow: 'hidden' },
+  rematchAcceptText: { fontFamily: font.bold, fontSize: 15, color: colors.white },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: space.sm },
   backBtn: { padding: space.xs },
   backText: { fontFamily: font.bold, fontSize: 14, color: colors.textFaint },
