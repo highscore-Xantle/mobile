@@ -23,9 +23,19 @@ create table if not exists public.profile_location (
   updated_at timestamptz not null default now()
 );
 
-insert into public.profile_location (user_id, city, region, country, latitude, longitude, address)
-select id, city, region, country, latitude, longitude, address from public.profiles
-on conflict (user_id) do nothing;
+-- Guarded so the file is safe to re-run: on a DB where the columns were
+-- already migrated + dropped, this copy is skipped instead of erroring.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'profiles' and column_name = 'city'
+  ) then
+    insert into public.profile_location (user_id, city, region, country, latitude, longitude, address)
+    select id, city, region, country, latitude, longitude, address from public.profiles
+    on conflict (user_id) do nothing;
+  end if;
+end $$;
 
 alter table public.profiles
   drop column if exists city,
