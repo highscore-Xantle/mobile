@@ -66,9 +66,16 @@ export function useWinsFeed(currentUserId: string | undefined) {
   const fetchingRef = useRef(false);
 
   // ── Core fetch ──────────────────────────────────────────────────────────────
+  // A refresh requested while a pagination fetch is in flight used to no-op
+  // silently (spinner cleared, stale content kept); queue it instead.
+  const pendingRefreshRef = useRef(false);
+
   const fetchPage = useCallback(
     async (opts: { cursor: { createdAt: string; id: string } | null; replace: boolean }) => {
-      if (fetchingRef.current) return;
+      if (fetchingRef.current) {
+        if (opts.replace) pendingRefreshRef.current = true;
+        return;
+      }
       fetchingRef.current = true;
 
       try {
@@ -143,6 +150,12 @@ export function useWinsFeed(currentUserId: string | undefined) {
         }));
       } finally {
         fetchingRef.current = false;
+        if (pendingRefreshRef.current) {
+          pendingRefreshRef.current = false;
+          cursorRef.current = null;
+          // Run the queued refresh now that the in-flight fetch settled.
+          fetchPage({ cursor: null, replace: true });
+        }
       }
     },
     [currentUserId],
@@ -176,35 +189,36 @@ export function useWinsFeed(currentUserId: string | undefined) {
    */
   const mutateLike = useCallback(
     async (postId: string): Promise<string | null> => {
-      // 1. Snapshot before mutation for rollback.
-      const snapshot = [...state.posts];
+      const flip = (p: WinPost): WinPost => ({
+        ...p,
+        viewer_has_liked: !p.viewer_has_liked,
+        like_count: p.viewer_has_liked ? p.like_count - 1 : p.like_count + 1,
+      });
 
-      // 2. Optimistic update.
+      // Optimistic update.
       setState((prev) => ({
         ...prev,
-        posts: prev.posts.map((p) =>
-          p.id === postId
-            ? {
-                ...p,
-                viewer_has_liked: !p.viewer_has_liked,
-                like_count: p.viewer_has_liked ? p.like_count - 1 : p.like_count + 1,
-              }
-            : p,
-        ),
+        posts: prev.posts.map((p) => (p.id === postId ? flip(p) : p)),
       }));
 
-      // 3. Server call.
+      // Server call. Rollback is TARGETED — re-flipping just this post.
+      // Restoring a whole-array snapshot silently discarded anything that
+      // happened while the RPC was in flight (pages appended by pagination,
+      // other optimistic likes), and left the cursor pointing past the
+      // dropped rows.
       try {
         const { error } = await supabase.rpc('toggle_like', { p_post_id: postId });
         if (error) throw error;
         return null;
       } catch (err: any) {
-        // 4. Rollback.
-        setState((prev) => ({ ...prev, posts: snapshot }));
+        setState((prev) => ({
+          ...prev,
+          posts: prev.posts.map((p) => (p.id === postId ? flip(p) : p)),
+        }));
         return err?.message ?? 'Failed to update like.';
       }
     },
-    [state.posts],
+    [],
   );
 
   return {

@@ -123,9 +123,13 @@ export interface WinCardProps {
   post: WinPost;
   onLike: (postId: string) => Promise<string | null>;
   onComment: (postId: string) => void;
+  /** Lets the avatar tap open /profile only for the viewer's OWN posts —
+   *  there is no other-user profile screen yet, and routing everyone to the
+   *  viewer's own profile pretended otherwise. */
+  currentUserId?: string;
 }
 
-export const WinCard = memo(function WinCard({ post, onLike, onComment }: WinCardProps) {
+export const WinCard = memo(function WinCard({ post, onLike, onComment, currentUserId }: WinCardProps) {
   const router = useRouter();
   const heartScale = useSharedValue(0);
   // Guard duplicate rapid-fire like taps.
@@ -177,9 +181,10 @@ export const WinCard = memo(function WinCard({ post, onLike, onComment }: WinCar
 
   // ── Navigate to profile ──────────────────────────────────────────────────────
   const handleAvatarPress = useCallback(() => {
+    if (post.user_id !== currentUserId) return; // no other-user profile screen yet
     Haptics.selectionAsync();
     router.push('/profile');
-  }, [router]);
+  }, [router, post.user_id, currentUserId]);
 
   // ── Navigate to game details ─────────────────────────────────────────────────
   const handlePlayPress = useCallback(() => {

@@ -15,7 +15,7 @@
  * to the outer view instead is what produced the "content trapped in a tiny box
  * inside a giant empty card" bug.)
  */
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { Platform, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { BlurView } from 'expo-blur';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
@@ -75,6 +75,9 @@ export function PressableGlass({
   children, style, outerStyle, onPress, radius = R.md, raised = true, glow, disabled, intensity,
 }: GlassProps & { onPress?: () => void; disabled?: boolean }) {
   const pressed = useSharedValue(0);
+  // Absorb double-taps: most consumers navigate onPress, and a double-tap
+  // pushed the target screen twice (duplicate stack entries break back).
+  const lastPressRef = useRef(0);
 
   const aStyle = useAnimatedStyle(() => ({
     transform: [{ scale: withSpring(1 - pressed.value * (1 - motion.pressScale), motion.spring) }],
@@ -90,7 +93,12 @@ export function PressableGlass({
           if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         }}
         onPressOut={() => { pressed.value = 0; }}
-        onPress={onPress}
+        onPress={() => {
+          const now = Date.now();
+          if (now - lastPressRef.current < 600) return;
+          lastPressRef.current = now;
+          onPress?.();
+        }}
         style={Platform.OS === 'web' && !disabled ? ({ cursor: 'pointer' } as ViewStyle) : undefined}
       >
         <GlassCard style={style} radius={radius} raised={raised} glow={glow} intensity={intensity}>

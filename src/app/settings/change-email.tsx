@@ -24,7 +24,11 @@ export default function ChangeEmail() {
   const goBack = useGoBackOr('/settings');
   const { session } = useSession();
 
-  const [step, setStep] = useState<'email' | 'otp'>('email');
+  // 'otp' = code sent to the NEW address; 'otp-old' = Supabase's "secure
+  // email change" (the dashboard default) also requires a second code sent
+  // to the OLD address — without handling it this screen said "Email
+  // updated" after one code while the email hadn't actually changed.
+  const [step, setStep] = useState<'email' | 'otp' | 'otp-old'>('email');
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [saving, setSaving] = useState(false);
@@ -43,7 +47,7 @@ export default function ChangeEmail() {
 
   // Auto-verify as soon as the 6th digit lands — same UX as sign-in's OTP step.
   useEffect(() => {
-    if (step === 'otp' && otp.length === 6 && !saving) {
+    if (step !== 'email' && otp.length === 6 && !saving) {
       verifyChange();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -82,8 +86,10 @@ export default function ChangeEmail() {
     setErrorMsg('');
 
     try {
+      // Which address this code was sent to depends on the step.
+      const target = step === 'otp-old' ? (session?.user?.email ?? '') : email.trim();
       const { error } = await supabase.auth.verifyOtp({
-        email: email.trim(),
+        email: target,
         token: otp,
         type: 'email_change',
       });
@@ -93,8 +99,24 @@ export default function ChangeEmail() {
         return;
       }
 
-      Alert.alert('Email updated', 'Your email address has been changed.');
-      goBack();
+      // Don't trust one accepted code — confirm the email ACTUALLY changed.
+      // With secure email change enabled, the first code alone changes
+      // nothing, and this screen used to announce success anyway.
+      const { data: fresh } = await supabase.auth.getUser();
+      const changed = fresh?.user?.email?.toLowerCase() === email.trim().toLowerCase();
+      if (changed) {
+        Alert.alert('Email updated', 'Your email address has been changed.');
+        goBack();
+        return;
+      }
+      if (step === 'otp') {
+        // Second confirmation required — a code was also sent to the OLD address.
+        setStep('otp-old');
+        setOtp('');
+        return;
+      }
+      setErrorMsg('Could not confirm the change — request a new code and try again.');
+      setOtp('');
     } catch (e: any) {
       setErrorMsg(e?.message ?? 'Could not reach the server. Check your connection and try again.');
       setOtp('');
@@ -172,7 +194,11 @@ export default function ChangeEmail() {
           </>
         ) : (
           <>
-            <Text style={styles.otpHint}>We sent a 6-digit code to {email.trim()}</Text>
+            <Text style={styles.otpHint}>
+              {step === 'otp-old'
+                ? `One more step: we also sent a code to ${session?.user?.email} (your current email) to confirm it's really you.`
+                : `We sent a 6-digit code to ${email.trim()}`}
+            </Text>
 
             <View style={styles.inputWrap}>
               <TextInput

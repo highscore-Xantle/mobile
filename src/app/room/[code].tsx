@@ -109,6 +109,23 @@ export default function RoomLobby() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, session?.user?.id]);
 
+  // Fallback poll: the lobby→game handoff is otherwise realtime-only, and a
+  // status UPDATE landing while the socket is down (backgrounded app, flaky
+  // network, subscribe gap) stranded the guest on "Waiting for host…"
+  // forever while the host sat alone in the game.
+  useEffect(() => {
+    if (!room?.id || room.status !== 'lobby') return;
+    const roomId = room.id;
+    const t = setInterval(async () => {
+      const { data } = await supabase.from('rooms').select('*').eq('id', roomId).maybeSingle();
+      if (!data) return;
+      setRoom(data);
+      if (data.status === 'active') goToGame(data.game_kind);
+    }, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id, room?.status]);
+
   useEffect(() => {
     if (!room?.id) return;
     const roomId = room.id;
@@ -329,7 +346,9 @@ export default function RoomLobby() {
             </Animated.View>
           </View>
 
-          {/* Read-Only Rules Section */}
+          {/* Read-Only Rules Section — these are Number Duel's rules; showing
+              "Classic / 5 rounds / Auto" over a Draughts lobby was fiction. */}
+          {room.game_kind === 'number-duel' && (
           <View style={styles.settingsSection}>
             <Text style={styles.sectionHeader}>Game Rules</Text>
 
@@ -357,6 +376,7 @@ export default function RoomLobby() {
             </View>
             <Text style={styles.guestSettingsNote}>These rules were chosen by the host.</Text>
           </View>
+          )}
 
           {/* Players List */}
           <View style={styles.playersSection}>

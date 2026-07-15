@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, SlideInDown } from 'react-native-reanimated';
 import { useSession } from '../../lib/useSession';
@@ -202,6 +203,7 @@ const sheetStyles = StyleSheet.create({
  */
 export default function GamesTab() {
   const router = useRouter();
+  const isFocused = useIsFocused();
   const { session } = useSession();
   const [joinVisible, setJoinVisible] = useState(false);
   const [liveRooms, setLiveRooms] = useState<Record<string, ActiveRoom[]>>({});
@@ -249,10 +251,11 @@ export default function GamesTab() {
   }, []);
 
   useEffect(() => {
+    if (!isFocused) return;  // don't burn a 2-query poll from a background tab
     fetchLiveRooms();
     const interval = setInterval(fetchLiveRooms, 10_000);
     return () => clearInterval(interval);
-  }, [fetchLiveRooms]);
+  }, [fetchLiveRooms, isFocused]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
   // Every game opens the same product-detail screen (the Draughts pattern):
@@ -355,7 +358,7 @@ export default function GamesTab() {
                     <View style={styles.gameBanner}>
                       <GradientFill colors={g.gradient} />
                       <Text style={styles.gameEmoji}>{g.emoji}</Text>
-                      {isLive && (
+                      {isLive && (g.hasViewer ? (
                         <Pressable
                           style={styles.liveBadge}
                           onPress={() => handleLiveBadgePress(g)}
@@ -365,7 +368,14 @@ export default function GamesTab() {
                           <LiveDot color={colors.white} />
                           <Text style={styles.liveBadgeText}>LIVE · {roomsForGame.length}</Text>
                         </Pressable>
-                      )}
+                      ) : (
+                        // No viewer for this game — show the count, but not as
+                        // a button whose tap silently does nothing.
+                        <View style={styles.liveBadge}>
+                          <LiveDot color={colors.white} />
+                          <Text style={styles.liveBadgeText}>LIVE · {roomsForGame.length}</Text>
+                        </View>
+                      ))}
                       {!g.available && (
                         <View style={styles.soonOverlay}>
                           <Text style={styles.soonText}>COMING SOON</Text>
