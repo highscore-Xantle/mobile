@@ -144,6 +144,18 @@ export function useGame(code: string | undefined) {
       .channel(`game-${code}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'games' }, (payload) => {
         if (!mounted) return;
+        // DELETE: payload.new is empty — the old row (id only, by default
+        // replica identity) is in payload.old. Server-side deletes happen
+        // (stale-lobby cleanup, cancel racing a join); without this the
+        // screen froze forever on a game that no longer exists.
+        if (payload.eventType === 'DELETE') {
+          const old = payload.old as Partial<Game>;
+          if (old?.id && old.id === gameIdRef.current) {
+            setGame(null);
+            setError('This game no longer exists.');
+          }
+          return;
+        }
         const g = payload.new as Game;
         // The subscription isn't server-side filtered, so ignore other games' changes.
         if (g.invite_code !== code!.toUpperCase()) return;

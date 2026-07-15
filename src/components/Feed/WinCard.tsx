@@ -54,9 +54,16 @@ const GAME_BADGE_MAP: Record<string, { label: string; color: string }> = {
   'pixel-rush': { label: 'PIXEL RUSH', color: colors.blue },
 };
 
+// Posts arrive with either spelling: Pixel Rush shares 'pixel_rush' (its DB
+// game_type) while rooms games use kebab-case ids. Normalize before lookups.
+function normalizeGameType(gameType: string) {
+  return gameType.replace(/_/g, '-');
+}
+
 function gameBadge(gameType: string) {
+  const key = normalizeGameType(gameType);
   return (
-    GAME_BADGE_MAP[gameType] ?? { label: gameType.toUpperCase(), color: colors.textFaint }
+    GAME_BADGE_MAP[key] ?? { label: key.toUpperCase(), color: colors.textFaint }
   );
 }
 
@@ -146,10 +153,11 @@ export const WinCard = memo(function WinCard({ post, onLike, onComment }: WinCar
 
   const handlePlayGame = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (post.game_type === 'pixel-rush') {
+    const kind = normalizeGameType(post.game_type);
+    if (kind === 'pixel-rush') {
       router.push('/games/pixel-rush' as any);
     } else {
-      router.push(`/setup/${post.game_type}` as any);
+      router.push(`/setup/${kind}` as any);
     }
   };
 

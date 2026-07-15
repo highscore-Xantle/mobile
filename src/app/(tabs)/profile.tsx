@@ -74,18 +74,22 @@ export default function Profile() {
   useEffect(() => {
     if (!session?.user) return;
     let active = true;
-    supabase
-      .from('game_players')
-      .select('score, trophies')
-      .eq('user_id', session.user.id)
-      .then(({ data }) => {
-        if (!active || !data) return;
-        const matches = data.length;
-        const roundsWon = data.reduce((s, r) => s + (r.score ?? 0), 0);
-        const trophies = data.reduce((s, r) => s + (r.trophies ?? 0), 0);
-        const winRate = matches > 0 ? Math.round((trophies / matches) * 100) : 0;
-        setStats({ matches, roundsWon, trophies, winRate });
-      });
+    (async () => {
+      const [{ data: rows }, { count: wins }] = await Promise.all([
+        supabase.from('game_players').select('score, trophies').eq('user_id', session.user.id),
+        // Wins counted from finished games actually won — `trophies` is a
+        // lifetime counter that survives rematches within one game row, so
+        // trophies/matches could read 500%.
+        supabase.from('games').select('id', { count: 'exact', head: true })
+          .eq('winner_player', session.user.id).eq('status', 'finished'),
+      ]);
+      if (!active || !rows) return;
+      const matches = rows.length;
+      const roundsWon = rows.reduce((s, r) => s + (r.score ?? 0), 0);
+      const trophies = rows.reduce((s, r) => s + (r.trophies ?? 0), 0);
+      const winRate = matches > 0 ? Math.min(100, Math.round(((wins ?? 0) / matches) * 100)) : 0;
+      setStats({ matches, roundsWon, trophies, winRate });
+    })();
     return () => { active = false; };
   }, [session?.user?.id]);
 
@@ -153,13 +157,19 @@ export default function Profile() {
     debounceTimer.current = setTimeout(() => checkAvailability(trimmed), 600);
   };
 
+  // Versioned so a slow response for an OLD input can't overwrite the state
+  // set for the current one (type "cooldude", backspace to "co", stale
+  // "available" lands → Save enables for a 2-char name).
+  const checkSeqRef = useRef(0);
   const checkAvailability = async (value: string) => {
+    const seq = ++checkSeqRef.current;
     const { data, error } = await supabase
       .from('profiles')
       .select('username')
       .eq('username', value)
       .maybeSingle();
 
+    if (seq !== checkSeqRef.current) return; // stale response for older input
     if (error) {
       setCheckState('idle');
       return;
@@ -169,6 +179,13 @@ export default function Profile() {
 
   const handleSave = async () => {
     if (checkState !== 'available' || !session?.user) return;
+    // Re-validate the CURRENT draft — `checkState` may describe an earlier
+    // value of the input, and only the DB's unique constraint backstops
+    // "taken"; nothing else backstops "invalid".
+    if (draft.length < MIN_LEN || draft.length > MAX_LEN || !VALID_RE.test(draft)) {
+      setCheckState('invalid');
+      return;
+    }
     setSaving(true);
 
     const { error } = await supabase
@@ -181,7 +198,9 @@ export default function Profile() {
       if (error.code === '23505') {
         setCheckState('taken');
       } else {
-        setErrorMsg(error.message);
+        // Alert, not the full-screen errorMsg branch — that replaced the
+        // whole profile tab with a dead-end error page over one flaky save.
+        Alert.alert('Could not save username', error.message);
       }
       return;
     }

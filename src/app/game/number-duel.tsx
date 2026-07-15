@@ -3,7 +3,7 @@ import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -13,6 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
+import { useGoBackOr } from '../../lib/navigation';
 import { playSound } from '../../lib/sounds';
 import { useSession } from '../../lib/useSession';
 import { usePresence } from '../../lib/usePresence';
@@ -154,6 +155,9 @@ function botSolveDelayMs(allowDecimal: boolean, isHard: boolean): number {
 export default function NumberDuel() {
   const { roomCode, mp } = useLocalSearchParams<{ roomCode?: string; mp?: string }>();
   if (!roomCode && mp === 'online') return <VersusJoin />;
+  // Neither param (stale deep link, typo'd push): the game screen would sit
+  // on an infinite spinner with no back affordance — go to the game's page.
+  if (!roomCode) return <Redirect href="/details/number-duel" />;
   return <OnlineNumberDuel />;
 }
 
@@ -163,6 +167,10 @@ export default function NumberDuel() {
 // means wait for a postgres_changes update or the timeout, whichever first.
 function VersusJoin() {
   const router = useRouter();
+  // Verified back-or-fallback: on web a refresh can land directly on
+  // ?mp=online with no history — a bare router.back() no-ops and the Cancel
+  // button reads as dead.
+  const goBack = useGoBackOr('/details/number-duel');
   const { session } = useSession();
   const meId = session?.user?.id ?? null;
   const me = useMyVersusProfile();
@@ -250,11 +258,15 @@ function VersusJoin() {
         const { data: botRoom, error } = await supabase.rpc('create_bot_room', { p_state: {} });
         if (resolvedRef.current || !focusedRef.current) return;
         if (error || !botRoom) { setErrored(true); return; }
-        setBotOpp(randomBotOpponent());              // freeze the flashing photo on this identity
+        const disguise = randomBotOpponent();        // freeze the flashing photo on this identity
+        setBotOpp(disguise);
         revealTimer = setTimeout(() => {
           if (resolvedRef.current || !focusedRef.current) return;
           resolvedRef.current = true;
-          router.replace({ pathname: '/game/number-duel', params: { roomCode: botRoom.code } });
+          // Pass the disguise through — the game screen would otherwise show
+          // the DB's "Xantle Bot" name and a different avatar, blowing the
+          // cover the search screen just established.
+          router.replace({ pathname: '/game/number-duel', params: { roomCode: botRoom.code, botName: disguise.name, botAvatar: disguise.avatar ?? '' } });
         }, 1200);
       } catch {
         // Without this catch, any rejected RPC call here (network blip, etc.)
@@ -267,13 +279,28 @@ function VersusJoin() {
       void supabase.removeChannel(ch);
       clearTimeout(timer);
       if (revealTimer) clearTimeout(revealTimer);  // Cancel/unmount during the 1.2s reveal must not still navigate
+      // Hardware back / swipe unmounts without cancel() — without this the
+      // lobby stays matchable for 40s and a stranger pairs into a room whose
+      // host already left. No-ops if the room was already cancelled/matched.
+      if (!resolvedRef.current) void supabase.rpc('cancel_matchmaking', { p_room: roomId });
     };
   }, [roomId, roomCode, botOpp]);
 
-  const cancel = () => {
+  const cancel = async () => {
+    if (roomId) {
+      await supabase.rpc('cancel_matchmaking', { p_room: roomId });
+      // cancel only deletes rooms still in 'lobby' — a joiner may have
+      // flipped it 'active' in the same instant. Abandoning then would
+      // strand them against an empty seat; go play them instead.
+      const { data } = await supabase.from('rooms').select('status').eq('id', roomId).maybeSingle();
+      if (data?.status === 'active' && !resolvedRef.current && focusedRef.current) {
+        resolvedRef.current = true;
+        router.replace({ pathname: '/game/number-duel', params: { roomCode } });
+        return;
+      }
+    }
     resolvedRef.current = true;  // stands down every pending navigation path above
-    if (roomId) supabase.rpc('cancel_matchmaking', { p_room: roomId });
-    router.back();
+    goBack();
   };
 
   if (errored) {
@@ -281,7 +308,7 @@ function VersusJoin() {
       <View style={[s.root, { justifyContent: 'center', alignItems: 'center' }]}>
         <GradientFill colors={gradients.background} />
         <Text style={s.phaseTitle}>Couldn't start matchmaking</Text>
-        <Pressable style={({ pressed }) => [s.ctaOutline, { marginTop: space.lg, paddingHorizontal: space.xl }, pressed && s.pressed]} onPress={() => router.back()}>
+        <Pressable style={({ pressed }) => [s.ctaOutline, { marginTop: space.lg, paddingHorizontal: space.xl }, pressed && s.pressed]} onPress={goBack}>
           <Text style={s.ctaOutlineText}>Back</Text>
         </Pressable>
       </View>
@@ -300,7 +327,9 @@ function VersusJoin() {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 function OnlineNumberDuel() {
-  const { roomCode } = useLocalSearchParams<{ roomCode: string }>();
+  // botName/botAvatar: the disguise VersusJoin showed while "searching" — a
+  // bot match must keep the same fake identity here, not reveal "Xantle Bot".
+  const { roomCode, botName, botAvatar } = useLocalSearchParams<{ roomCode: string; botName?: string; botAvatar?: string }>();
 
   const router = useRouter();
   const { session } = useSession();
@@ -344,6 +373,9 @@ function OnlineNumberDuel() {
   const [forfeitReason, setForfeitReason] = useState<'disconnect' | 'timeout' | null>(null);
   useEffect(() => {
     if (!opponentOffline || gs.phase === 'game_over') return;
+    // Re-verify at claim time — the opponent may have re-tracked in the
+    // moment between the grace timer expiring and this effect running.
+    if (opponentId && isOnline(opponentId)) { setOpponentOffline(false); return; }
     setForfeitReason('disconnect');
     setGs(prev => {
       const nextState = { ...prev, phase: 'game_over' as const, winner: 'me' as const };
@@ -377,9 +409,15 @@ function OnlineNumberDuel() {
   const [isEditingShare,setIsEditingShare]= useState(false);
   const [shareText,     setShareText]     = useState('');
   // Rematch handshake. 'offering' = we asked, waiting on them; 'incoming' =
-  // they asked, we're being prompted; 'declined' = they said no. Replaces the
-  // old one-tap flow that yanked the opponent into the lobby without asking.
-  const [rematchState, setRematchState] = useState<'idle' | 'offering' | 'incoming' | 'declined'>('idle');
+  // they asked, we're being prompted; 'accepted' = we said yes, waiting for
+  // the go-signal; 'declined' = they said no. Replaces the old one-tap flow
+  // that yanked the opponent into the lobby without asking.
+  const [rematchState, setRematchState] = useState<'idle' | 'offering' | 'incoming' | 'accepted' | 'declined'>('idle');
+  // Handlers close over subscribe-time state — they must read the CURRENT
+  // handshake state or a cancel racing an accept still drags both players
+  // into the lobby (the exact bug this handshake exists to prevent).
+  const rematchStateRef = useRef(rematchState);
+  rematchStateRef.current = rematchState;
   const rematchNavRef = useRef(false);
   const guessStartTimeRef = useRef<number>(0);
   // Round numbers in which WE timed out (guess-stage / pick-stage). Used to
@@ -395,6 +433,9 @@ function OnlineNumberDuel() {
   // non-deterministic winner that the two devices disagree on. When we see
   // both, reconcile to a draw.
   const myCorrectRoundRef = useRef<number | null>(null);
+  // True once WE sent pick_forfeit (3rd strike) — used to reconcile a
+  // simultaneous mutual forfeit into a draw instead of two "opponent wins".
+  const myPickForfeitRef = useRef(false);
   const botSecretRef = useRef<number | null>(null);
   const botLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const botSolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -471,18 +512,26 @@ function OnlineNumberDuel() {
       const me  = players?.find((p: any) => p.user_id === session.user.id);
       const opp = players?.find((p: any) => p.user_id !== session.user.id);
       setMyName(me?.display_name  || (me?.profiles  as any)?.username || 'You');
-      setOpponentName(opp?.display_name || (opp?.profiles as any)?.username || 'Opponent');
+      setOpponentName(
+        (opp as any)?.is_bot
+          ? (botName || opp?.display_name || 'Opponent')   // keep the search screen's disguise
+          : (opp?.display_name || (opp?.profiles as any)?.username || 'Opponent'),
+      );
       setMyAvatar((me?.profiles as any)?.avatar_url ?? null);
       setOpponentAvatar(
         (opp as any)?.is_bot
-          ? AV_POOL[seedFor(roomCode ?? room.id, 0) % AV_POOL.length]
+          ? (botAvatar || AV_POOL[seedFor(roomCode ?? room.id, 0) % AV_POOL.length])
           : (opp?.profiles as any)?.avatar_url ?? null,
       );
       setOpponentId(opp?.user_id ?? null);
       setIsBot(!!(opp as any)?.is_bot);
       setLoading(false);
     })();
-  }, [roomCode, session]);
+    // Keyed on the USER ID, not the session object: token refresh emits a new
+    // session object every hour, and re-running this mid-match overwrote
+    // round/scores from the stale persisted room.state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomCode, session?.user?.id]);
 
   // ── Sync heartbeat for P2P state ─────────────────────────────────────────
   useEffect(() => {
@@ -540,6 +589,18 @@ function OnlineNumberDuel() {
     if (gs.phase === 'game_over' && gs.winner === 'me') playSound('win');
   }, [gs.phase, gs.winner]);
 
+  // Close the room when the match ends. Rooms were never marked finished, so
+  // the Games tab's LIVE list accumulated every match ever played (including
+  // bot rooms) as watchable-forever ghosts. Host-side only; a rematch's
+  // reset_room reopens it to 'lobby' just fine afterwards.
+  useEffect(() => {
+    if (gs.phase !== 'game_over' || !isHost || !roomId) return;
+    supabase.rpc('finish_room', { p_room: roomId }).then(({ error }) => {
+      if (error) console.warn('[number-duel] finish_room failed:', error.message);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gs.phase]);
+
   // ── Drama Phase Timer ────────────────────────────────────────────────────
   useEffect(() => {
     if (gs.phase === 'drama') {
@@ -582,21 +643,34 @@ function OnlineNumberDuel() {
 
     ch.on('broadcast', { event: 'player_guess' }, ({ payload }) => {
       if (payload.userId === session.user.id) return;
-      const ph = gsRef.current.phase;
+      let ph = gsRef.current.phase;
       if (ph === 'game_over') return;
-      // Round already ended on this device. The one case we still act on:
-      // WE ended it by guessing correctly this same round, and now the
-      // opponent's correct guess arrives too → both solved → draw, not a
-      // one-sided win the two clients would disagree on. Evaluate their
-      // guess first to know if it was correct.
+      // Their guess proves they're in 'guessing' — if we're still stuck in
+      // 'opponent_picking', our copy of their player_locked was lost.
+      // Recover (advance to drama) instead of silently answering their
+      // guesses all round without ever showing our own guessing UI.
+      if (ph === 'opponent_picking' && gsRef.current.mySecret !== null) {
+        setOpponentReady(true);
+        setGs(prev => prev.phase === 'opponent_picking' ? { ...prev, phase: 'drama' } : prev);
+        ph = 'drama';
+      }
+      // Round already ended on this device: STILL answer the guess — a
+      // swallowed reply left the guesser's `submitting` stuck true forever
+      // (permanent soft-lock; their Guess button never re-enables). The
+      // receiver's own phase guard decides whether the hint may score. The
+      // one state change we make here: if we ended this round by guessing
+      // correctly and their correct guess arrives too → both solved → draw.
       if (ph === 'round_end') {
         const secretR = gsRef.current.mySecret;
         if (secretR === null) return;
         const gR = parseFloat(payload.guess);
-        const correctR = gameRules.mode === 'blind_duel' ? Math.abs(gR - secretR) === 0 : gR === secretR;
-        if (correctR && gsRef.current.roundWinner === 'me' && myCorrectRoundRef.current === gsRef.current.round) {
-          ch.send({ type: 'broadcast', event: 'hint_for_opponent',
-            payload: { forUserId: payload.userId, guess: payload.guess, hint: 'correct', dist: 0 } });
+        const dR = Math.abs(gR - secretR);
+        const hintR: Hint = gameRules.mode === 'blind_duel'
+          ? (dR === 0 ? 'correct' : dR <= 5 ? 'hot' : dR <= 15 ? 'warm' : 'cold')
+          : (gR === secretR ? 'correct' : gR < secretR ? 'higher' : 'lower');
+        ch.send({ type: 'broadcast', event: 'hint_for_opponent',
+          payload: { forUserId: payload.userId, guess: payload.guess, hint: hintR, dist: dR } });
+        if (hintR === 'correct' && gsRef.current.roundWinner === 'me' && myCorrectRoundRef.current === gsRef.current.round) {
           setGs(prev => ({ ...prev, myScore: prev.myScore - 1, roundWinner: null }));
         }
         return;
@@ -653,7 +727,14 @@ function OnlineNumberDuel() {
         if (hint === 'correct' && gsRef.current.phase === 'round_end'
             && gsRef.current.roundWinner === 'opponent') {
           myCorrectRoundRef.current = gsRef.current.round;
-          setGs(prev => ({ ...prev, opponentScore: prev.opponentScore - 1, roundWinner: null }));
+          const reconTime = Date.now() - guessStartTimeRef.current;
+          // Record the guess too — it was correct, it just tied instead of
+          // won; dropping it undercounted "guesses" and skewed avg time.
+          setGs(prev => ({
+            ...prev, opponentScore: prev.opponentScore - 1, roundWinner: null,
+            myGuesses: [{ value: payload.guess, hint }, ...prev.myGuesses],
+            guessCount: prev.guessCount + 1, guessTimeSum: prev.guessTimeSum + reconTime,
+          }));
         }
         setSubmitting(false);
         return;
@@ -744,9 +825,16 @@ function OnlineNumberDuel() {
     // Opponent hit MAX_PICK_TIMEOUTS — they forfeit the whole match.
     ch.on('broadcast', { event: 'pick_forfeit' }, ({ payload }) => {
       if (payload.userId === session.user.id) return;
-      // Terminal state wins: if this device already concluded the match
-      // (e.g. we forfeited simultaneously), don't overwrite the result.
-      if (gsRef.current.phase === 'game_over') return;
+      // Terminal state wins — but if BOTH sides struck out simultaneously
+      // (each device locally concluded "I forfeited, opponent wins"), their
+      // forfeit arriving now means neither actually won: call it a draw so
+      // the two devices agree instead of both showing "{opponent} Wins!".
+      if (gsRef.current.phase === 'game_over') {
+        if (myPickForfeitRef.current && gsRef.current.winner === 'opponent') {
+          setGs(prev => ({ ...prev, winner: 'draw' }));
+        }
+        return;
+      }
       setForfeitReason('timeout');
       setGs(prev => {
         if (prev.phase === 'game_over') return prev;
@@ -799,12 +887,13 @@ function OnlineNumberDuel() {
     ch.on('broadcast', { event: 'next_round' }, ({ payload }) => {
       setOpponentReady(false);
       setInputValue('');
+      setSubmitting(false); // never carry a stuck in-flight guess into a new round
       setGs(prev => {
         // A finished match can't be dragged back into a new round by a
         // straggler event (e.g. host pressed "next" as the forfeit landed).
         if (prev.phase === 'game_over') return prev;
         const wRole = prev.roundWinner === 'me' ? (isHost ? 'host' : 'guest') : prev.roundWinner === 'opponent' ? (isHost ? 'guest' : 'host') : 'draw';
-        const wName = prev.roundWinner === 'me' ? myName : prev.roundWinner === 'opponent' ? opponentName : 'Timeout';
+        const wName = prev.roundWinner === 'me' ? myName : prev.roundWinner === 'opponent' ? opponentName : 'Draw';
         const sec = prev.roundWinner === 'me' ? prev.mySecret : prev.opponentSecretReveal;
         const newHistory = [...prev.matchHistory, {
           round: prev.round, winner: wRole as any, winnerName: wName, secret: sec, guesses: prev.myGuesses.length,
@@ -841,25 +930,38 @@ function OnlineNumberDuel() {
     // ── Rematch handshake ──────────────────────────────────────────────
     ch.on('broadcast', { event: 'rematch_offer' }, ({ payload }) => {
       if (payload.userId === session.user.id) return;
+      // Only meaningful on the game-over screen — a stray offer must not
+      // paint the prompt over a live match.
+      if (gsRef.current.phase !== 'game_over') return;
       setRematchState('incoming');
     });
     ch.on('broadcast', { event: 'rematch_cancel' }, ({ payload }) => {
       if (payload.userId === session.user.id) return;
-      // The offerer withdrew — dismiss our incoming prompt if we hadn't answered.
-      setRematchState(prev => prev === 'incoming' ? 'idle' : prev);
+      // The other side withdrew/left — dismiss our prompt, unstick us if we
+      // were waiting post-accept, and surface it as a decline if it was OUR
+      // offer they walked away from.
+      setRematchState(prev =>
+        (prev === 'incoming' || prev === 'accepted') ? 'idle'
+        : prev === 'offering' ? 'declined' : prev);
     });
     ch.on('broadcast', { event: 'rematch_decline' }, ({ payload }) => {
       if (payload.userId === session.user.id) return;
+      if (rematchStateRef.current !== 'offering') return;
       setRematchState('declined');
     });
     ch.on('broadcast', { event: 'rematch_accept' }, ({ payload }) => {
       if (payload.userId === session.user.id) return;
-      // Opponent accepted our offer → proceed. The host (either side) resets
-      // the room and fires rematch_go so neither client navigates to a
-      // stale/finished lobby before the reset lands.
+      // Only act if OUR offer is still standing — an accept that raced our
+      // cancel must not reset the room and yank anyone anywhere.
+      if (rematchStateRef.current !== 'offering') return;
+      // Opponent accepted our offer → proceed. The host (whichever side that
+      // is) resets the room and fires rematch_go so neither client navigates
+      // to a stale/finished lobby before the reset lands.
       proceedToRematch();
     });
     ch.on('broadcast', { event: 'rematch_go' }, () => {
+      // Only follow the go-signal if we're actually part of a live handshake.
+      if (rematchStateRef.current !== 'offering' && rematchStateRef.current !== 'accepted') return;
       if (rematchNavRef.current) return;
       rematchNavRef.current = true;
       router.replace({ pathname: '/room/[code]', params: { code: roomCode } });
@@ -868,10 +970,21 @@ function OnlineNumberDuel() {
     ch.subscribe();
     chRef.current = ch;
     return () => { supabase.removeChannel(ch); };
-  }, [isBot, roomCode, session, isHost, roomId, gameRules]);
+    // session?.user?.id (not session): an hourly token refresh emits a new
+    // session object — tearing the channel down mid-match dropped whatever
+    // broadcast was in flight (hint replies, round transitions).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBot, roomCode, session?.user?.id, isHost, roomId, gameRules]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
-  const lockSecret = (secret: number) => {
+  const lockSecret = (raw: number) => {
+    // Clamp the secret to the round's advertised precision (whole numbers /
+    // 1 decimal / 2 decimals) and range. The keypad only limits total length,
+    // so without this a player could lock e.g. 42.7519 in a "1 decimal"
+    // round — unguessable by exact match, and classic mode has no guess
+    // timer, so the round would literally never end.
+    const dp = isHard ? 2 : allowDecimal ? 1 : 0;
+    const secret = Math.min(100, Math.max(0, Math.round(raw * 10 ** dp) / 10 ** dp));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     playSound('click');
     setGs(prev => ({
@@ -903,6 +1016,7 @@ function OnlineNumberDuel() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 
     if (strikes >= MAX_PICK_TIMEOUTS) {
+      myPickForfeitRef.current = true;
       chRef.current?.send({ type: 'broadcast', event: 'pick_forfeit', payload: { userId: session?.user.id } });
       setForfeitReason('timeout');
       setGs(prev => {
@@ -992,7 +1106,7 @@ function OnlineNumberDuel() {
     
     // Construct history item for this round
     const wRole = gs.roundWinner === 'me' ? (isHost ? 'host' : 'guest') : gs.roundWinner === 'opponent' ? (isHost ? 'guest' : 'host') : 'draw';
-    const wName = gs.roundWinner === 'me' ? myName : gs.roundWinner === 'opponent' ? opponentName : 'Timeout';
+    const wName = gs.roundWinner === 'me' ? myName : gs.roundWinner === 'opponent' ? opponentName : 'Draw';
     const sec = gs.roundWinner === 'me' ? gs.mySecret : gs.opponentSecretReveal;
     const roundStat: RoundStat = { round: gs.round, winner: wRole as any, winnerName: wName, secret: sec, guesses: gs.myGuesses.length };
     const newHistory = [...gs.matchHistory, roundStat];
@@ -1001,7 +1115,7 @@ function OnlineNumberDuel() {
       const w = gs.myScore > gs.opponentScore ? 'me'
               : gs.opponentScore > gs.myScore ? 'opponent' : 'draw';
       chRef.current?.send({ type: 'broadcast', event: 'game_over', payload: { userId: session?.user.id, winner: w, finalHistory: newHistory } });
-      
+
       // Persist final history to DB
       if (isHost && roomId) {
         supabase.rpc('update_room_state', { p_room: roomId, p_state: {
@@ -1017,6 +1131,7 @@ function OnlineNumberDuel() {
     }
     setOpponentReady(false);
     setInputValue('');
+    setSubmitting(false); // never carry a stuck in-flight guess into a new round
     chRef.current?.send({ type: 'broadcast', event: 'next_round', payload: { round: next } });
     setGs(prev => ({
       ...prev, phase: 'picking', round: next, mySecret: null,
@@ -1030,7 +1145,16 @@ function OnlineNumberDuel() {
   // guest just waits for rematch_go.
   const proceedToRematch = async () => {
     if (isHost && roomId) {
-      await supabase.rpc('reset_room', { p_room: roomId, p_state: gameRules });
+      // reset_room failing (room still 'active') and navigating anyway would
+      // bounce BOTH clients straight back into the stale mid-match game —
+      // the lobby auto-forwards any room whose status reads 'active'.
+      const { error } = await supabase.rpc('reset_room', { p_room: roomId, p_state: gameRules });
+      if (error) {
+        chRef.current?.send({ type: 'broadcast', event: 'rematch_cancel', payload: { userId: session?.user.id } });
+        setRematchState('idle');
+        Alert.alert('Rematch failed', 'Could not reset the room — please try again.');
+        return;
+      }
       chRef.current?.send({ type: 'broadcast', event: 'rematch_go', payload: {} });
       if (!rematchNavRef.current) {
         rematchNavRef.current = true;
@@ -1051,12 +1175,23 @@ function OnlineNumberDuel() {
   };
   const acceptRematch = () => {
     playSound('click');
+    setRematchState('accepted');
     chRef.current?.send({ type: 'broadcast', event: 'rematch_accept', payload: { userId: session?.user.id } });
     proceedToRematch();
   };
   const declineRematch = () => {
     setRematchState('idle');
     chRef.current?.send({ type: 'broadcast', event: 'rematch_decline', payload: { userId: session?.user.id } });
+  };
+  // Leaving the game-over screen mid-handshake must tell the other side, or
+  // they wait forever on an offer/accept that can no longer complete.
+  const abandonRematch = () => {
+    const st = rematchStateRef.current;
+    if (st === 'offering' || st === 'accepted') {
+      chRef.current?.send({ type: 'broadcast', event: 'rematch_cancel', payload: { userId: session?.user.id } });
+    } else if (st === 'incoming') {
+      chRef.current?.send({ type: 'broadcast', event: 'rematch_decline', payload: { userId: session?.user.id } });
+    }
   };
 
   // ── Share game result to the Wins Feed ───────────────────────────────────
@@ -1172,8 +1307,8 @@ function OnlineNumberDuel() {
     // ── ROUND END
     if (gs.phase === 'round_end') return (
       <Animated.View entering={SlideInUp.springify().damping(14)} style={[s.phaseContent, s.centered]}>
-        <Text style={s.trophyEmoji}>{gs.roundWinner === 'me' ? '🎯' : '😤'}</Text>
-        <Text style={s.phaseTitle}>{gs.roundWinner === 'me' ? 'You got it!' : `${opponentName} won the round!`}</Text>
+        <Text style={s.trophyEmoji}>{gs.roundWinner === 'me' ? '🎯' : gs.roundWinner === 'opponent' ? '😤' : '🤝'}</Text>
+        <Text style={s.phaseTitle}>{gs.roundWinner === 'me' ? 'You got it!' : gs.roundWinner === 'opponent' ? `${opponentName} won the round!` : "Round drawn — dead heat!"}</Text>
         <View style={s.revealRow}>
           <View style={s.revealCard}>
             <Text style={s.revealLabel}>Your secret</Text>
@@ -1302,6 +1437,11 @@ function OnlineNumberDuel() {
               <Text style={s.rematchCancelText}>Cancel</Text>
             </Pressable>
           </View>
+        ) : rematchState === 'accepted' ? (
+          <View style={s.rematchWaiting}>
+            <ActivityIndicator color={colors.blue} />
+            <Text style={s.rematchWaitingText}>Starting rematch…</Text>
+          </View>
         ) : rematchState === 'declined' ? (
           <View style={s.rematchWaiting}>
             <Text style={s.rematchWaitingText}>{opponentName} declined the rematch.</Text>
@@ -1315,7 +1455,7 @@ function OnlineNumberDuel() {
             <Text style={s.ctaText}>Rematch 🔄</Text>
           </Pressable>
         )}
-        <Pressable style={({ pressed }) => [s.ctaOutline, pressed && s.pressed]} onPress={() => router.replace('/home')}>
+        <Pressable style={({ pressed }) => [s.ctaOutline, pressed && s.pressed]} onPress={() => { abandonRematch(); setTimeout(() => router.replace('/home'), 100); }}>
           <Text style={s.ctaOutlineText}>Back to Home</Text>
         </Pressable>
       </View>
@@ -1339,6 +1479,11 @@ function OnlineNumberDuel() {
               if (!isBot && gs.phase !== 'game_over') {
                 chRef.current?.send({ type: 'broadcast', event: 'player_left', payload: { userId: session?.user.id } });
                 setTimeout(() => router.replace('/home'), 150);
+              } else if (!isBot && rematchStateRef.current !== 'idle') {
+                // Leaving the game-over screen mid-handshake: tell the other
+                // side so their prompt/wait doesn't hang forever.
+                abandonRematch();
+                setTimeout(() => router.replace('/home'), 100);
               } else {
                 router.replace('/home');
               }

@@ -64,6 +64,12 @@ export default function Settings() {
   };
 
   const signOut = async () => {
+    // Deregister this device's push token first — the row survives signOut,
+    // so the phone would keep receiving the signed-out account's game
+    // invites (shown to whoever holds the device next).
+    if (session?.user && isPushSupported()) {
+      await unregisterPushNotifications(session.user.id).catch(() => {});
+    }
     await supabase.auth.signOut();
     router.replace('/login');
   };

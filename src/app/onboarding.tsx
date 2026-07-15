@@ -58,9 +58,15 @@ export default function Onboarding() {
     debounceTimer.current = setTimeout(() => checkAvailability(trimmed), 600);
   };
 
+  // Versioned so a slow response for an OLD input can't overwrite the state
+  // set for the current one (stale "available" would enable Confirm for a
+  // name that was never actually checked).
+  const checkSeqRef = useRef(0);
   const checkAvailability = async (value: string) => {
+    const seq = ++checkSeqRef.current;
     const { data, error } = await supabase
       .from('profiles').select('username').eq('username', value).maybeSingle();
+    if (seq !== checkSeqRef.current) return; // stale response for older input
     if (error) {
       // Surface the error so the user isn't left staring at a disabled button
       setCheckState('idle');
@@ -89,6 +95,13 @@ export default function Onboarding() {
 
   const handleConfirm = () => {
     if (checkState !== 'available' || !session?.user) return;
+    // Re-validate the CURRENT input — checkState may describe an earlier
+    // value (stale async response); only the DB backstops "taken", nothing
+    // backstops "invalid".
+    if (username.length < MIN_LEN || username.length > MAX_LEN || !VALID_RE.test(username)) {
+      setCheckState('invalid');
+      return;
+    }
     setErrorMsg('');
     setStep('location');
   };
@@ -346,6 +359,18 @@ export default function Onboarding() {
                       placeholderTextColor={colors.textFaint}
                       value={address}
                       onChangeText={editAddress}
+                    />
+                  </View>
+                  {/* City was missing entirely from the manual path, so anyone
+                      who denied GPS had a permanently-null city — the one field
+                      "nearby players" actually uses. */}
+                  <View style={styles.inputCard}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="City"
+                      placeholderTextColor={colors.textFaint}
+                      value={city}
+                      onChangeText={editCity}
                     />
                   </View>
                   <View style={styles.inputCard}>

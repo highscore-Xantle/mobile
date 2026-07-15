@@ -19,10 +19,10 @@ import { playSound } from '../../lib/sounds';
 import { supabase } from '../../lib/supabase';
 import {
   cancelPixelRushMatch,
+  concedeGame,
   createBotMatch,
   createPixelRushGame,
   joinGame,
-  leaveGame,
   matchmakePixelRush,
 } from '../../lib/usePixelGame';
 import { VersusSearch, randomBotOpponent, useMyVersusProfile, type VersusPlayer } from '../../components/VersusSearch';
@@ -65,7 +65,14 @@ export default function PixelRushScreen() {
     if (matchChannelRef.current) { void supabase.removeChannel(matchChannelRef.current); matchChannelRef.current = null; }
   }
 
-  useEffect(() => stopWaiting, []);
+  useEffect(() => () => {
+    stopWaiting();
+    // Hardware back / swipe unmounts without the Cancel button: clean up the
+    // matchable lobby (else a stranger pairs into a hostless game for 40s)
+    // and any bot game created mid-reveal (else it ghosts the LIVE list).
+    if (!resolvedRef.current && matchGameIdRef.current) cancelPixelRushMatch(matchGameIdRef.current).catch(() => {});
+    if (!resolvedRef.current && botGameIdRef.current) concedeGame(botGameIdRef.current).catch(() => {});
+  }, []);
 
   async function handleCreateGroup() {
     playSound('click');
@@ -162,8 +169,16 @@ export default function PixelRushScreen() {
         if (resolvedRef.current) return;
         if (g?.status === 'active') { resolveMatch(code); return; }
         const bot = await createBotMatch('pixel_rush');
-        if (resolvedRef.current) return;
+        // Record BEFORE the resolved check: if the user cancelled while the
+        // RPC was in flight, the game already exists — without the id there
+        // is nothing to clean up and the 'active' bot game haunts the LIVE
+        // list forever.
         botGameIdRef.current = bot.id;
+        if (resolvedRef.current) {
+          concedeGame(bot.id).catch(() => {});
+          botGameIdRef.current = null;
+          return;
+        }
         setBotOpp(randomBotOpponent());   // freeze the flashing photo on this identity
         botRevealTimeoutRef.current = setTimeout(() => resolveMatch(bot.invite_code), 1200);
       } catch (e) {
@@ -180,8 +195,10 @@ export default function PixelRushScreen() {
     stopWaiting();
     if (gameId) cancelPixelRushMatch(gameId).catch(() => {});
     // Cancelling during the 1.2s bot reveal: the bot game already exists and
-    // is 'active' — leave it so it doesn't linger as a ghost "live room".
-    if (botGameId) { leaveGame(botGameId).catch(() => {}); botGameIdRef.current = null; }
+    // is 'active'. CONCEDE it (bot wins, game finished) — leave_game never
+    // finishes a game while the bot row remains, so leaving left a ghost
+    // "live room" behind forever.
+    if (botGameId) { concedeGame(botGameId).catch(() => {}); botGameIdRef.current = null; }
     setBotOpp(null);
     setScreen('onevone');
   }

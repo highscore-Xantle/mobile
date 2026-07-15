@@ -164,13 +164,15 @@ export function CommentSheet({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSubmitError(null);
     const parentId = replyTarget?.id ?? null;
-    clearReply();
     // addComment's own `error` state only ever surfaces via the empty-list
     // view, so a post that already has comments showed zero feedback on a
     // failed submit — the comment just silently vanished. Check the return
     // value directly instead and show it regardless of list length.
+    // Clear the input only AFTER success: clearing first destroyed the
+    // user's typed comment on a failed submit.
     const err = await addComment(trimmed, parentId, currentUserId, currentUsername, currentAvatarUrl);
-    if (err) setSubmitError(err);
+    if (err) { setSubmitError(err); return; }
+    clearReply();
   }, [text, submitting, replyTarget, addComment, currentUserId, currentUsername, currentAvatarUrl, clearReply]);
 
   // ── Empty / error states ─────────────────────────────────────────────────────

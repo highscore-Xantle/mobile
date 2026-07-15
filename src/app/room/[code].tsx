@@ -62,8 +62,13 @@ export default function RoomLobby() {
   // into the game — whichever lands second remounted the game screen
   // mid-handshake (channel resubscribe, state reset). Navigate exactly once.
   const navigatedRef = useRef(false);
+  // Whether WE hold a seat in this room. A spectator (deep link into a full
+  // room) must not be shoved into the 2-player game screen when it starts.
+  const seatedRef = useRef(false);
+  const [seated, setSeated] = useState(false);
+  const markSeated = () => { seatedRef.current = true; setSeated(true); };
   const goToGame = (gameKind: string) => {
-    if (navigatedRef.current) return;
+    if (navigatedRef.current || !seatedRef.current) return;
     navigatedRef.current = true;
     router.replace({ pathname: '/game/[id]', params: { id: gameKind, roomCode: code } });
   };
@@ -98,21 +103,29 @@ export default function RoomLobby() {
     return () => {
       supabase.removeChannel(roomSub);
     };
-  }, [code, session]);
+    // session?.user?.id, not session: hourly token refresh emits a new
+    // session object and would tear down/resubscribe the channel — a status
+    // flip landing in that gap was lost.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, session?.user?.id]);
 
   useEffect(() => {
-    if (!room) return;
+    if (!room?.id) return;
+    const roomId = room.id;
     const playersSub = supabase
-      .channel(`players_${room.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${room.id}` }, () => {
-        fetchPlayers(room.id);
+      .channel(`players_${roomId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, () => {
+        fetchPlayers(roomId);
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(playersSub);
     };
-  }, [room]);
+    // room.id, not the room object: every rooms UPDATE replaces the object,
+    // and resubscribing on each one could drop a player INSERT in the gap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id]);
 
   const fetchRoomAndPlayers = async () => {
     const { data: roomData, error: roomError } = await supabase
@@ -134,14 +147,18 @@ export default function RoomLobby() {
     // landed people here as pure spectators — never inserted into
     // room_players, host stuck at 1/2, guest waiting forever. Mirror the
     // Pixel Rush screen's behavior and seat them on arrival.
-    if (roomData.status === 'lobby' && session) {
+    if (session) {
       const { data: existing } = await supabase
         .from('room_players').select('user_id')
         .eq('room_id', roomData.id).eq('user_id', session.user.id).maybeSingle();
-      if (!existing) {
+      if (existing) {
+        markSeated();
+      } else if (roomData.status === 'lobby') {
         const { error: joinErr } = await supabase.rpc('join_room', { p_code: code });
-        if (!joinErr) await fetchPlayers(roomData.id);
-        // join_room raising (room full, etc.) just leaves them a spectator, as before
+        if (!joinErr) { markSeated(); await fetchPlayers(roomData.id); }
+        // join_room raising (room full, etc.) leaves them a spectator —
+        // `seated` stays false, which swaps the footer copy and stops the
+        // start navigation from dragging them into a game they have no seat in.
       }
     }
 
@@ -230,7 +247,20 @@ export default function RoomLobby() {
 
         {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={() => router.replace('/home')} style={styles.backBtn}>
+          <Pressable
+            onPress={() => {
+              // A seated guest backing out must give the seat up — otherwise
+              // the room stays 2/2 forever, later joiners get "room is full",
+              // and the host can start against an empty chair.
+              if (seated && !isHost && room?.status === 'lobby') {
+                supabase.rpc('leave_room', { p_room: room.id }).then(({ error }) => {
+                  if (error) console.warn('[room] leave_room failed:', error.message);
+                });
+              }
+              router.replace('/home');
+            }}
+            style={styles.backBtn}
+          >
             <Text style={styles.backText}>← Back</Text>
           </Pressable>
           <Text style={styles.gameKind}>{room.game_kind.toUpperCase()}</Text>
@@ -288,7 +318,9 @@ export default function RoomLobby() {
               <Pressable style={StyleSheet.absoluteFill} onPress={handleToggleFlip} />
               <Text style={styles.codeLabel}>SCAN TO JOIN</Text>
               <View style={styles.qrWrapper}>
-                <QRCode value={code} size={150} color={colors.bg} backgroundColor={colors.white} />
+                {/* Encode a real link — a camera scan of the bare code string
+                    ("A3F9C") opens nothing. Same pattern as Pixel Rush. */}
+                <QRCode value={Linking.createURL(`/room/${code}`)} size={150} color={colors.bg} backgroundColor={colors.white} />
               </View>
               <View pointerEvents="none" style={styles.qrFooterRow}>
                 <FontAwesome name="refresh" size={12} color={colors.textMuted} />
@@ -368,11 +400,15 @@ export default function RoomLobby() {
                 </Text>
               </View>
             </Pressable>
-          ) : (
+          ) : seated ? (
             <Animated.View style={[styles.waitingBox, pulseStyle]}>
               <ActivityIndicator color={colors.blue} style={{ marginRight: 8 }} />
               <Text style={styles.waitingText}>Waiting for host to start...</Text>
             </Animated.View>
+          ) : (
+            <View style={styles.waitingBox}>
+              <Text style={styles.waitingText}>Room is full — you're watching, not playing.</Text>
+            </View>
           )}
         </View>
 

@@ -146,12 +146,16 @@ export default function GameScreen() {
     setRoundImage(game.id, round.round_no, pickPuzzleImage(game.id, round.round_no)).catch(console.warn);
   }, [game?.id, game?.status, round?.status, round?.round_no, isHost]);
 
-  // Both clients: auto-advance once a round is decided.
+  // Both clients: auto-advance once a round is decided. Players only — an
+  // unseated bystander (shared link opened mid-match) would just get a
+  // 'not a player in this game' raise from the server every round.
   useEffect(() => {
-    if (!game || !round) return;
+    if (!game || !round || !myId) return;
     if (round.status !== 'done') return;
+    if (!players.some((p) => p.user_id === myId)) return;
     autoAdvanceRound(game.id, round.round_no).catch(console.warn);
-  }, [game?.id, round?.status, round?.round_no]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.id, round?.status, round?.round_no, players.length]);
 
   // Bot matches: look up the human's win rate once, to scale the bot's pace.
   useEffect(() => {
@@ -211,9 +215,25 @@ export default function GameScreen() {
             // Quitting a live 1v1 concedes it — otherwise the game stays
             // 'active' with one player, the opponent gets no win and no
             // signal, and (since the quitter is still online in the app)
-            // the disconnect auto-forfeit never fires either.
-            if (game.status === 'active' && game.max_players === 2 && opponent1v1) {
-              await concedeGame(game.id).catch(console.warn);
+            // the disconnect auto-forfeit never fires either. This includes
+            // BOT matches: leave_game never finishes a game while the bot
+            // row remains seated, so a left bot game haunted the LIVE list
+            // forever. concede_game handles the bot-winner case itself.
+            if (game.status === 'active' && game.max_players === 2) {
+              try {
+                await concedeGame(game.id);
+                // Deliberately NO leaveGame after a successful concede: the
+                // game is finished; deleting our row would erase this loss
+                // from the opponent's final screen and from our own stats.
+                router.replace('/home');
+                return;
+              } catch (e) {
+                // Concede didn't reach the server. Leaving anyway would
+                // strand the opponent in an unfinishable game — stay.
+                console.warn('[game] concede failed:', e);
+                Alert.alert('Could not leave', 'Connection hiccup — please try again.');
+                return;
+              }
             }
             await leaveGame(game.id).catch(console.warn);
             router.replace('/home');

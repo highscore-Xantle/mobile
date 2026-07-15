@@ -10,6 +10,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { GradientFill } from './GradientFill';
+import { isPushSupported, unregisterPushNotifications } from '../lib/pushNotifications';
 import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../theme';
@@ -67,6 +68,11 @@ export function MenuDrawer({ visible, onClose }: { visible: boolean; onClose: ()
 
   const signOut = async () => {
     onClose();
+    // Deregister this device's push token first — the row survives signOut,
+    // so the phone would keep receiving the signed-out account's game invites.
+    if (session?.user && isPushSupported()) {
+      await unregisterPushNotifications(session.user.id).catch(() => {});
+    }
     await supabase.auth.signOut();
     router.replace('/login');
   };

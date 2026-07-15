@@ -152,6 +152,7 @@ export default function Home() {
   const { accent, setAccent } = useAccent();
   const scrollX = useSharedValue(0);
   const activeIdx = useSharedValue(0);
+  const openLockRef = useRef(0);
 
   // Web: a horizontal ScrollView is just an overflow-x div, and browsers don't
   // drag-scroll one with a mouse — so the carousel felt frozen on desktop. Map
@@ -204,6 +205,11 @@ export default function Home() {
   if (!session) return null;
 
   const openGame = (game: typeof GAMES[number]) => {
+    // Same double-tap lock the Games tab uses — a double-tap here pushed two
+    // stacked details screens and broke back-navigation downstream.
+    const now = Date.now();
+    if (now - openLockRef.current < 1000) return;
+    openLockRef.current = now;
     router.push(`/details/${game.id}` as any);   // → product-detail screen
   };
 

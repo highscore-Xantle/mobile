@@ -52,13 +52,16 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
         }
       });
 
-    // Untrack when app goes to background so others see accurate status.
+    // Untrack when the app goes to BACKGROUND so others see accurate status.
+    // iOS fires 'inactive' for transient overlays (share sheet, control
+    // center, incoming-call banner) — untracking on those flapped the user
+    // offline mid-lobby and could race the games' disconnect-forfeit grace.
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
         channel
           .track({ user_id: userId, online_at: new Date().toISOString() })
           .catch(console.warn);
-      } else {
+      } else if (nextState === 'background') {
         channel.untrack().catch(console.warn);
       }
     });

@@ -49,7 +49,11 @@ export function JoinModal({ visible, onClose }: JoinModalProps) {
     setLoading(false);
 
     if (roomErr) {
-      Alert.alert('Cannot Join', 'No game or room found with that code.');
+      // Only a genuine miss should read as "wrong code" — masking 'room is
+      // full' / 'already started' told users their VALID code didn't exist.
+      Alert.alert('Cannot Join', roomErr.message.includes('not found')
+        ? 'No game or room found with that code.'
+        : roomErr.message);
       return;
     }
 
@@ -70,12 +74,14 @@ export function JoinModal({ visible, onClose }: JoinModalProps) {
           <View style={styles.inputWrap}>
             <TextInput
               style={styles.input}
-              placeholder="A3 F9 C"
+              placeholder="A3F9C"
               placeholderTextColor={colors.textFaint}
               autoCapitalize="characters"
               maxLength={5}
               value={code}
-              onChangeText={(txt) => setCode(txt.toUpperCase())}
+              // Strip whitespace — pasted/typed spaces counted against
+              // maxLength and guaranteed a "not found".
+              onChangeText={(txt) => setCode(txt.replace(/\s/g, '').toUpperCase())}
               autoCorrect={false}
               autoFocus
             />

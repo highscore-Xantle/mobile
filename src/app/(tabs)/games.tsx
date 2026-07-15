@@ -210,17 +210,24 @@ export default function GamesTab() {
 
   // ── Fetch active rooms (10-second poll) ─────────────────────────────────────
   const fetchLiveRooms = useCallback(async () => {
-    const [{ data: rooms }, { data: games }] = await Promise.all([
+    const [{ data: rooms, error: roomsErr }, { data: games, error: gamesErr }] = await Promise.all([
       supabase
         .from('rooms')
         .select(`code, game_kind, state, room_players ( display_name, profiles ( username ) )`)
-        .eq('status', 'active'),
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(24),
       supabase
         .from('games')
         .select(`invite_code, current_round, game_players ( guest_name, profile:user_id ( username ) )`)
         .eq('status', 'active')
-        .eq('game_type', 'pixel_rush'),
+        .eq('game_type', 'pixel_rush')
+        .order('created_at', { ascending: false })
+        .limit(24),
     ]);
+    // One flaky poll must not blank every LIVE badge for 10s — keep the
+    // previous data and let the next tick recover.
+    if (roomsErr && gamesErr) return;
     const map: Record<string, ActiveRoom[]> = {};
     (rooms ?? []).forEach((r: any) => {
       const names: string[] = (r.room_players ?? []).map((p: any) =>

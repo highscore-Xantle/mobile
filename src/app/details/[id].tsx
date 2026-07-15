@@ -138,8 +138,10 @@ export default function GameDetail() {
     if (busy) return;
     const now = Date.now();
     if (now - navLockRef.current < 1000) return;
-    navLockRef.current = now;
     if (mode === 'online') {
+      navLockRef.current = now;   // only navigation branches arm the lock —
+      // the group alert / join modal don't navigate, and arming there
+      // swallowed a legitimate CTA tap made right after dismissing them.
       // Draughts and Number Duel matchmake straight into a live match (or a
       // bot after a short wait) with default rules — same "Play Online"
       // pattern for both. Custom rules live under "Invite a Friend" instead.
@@ -149,6 +151,7 @@ export default function GameDetail() {
       return;
     }
     if (mode === 'invite') {
+      navLockRef.current = now;
       if (game.route) { playSimple(); return; }  // has its own invite flow already
       createRoom();
       return;
