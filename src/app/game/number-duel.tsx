@@ -33,7 +33,7 @@ const PICK_SECONDS = 30;
 const DISCONNECT_GRACE_MS = 30000;
 const MATCH_SECONDS = 15;
 // How long the round-end screen holds before the next round auto-starts.
-const ROUND_END_SECONDS = 3;
+const ROUND_END_SECONDS = 5;
 // Number Duel's own colours (match the game icon), for the matchmaking
 // screen — the shared dark-blue background didn't read as "this game".
 // Mirrors the theme/accent in (tabs)/games.tsx.
@@ -466,12 +466,12 @@ function OnlineNumberDuel() {
   const diffDisplay = isHard ? 'hard' : allowDecimal ? 'medium' : 'easy';
 
   // ── Dynamic Backgrounds ─────────────────────────────────────────────────────
-  const bgColors = useSharedValue(gradients.background);
+  const bgColors = useSharedValue<string[]>(ND_THEME);
   const updateBgFeedback = (hint: Hint) => {
     if (hint === 'correct') bgColors.value = [colors.success, '#181C25'];
     else if (hint === 'hot' || hint === 'higher' || hint === 'lower') bgColors.value = ['rgba(248,113,113,0.1)', '#181C25'];
-    else bgColors.value = gradients.background;
-    setTimeout(() => { bgColors.value = gradients.background; }, 500);
+    else bgColors.value = ND_THEME;
+    setTimeout(() => { bgColors.value = ND_THEME; }, 500);
   };
 
   // ── Fetch room ──────────────────────────────────────────────────────────────
@@ -1260,7 +1260,7 @@ function OnlineNumberDuel() {
   if (loading) {
     return (
       <View style={[s.root, { justifyContent: 'center', alignItems: 'center' }]}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={ND_THEME} />
         <ActivityIndicator color={colors.blue} size="large" />
       </View>
     );
@@ -1496,7 +1496,7 @@ function OnlineNumberDuel() {
 
   return (
     <KeyboardAvoidingView style={s.root} behavior="padding">
-      <GradientFill colors={gradients.background} />
+      <GradientFill colors={ND_THEME} />
       <Confetti active={gs.phase === 'game_over' && gs.winner === 'me'} />
       <SafeAreaView style={s.safe}>
         <View style={s.header}>
