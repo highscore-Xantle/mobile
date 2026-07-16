@@ -4,7 +4,6 @@ import {
   StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useIsFocused } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   BounceIn, FadeIn, FadeInDown, FadeInUp, SlideInUp,
@@ -33,6 +32,13 @@ const PICK_SECONDS = 30;
 // 12-second interruption is worse than the winner waiting a little longer.
 const DISCONNECT_GRACE_MS = 30000;
 const MATCH_SECONDS = 15;
+// How long the round-end screen holds before the next round auto-starts.
+const ROUND_END_SECONDS = 3;
+// Number Duel's own colours (match the game icon), for the matchmaking
+// screen — the shared dark-blue background didn't read as "this game".
+// Mirrors the theme/accent in (tabs)/games.tsx.
+const ND_THEME = ['#8B5A2B', '#3B2A1D'] as [string, string]; // warm bronze/copper
+const ND_ACCENT = '#D98F3B';                                  // amber-copper
 
 type Phase = 'picking' | 'opponent_picking' | 'drama' | 'guessing' | 'round_end' | 'game_over';
 type Hint = 'higher' | 'lower' | 'correct' | 'hot' | 'warm' | 'cold' | 'timeout';
@@ -184,11 +190,6 @@ function VersusJoin() {
   // fallback could fire after a real match already started and yank the
   // player out of it.
   const resolvedRef = useRef(false);
-  // A duplicate instance buried in the nav stack (double-tapped Play) must
-  // never navigate or spawn bot rooms from underneath the live screen.
-  const isFocused = useIsFocused();
-  const focusedRef = useRef(isFocused);
-  focusedRef.current = isFocused;
 
   useEffect(() => {
     if (!meId) return;
@@ -199,7 +200,7 @@ function VersusJoin() {
         if (!active) return;
         if (error || !room) { setErrored(true); return; }
         if (room.status === 'active') {
-          if (!resolvedRef.current && focusedRef.current) {
+          if (!resolvedRef.current) {
             resolvedRef.current = true;
             router.replace({ pathname: '/game/number-duel', params: { roomCode: room.code } });
           }
@@ -222,7 +223,7 @@ function VersusJoin() {
     if (!roomId || !roomCode || botOpp) return;
     let revealTimer: ReturnType<typeof setTimeout> | null = null;
     const resolveToMatch = () => {
-      if (resolvedRef.current || !focusedRef.current) return;
+      if (resolvedRef.current) return;
       resolvedRef.current = true;
       router.replace({ pathname: '/game/number-duel', params: { roomCode } });
     };
@@ -247,21 +248,21 @@ function VersusJoin() {
       });
     const timer = setTimeout(async () => {
       try {
-        if (resolvedRef.current || !focusedRef.current) return;
+        if (resolvedRef.current) return;
         await supabase.rpc('cancel_matchmaking', { p_room: roomId });
         // cancel only deletes rooms still in 'lobby' — if an opponent flipped
         // this room 'active' in the same instant, we're already matched;
         // go play THEM, don't strand them against an empty seat.
         const { data: room } = await supabase.from('rooms').select('status').eq('id', roomId).maybeSingle();
-        if (resolvedRef.current || !focusedRef.current) return;
+        if (resolvedRef.current) return;
         if (room?.status === 'active') { resolveToMatch(); return; }
         const { data: botRoom, error } = await supabase.rpc('create_bot_room', { p_state: {} });
-        if (resolvedRef.current || !focusedRef.current) return;
+        if (resolvedRef.current) return;
         if (error || !botRoom) { setErrored(true); return; }
         const disguise = randomBotOpponent();        // freeze the flashing photo on this identity
         setBotOpp(disguise);
         revealTimer = setTimeout(() => {
-          if (resolvedRef.current || !focusedRef.current) return;
+          if (resolvedRef.current) return;
           resolvedRef.current = true;
           // Pass the disguise through — the game screen would otherwise show
           // the DB's "Xantle Bot" name and a different avatar, blowing the
@@ -293,7 +294,7 @@ function VersusJoin() {
       // flipped it 'active' in the same instant. Abandoning then would
       // strand them against an empty seat; go play them instead.
       const { data } = await supabase.from('rooms').select('status').eq('id', roomId).maybeSingle();
-      if (data?.status === 'active' && !resolvedRef.current && focusedRef.current) {
+      if (data?.status === 'active' && !resolvedRef.current) {
         resolvedRef.current = true;
         router.replace({ pathname: '/game/number-duel', params: { roomCode } });
         return;
@@ -306,7 +307,7 @@ function VersusJoin() {
   if (errored) {
     return (
       <View style={[s.root, { justifyContent: 'center', alignItems: 'center' }]}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={ND_THEME} />
         <Text style={s.phaseTitle}>Couldn't start matchmaking</Text>
         <Pressable style={({ pressed }) => [s.ctaOutline, { marginTop: space.lg, paddingHorizontal: space.xl }, pressed && s.pressed]} onPress={goBack}>
           <Text style={s.ctaOutlineText}>Back</Text>
@@ -317,9 +318,9 @@ function VersusJoin() {
 
   return (
     <View style={s.root}>
-      <GradientFill colors={gradients.background} />
+      <GradientFill colors={ND_THEME} />
       <SafeAreaView style={[s.safe, { justifyContent: 'center' }]}>
-        <VersusSearch accent={colors.blue} me={me} matched={botOpp} onCancel={cancel} />
+        <VersusSearch accent={ND_ACCENT} me={me} matched={botOpp} onCancel={cancel} />
       </SafeAreaView>
     </View>
   );
@@ -405,6 +406,7 @@ function OnlineNumberDuel() {
   const [loading,       setLoading]       = useState(true);
   const [submitting,    setSubmitting]    = useState(false);
   const [opponentReady, setOpponentReady] = useState(false);
+  const [roundEndCount, setRoundEndCount] = useState(ROUND_END_SECONDS); // auto-advance countdown
   const [shared,        setShared]        = useState(false); // post shared to feed
   const [isEditingShare,setIsEditingShare]= useState(false);
   const [shareText,     setShareText]     = useState('');
@@ -612,6 +614,26 @@ function OnlineNumberDuel() {
       return () => clearTimeout(t);
     }
   }, [gs.phase]);
+
+  // ── Round-end auto-advance ────────────────────────────────────────────────
+  // Runs on BOTH devices (no host-only button). Ticks 3→2→1 then advances;
+  // whichever device fires first broadcasts, the other's advanceRound is a
+  // no-op once it's already left round_end. Bot matches advance locally too.
+  useEffect(() => {
+    if (gs.phase !== 'round_end') return;
+    setRoundEndCount(ROUND_END_SECONDS);
+    let n = ROUND_END_SECONDS;
+    const iv = setInterval(() => {
+      n -= 1;
+      setRoundEndCount(n);
+      if (n <= 0) {
+        clearInterval(iv);
+        if (gsRef.current.phase === 'round_end') advanceRound();
+      }
+    }, 1000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gs.phase, gs.round]);
 
   // ── Realtime P2P channel ─────────────────────────────────────────────────
   // Bot matches have no second device to talk to — the bot's behavior is
@@ -889,9 +911,11 @@ function OnlineNumberDuel() {
       setInputValue('');
       setSubmitting(false); // never carry a stuck in-flight guess into a new round
       setGs(prev => {
-        // A finished match can't be dragged back into a new round by a
-        // straggler event (e.g. host pressed "next" as the forfeit landed).
-        if (prev.phase === 'game_over') return prev;
+        // Only advance FROM round_end. A duplicate next_round (both devices
+        // auto-advance) arriving after we've already moved to 'picking' — or
+        // a straggler after game_over — is ignored, so history is appended
+        // exactly once per device.
+        if (prev.phase !== 'round_end') return prev;
         const wRole = prev.roundWinner === 'me' ? (isHost ? 'host' : 'guest') : prev.roundWinner === 'opponent' ? (isHost ? 'guest' : 'host') : 'draw';
         const wName = prev.roundWinner === 'me' ? myName : prev.roundWinner === 'opponent' ? opponentName : 'Draw';
         const sec = prev.roundWinner === 'me' ? prev.mySecret : prev.opponentSecretReveal;
@@ -1100,40 +1124,49 @@ function OnlineNumberDuel() {
     }));
   };
 
-  const handleNextRound = () => {
-    const next = gs.round + 1;
+  // Advance out of round_end. No longer a button: the old "Next Round" CTA
+  // was HOST-ONLY (the guest just saw "Waiting for host…"), so an AFK or
+  // forfeiting host left the other player stuck forever — the exact stall the
+  // pick-timeout forfeit was meant to prevent. Now BOTH devices run a short
+  // countdown (see the effect below) and call this automatically. It's
+  // idempotent: reads live state from gsRef, only acts while still in
+  // round_end, and the next_round handler ignores duplicates the same way —
+  // so both devices firing at once is harmless.
+  const advanceRound = () => {
+    const cur = gsRef.current;
+    if (cur.phase !== 'round_end') return;
+    const next = cur.round + 1;
     const isGameOver = next > gameRules.rounds;
-    
-    // Construct history item for this round
-    const wRole = gs.roundWinner === 'me' ? (isHost ? 'host' : 'guest') : gs.roundWinner === 'opponent' ? (isHost ? 'guest' : 'host') : 'draw';
-    const wName = gs.roundWinner === 'me' ? myName : gs.roundWinner === 'opponent' ? opponentName : 'Draw';
-    const sec = gs.roundWinner === 'me' ? gs.mySecret : gs.opponentSecretReveal;
-    const roundStat: RoundStat = { round: gs.round, winner: wRole as any, winnerName: wName, secret: sec, guesses: gs.myGuesses.length };
-    const newHistory = [...gs.matchHistory, roundStat];
+
+    const wRole = cur.roundWinner === 'me' ? (isHost ? 'host' : 'guest') : cur.roundWinner === 'opponent' ? (isHost ? 'guest' : 'host') : 'draw';
+    const wName = cur.roundWinner === 'me' ? myName : cur.roundWinner === 'opponent' ? opponentName : 'Draw';
+    const sec = cur.roundWinner === 'me' ? cur.mySecret : cur.opponentSecretReveal;
+    const roundStat: RoundStat = { round: cur.round, winner: wRole as any, winnerName: wName, secret: sec, guesses: cur.myGuesses.length };
+    const newHistory = [...cur.matchHistory, roundStat];
 
     if (isGameOver) {
-      const w = gs.myScore > gs.opponentScore ? 'me'
-              : gs.opponentScore > gs.myScore ? 'opponent' : 'draw';
+      const w = cur.myScore > cur.opponentScore ? 'me'
+              : cur.opponentScore > cur.myScore ? 'opponent' : 'draw';
       chRef.current?.send({ type: 'broadcast', event: 'game_over', payload: { userId: session?.user.id, winner: w, finalHistory: newHistory } });
 
       // Persist final history to DB
       if (isHost && roomId) {
         supabase.rpc('update_room_state', { p_room: roomId, p_state: {
-          ...gameRules, round: gs.round,
-          hostScore: isHost ? gs.myScore : gs.opponentScore,
-          guestScore: isHost ? gs.opponentScore : gs.myScore,
+          ...gameRules, round: cur.round,
+          hostScore: isHost ? cur.myScore : cur.opponentScore,
+          guestScore: isHost ? cur.opponentScore : cur.myScore,
           matchHistory: newHistory,
         }});
       }
 
-      setGs(prev => ({ ...prev, phase: 'game_over', winner: w, matchHistory: newHistory }));
+      setGs(prev => prev.phase === 'game_over' ? prev : ({ ...prev, phase: 'game_over', winner: w, matchHistory: newHistory }));
       return;
     }
     setOpponentReady(false);
     setInputValue('');
     setSubmitting(false); // never carry a stuck in-flight guess into a new round
     chRef.current?.send({ type: 'broadcast', event: 'next_round', payload: { round: next } });
-    setGs(prev => ({
+    setGs(prev => prev.phase !== 'round_end' ? prev : ({
       ...prev, phase: 'picking', round: next, mySecret: null,
       myGuesses: [], opponentGuesses: [], roundWinner: null, opponentSecretReveal: null,
       matchHistory: newHistory,
@@ -1365,16 +1398,13 @@ function OnlineNumberDuel() {
     );
 
     if (gs.phase === 'round_end') {
-      if (isHost) return (
-        <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={handleNextRound}>
-          <GradientFill colors={gradients.button} />
-          <Text style={s.ctaText}>{gs.round < gameRules.rounds ? 'Next Round →' : 'See Results'}</Text>
-        </Pressable>
-      );
+      const n = Math.max(0, roundEndCount);
       return (
-        <View style={s.waitingCta}>
-          <ActivityIndicator color={colors.blue} />
-          <Text style={s.waitingText}>Waiting for host…</Text>
+        <View style={s.nextCountWrap}>
+          <Text style={s.nextCountLabel}>
+            {gs.round < gameRules.rounds ? 'Next round begins in' : 'Results in'}
+          </Text>
+          <Text style={s.nextCountValue}>{n}</Text>
         </View>
       );
     }
@@ -1586,6 +1616,9 @@ const s = StyleSheet.create({
   waitingCta: { flexDirection: 'row', gap: space.sm, alignItems: 'center', justifyContent: 'center', paddingVertical: 18, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline },
   waitingRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
   waitingText: { fontFamily: font.semibold, fontSize: 15, color: colors.textMuted },
+  nextCountWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: 12, gap: 2 },
+  nextCountLabel: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted, letterSpacing: 0.3 },
+  nextCountValue: { fontFamily: font.display, fontSize: 40, color: colors.text, lineHeight: 46 },
   forfeitNote: { fontFamily: font.semibold, fontSize: 13, color: colors.danger, textAlign: 'center', marginTop: -4 },
   // Share to Feed
   ctaShare: {
