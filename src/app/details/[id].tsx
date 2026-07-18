@@ -153,6 +153,10 @@ export default function GameDetail() {
     if (mode === 'invite') {
       navLockRef.current = now;
       if (game.route) { playSimple(); return; }  // has its own invite flow already
+      // Number Duel: let the host configure difficulty + rounds first, then
+      // create the room from the setup screen (was creating instantly with
+      // default rules, so "these rules were chosen by the host" was a lie).
+      if (game.id === 'number-duel') { router.push('/setup/number-duel' as any); return; }
       createRoom();
       return;
     }

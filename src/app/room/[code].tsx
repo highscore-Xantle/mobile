@@ -15,6 +15,7 @@ import { playSound } from '../../lib/sounds';
 import { supabase } from '../../lib/supabase';
 import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
+import { GAMES } from '../(tabs)/games';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
 export default function RoomLobby() {
@@ -256,10 +257,13 @@ export default function RoomLobby() {
   }
 
   const canStart = isHost && players.length >= 2;
+  // Theme the lobby to the game (Number Duel's warm red-brown, not blue).
+  const game = GAMES.find((g) => g.id === room.game_kind);
+  const theme = (game?.theme ?? gradients.background) as [string, string];
 
   return (
     <View style={styles.root}>
-      <GradientFill colors={gradients.background} />
+      <GradientFill colors={theme} />
       <SafeAreaView style={styles.safe}>
 
         {/* Header */}
@@ -370,7 +374,7 @@ export default function RoomLobby() {
               <View style={styles.ruleItem}>
                 <Text style={styles.ruleLabel}>Difficulty</Text>
                 <Text style={styles.ruleValue}>
-                  {room.state?.difficulty ? room.state.difficulty.charAt(0).toUpperCase() + room.state.difficulty.slice(1) : 'Auto'}
+                  {room.state?.difficulty === 'hard' ? 'Hard' : 'Easy'}
                 </Text>
               </View>
             </View>
@@ -414,7 +418,7 @@ export default function RoomLobby() {
               disabled={!canStart}
             >
               <View style={styles.ctaInner}>
-                <GradientFill colors={canStart ? gradients.button : [colors.surfaceAlt, colors.surfaceAlt]} />
+                <GradientFill colors={canStart ? theme : [colors.surfaceAlt, colors.surfaceAlt]} />
                 <Text style={[styles.ctaText, !canStart && { color: colors.textFaint }]}>
                   {canStart ? 'Start Game' : 'Waiting for players...'}
                 </Text>

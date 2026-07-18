@@ -475,7 +475,7 @@ function OnlineNumberDuel() {
   const botLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const botSolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [gameRules, setGameRules] = useState({ rounds: 5, difficulty: 'auto', mode: 'classic' });
+  const [gameRules, setGameRules] = useState({ rounds: 5, difficulty: 'easy', mode: 'classic' });
 
   const [gs, setGs] = useState<GameState>({
     round: 1, phase: 'picking',
@@ -490,13 +490,11 @@ function OnlineNumberDuel() {
   const gsRef   = useRef(gs);  // always-current ref for broadcast callbacks
   gsRef.current = gs;
 
-  // Auto-difficulty escalates proportionally to the match length: decimals
-  // past the halfway point, hard mode in the final sixth. (The old fixed
-  // ">6" / ">10" thresholds were leftovers from the 12-round format and
-  // could never fire once matches became 5 rounds.)
-  const allowDecimal = gameRules.difficulty === 'hardcore' || (gameRules.difficulty === 'auto' && gs.round > gameRules.rounds / 2);
-  const isHard = gameRules.difficulty === 'hardcore' || (gameRules.difficulty === 'auto' && gs.round > gameRules.rounds * (5 / 6));
-  const diffDisplay = isHard ? 'hard' : allowDecimal ? 'medium' : 'easy';
+  // Two difficulties only: easy = whole numbers (0–100), hard = decimals
+  // allowed (1 decimal place). No more escalating "auto" mode.
+  const allowDecimal = gameRules.difficulty === 'hard';
+  const isHard = false; // reserved for a future 2-decimal tier; hard = 1 decimal for now
+  const diffDisplay = gameRules.difficulty === 'hard' ? 'hard' : 'easy';
 
   // ── Dynamic Backgrounds ─────────────────────────────────────────────────────
   const bgColors = useSharedValue<string[]>(ND_THEME);
@@ -529,7 +527,7 @@ function OnlineNumberDuel() {
       if (room.state) {
         setGameRules({
           rounds: room.state.rounds || 5,
-          difficulty: room.state.difficulty || 'auto',
+          difficulty: room.state.difficulty === 'hard' ? 'hard' : 'easy', // migrate legacy auto/hardcore → easy/hard
           mode: room.state.mode || 'classic'
         });
 
