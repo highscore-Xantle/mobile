@@ -40,9 +40,14 @@ const CATEGORIES: { icon: FAIcon; key: string }[] = [
 ];
 
 const SCREEN_W = Dimensions.get('window').width;
+const SCREEN_H = Dimensions.get('window').height;
 const BASE_W = Math.round(SCREEN_W * 0.66);
 const CARD_W = BASE_W - 6;                        // trim width slightly (height unchanged)
-const CARD_H = Math.round(BASE_W * 1.24);
+// Height was derived purely from width, so on a tall-narrow phone (and mobile
+// web, where the browser chrome eats vertical space) the card ran past the
+// bottom nav. Cap it to the viewport so the whole card + title always fit
+// without scrolling.
+const CARD_H = Math.min(Math.round(BASE_W * 1.24), Math.round(SCREEN_H * 0.46));
 const GAP = 16;
 const ITEM = CARD_W + GAP;
 const CARD_INSET = Math.round((SCREEN_W - CARD_W) / 2); // centers the active card
@@ -317,11 +322,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4, shadowRadius: 10, elevation: 8,
   },
 
-  titleBlock: { marginBottom: space.xl },
+  titleBlock: { marginBottom: space.lg },
   titleSolid: { fontFamily: font.display, fontSize: 40, lineHeight: 44, color: colors.text },
   titleOutline: { fontFamily: font.display, fontSize: 40, lineHeight: 44, color: 'rgba(234,240,250,0.28)' },
 
-  catRow: { flexDirection: 'row', gap: space.md, marginBottom: space.xl },
+  catRow: { flexDirection: 'row', gap: space.md, marginBottom: space.lg },
   catChip: {
     width: 54, height: 54, borderRadius: 14,   // box shape, small radius
     backgroundColor: colors.surface,
