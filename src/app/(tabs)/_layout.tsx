@@ -2,6 +2,7 @@ import { View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { BottomNav } from '../../components/BottomNav';
 import { IncomingInvitePrompt } from '../../components/IncomingInvitePrompt';
+import { SafeBoundary } from '../../components/SafeBoundary';
 import { AccentProvider } from '../../lib/accent';
 
 // Custom animated tab bar (BottomNav). It shows Home · Live · Settings ·
@@ -28,7 +29,7 @@ export default function TabsLayout() {
           <Tabs.Screen name="settings" />
           <Tabs.Screen name="profile" />
         </Tabs>
-        <IncomingInvitePrompt />
+        <SafeBoundary><IncomingInvitePrompt /></SafeBoundary>
       </View>
     </AccentProvider>
   );

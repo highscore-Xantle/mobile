@@ -11,6 +11,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from './supabase';
 import { useSession } from './useSession';
 
+// Supabase caches realtime channels by topic name, so two mounts using the
+// same name collide: navigating away calls removeChannel() (async), and the
+// remount gets the still-subscribed channel back — then `.on()` after
+// subscribe() throws and crashes the tree. A per-mount-unique suffix avoids
+// the collision entirely.
+let _channelSeq = 0;
+function useUniqueChannelId(prefix: string): string {
+  const [id] = useState(() => `${prefix}_${++_channelSeq}`);
+  return id;
+}
+
 export interface FriendProfile {
   id: string;
   username: string | null;
@@ -117,14 +128,15 @@ export function useFriends() {
   useEffect(() => { refresh(); }, [refresh]);
 
   // Re-pull when either side of a friendship row changes.
+  const friendsChannelId = useUniqueChannelId('friendships');
   useEffect(() => {
     if (!me) return;
     const ch = supabase
-      .channel(`friendships_${me}`)
+      .channel(friendsChannelId)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => refresh())
       .subscribe();
     return () => { void supabase.removeChannel(ch); };
-  }, [me, refresh]);
+  }, [me, refresh, friendsChannelId]);
 
   return { friends, loading, refresh };
 }
@@ -149,16 +161,17 @@ export function useIncomingInvites() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  const invitesChannelId = useUniqueChannelId('invites');
   useEffect(() => {
     if (!me) return;
     const ch = supabase
-      .channel(`invites_${me}`)
+      .channel(invitesChannelId)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'game_invites', filter: `to_user=eq.${me}` },
         () => refresh())
       .subscribe();
     return () => { void supabase.removeChannel(ch); };
-  }, [me, refresh]);
+  }, [me, refresh, invitesChannelId]);
 
   return { invites, refresh };
 }
