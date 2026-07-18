@@ -47,7 +47,7 @@ const CARD_W = BASE_W - 6;                        // trim width slightly (height
 // web, where the browser chrome eats vertical space) the card ran past the
 // bottom nav. Cap it to the viewport so the whole card + title always fit
 // without scrolling.
-const CARD_H = Math.min(Math.round(BASE_W * 1.24), Math.round(SCREEN_H * 0.46));
+const CARD_H = Math.min(Math.round(BASE_W * 1.24), Math.round(SCREEN_H * 0.40));
 const GAP = 16;
 const ITEM = CARD_W + GAP;
 const CARD_INSET = Math.round((SCREEN_W - CARD_W) / 2); // centers the active card
