@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView,
+  ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -16,7 +16,8 @@ import { useGoBackOr } from '../../lib/navigation';
 import { playSound } from '../../lib/sounds';
 import { useSession } from '../../lib/useSession';
 import { usePresence } from '../../lib/usePresence';
-import { sendFriendRequest, upvotePlayer, blockPlayer } from '../../lib/social';
+import { sendFriendRequest, blockPlayer } from '../../lib/social';
+import { confirmAsync } from '../../lib/confirm';
 import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
@@ -446,7 +447,6 @@ function OnlineNumberDuel() {
   const [rematchState, setRematchState] = useState<'idle' | 'offering' | 'incoming' | 'accepted' | 'declined'>('idle');
   // Post-match social actions against a real opponent (never bots).
   const [friendState, setFriendState] = useState<'none' | 'sent'>('none');
-  const [upvoted, setUpvoted] = useState(false);
   const [blocked, setBlocked] = useState(false);
   // Handlers close over subscribe-time state — they must read the CURRENT
   // handshake state or a cancel racing an accept still drags both players
@@ -1241,37 +1241,26 @@ function OnlineNumberDuel() {
 
   // ── Post-match social actions (real opponent only) ────────────────────────
   const handleAddFriend = async () => {
-    if (!opponentId) return;
+    // Show + accept the tap for bots too (opponentId is null for them), but
+    // do nothing server-side — a real friend appears in your list when they
+    // accept; a bot simply never does, with no "declined" to give it away.
     setFriendState('sent');
+    if (!opponentId) return;
     try { await sendFriendRequest(opponentId); }
     catch (e) { setFriendState('none'); Alert.alert('Could not send request', (e as Error).message); }
   };
-  const handleUpvote = async () => {
-    if (!opponentId) return;
-    setUpvoted(true);
-    try { await upvotePlayer(opponentId); }
-    catch (e) { setUpvoted(false); Alert.alert('Could not upvote', (e as Error).message); }
-  };
   const handleBlock = () => {
     if (!opponentId) return;
-    const doBlock = async () => {
+    confirmAsync(
+      `Block ${opponentName}?`,
+      "You won't be matched with them for 24 hours, and they'll be removed from your friends.",
+      { confirmText: 'Block', destructive: true },
+    ).then(async (ok) => {
+      if (!ok) return;
       setBlocked(true);
       try { await blockPlayer(opponentId); }
       catch (e) { setBlocked(false); Alert.alert('Could not block', (e as Error).message); }
-    };
-    const msg = `Block ${opponentName}? You won't be matched with them for 24 hours, and they'll be removed from your friends.`;
-    // Alert.alert's buttons/callbacks are a no-op on react-native-web, so the
-    // block confirm never fired on web. Use window.confirm there.
-    if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && window.confirm(msg)) doBlock();
-    } else {
-      Alert.alert(`Block ${opponentName}?`,
-        "You won't be matched with them for 24 hours, and they'll be removed from your friends.",
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Block', style: 'destructive', onPress: doBlock },
-        ]);
-    }
+    });
   };
   const offerRematch = () => {
     playSound('click');
@@ -1563,8 +1552,9 @@ function OnlineNumberDuel() {
           </Pressable>
         )}
 
-        {/* Post-match social actions vs a real opponent (never bots). */}
-        {!isBot && opponentId && !blocked && (
+        {/* Post-match social actions. Add friend shows for bots too (silent)
+            so a bot match doesn't stand out; Block only for real opponents. */}
+        {!blocked && (
           <View style={s.socialRow}>
             <Pressable
               style={({ pressed }) => [s.socialBtn, friendState === 'sent' && s.socialBtnDone, pressed && s.pressed]}
@@ -1575,18 +1565,11 @@ function OnlineNumberDuel() {
                 {friendState === 'sent' ? '✓ Requested' : '＋ Add friend'}
               </Text>
             </Pressable>
-            <Pressable
-              style={({ pressed }) => [s.socialBtn, upvoted && s.socialBtnDone, pressed && s.pressed]}
-              onPress={handleUpvote}
-              disabled={upvoted}
-            >
-              <Text style={[s.socialBtnText, upvoted && s.socialBtnTextDone]}>
-                {upvoted ? '✓ Upvoted' : '▲ Upvote'}
-              </Text>
-            </Pressable>
-            <Pressable style={({ pressed }) => [s.socialBtn, pressed && s.pressed]} onPress={handleBlock}>
-              <Text style={[s.socialBtnText, { color: colors.danger }]}>⊘ Block</Text>
-            </Pressable>
+            {!isBot && opponentId && (
+              <Pressable style={({ pressed }) => [s.socialBtn, pressed && s.pressed]} onPress={handleBlock}>
+                <Text style={[s.socialBtnText, { color: colors.danger }]}>⊘ Block</Text>
+              </Pressable>
+            )}
           </View>
         )}
         {blocked && (

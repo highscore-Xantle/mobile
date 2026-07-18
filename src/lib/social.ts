@@ -56,6 +56,16 @@ export const upvotePlayer = (target: string) =>
 export const respondGameInvite = (inviteId: string, accept: boolean) =>
   rpc('respond_game_invite', { p_invite: inviteId, p_accept: accept });
 
+/** My shareable friend code (generated + persisted on first call). */
+export async function getMyFriendCode(): Promise<string> {
+  const { data, error } = await supabase.rpc('my_friend_code');
+  if (error) throw error;
+  return data as string;
+}
+/** Send a friend request to whoever owns this code. */
+export const addFriendByCode = (code: string) =>
+  rpc('add_friend_by_code', { p_code: code });
+
 /** Create a room, then invite a friend straight into it. Returns the room code. */
 export async function inviteFriendToGame(friendId: string, gameKind: string): Promise<string> {
   const { data: room, error } = await supabase.rpc('create_room', {
@@ -74,6 +84,11 @@ export async function inviteFriendToGame(friendId: string, gameKind: string): Pr
   }
   return room.code;
 }
+
+/** Invite a friend into a room that already exists (e.g. the lobby you're
+ *  hosting). The caller must be seated in that room (enforced server-side). */
+export const inviteFriendToRoom = (friendId: string, roomCode: string) =>
+  rpc('create_game_invite', { p_to: friendId, p_room_code: roomCode });
 
 async function rpc(fn: string, args: Record<string, unknown>): Promise<void> {
   const { error } = await supabase.rpc(fn, args);

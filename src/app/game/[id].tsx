@@ -46,6 +46,7 @@ import {
 } from '../../lib/usePixelGame';
 import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
+import { confirmAsync } from '../../lib/confirm';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
 // Disconnect forfeit grace. 30s (not 10s): a phone call or an app switch
@@ -203,44 +204,33 @@ export default function GameScreen() {
 
   async function handleLeave() {
     if (!game) return;
-    Alert.alert(
-      'Leave game',
-      'Are you sure you want to leave?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Leave',
-          style: 'destructive',
-          onPress: async () => {
-            // Quitting a live 1v1 concedes it — otherwise the game stays
-            // 'active' with one player, the opponent gets no win and no
-            // signal, and (since the quitter is still online in the app)
-            // the disconnect auto-forfeit never fires either. This includes
-            // BOT matches: leave_game never finishes a game while the bot
-            // row remains seated, so a left bot game haunted the LIVE list
-            // forever. concede_game handles the bot-winner case itself.
-            if (game.status === 'active' && game.max_players === 2) {
-              try {
-                await concedeGame(game.id);
-                // Deliberately NO leaveGame after a successful concede: the
-                // game is finished; deleting our row would erase this loss
-                // from the opponent's final screen and from our own stats.
-                router.replace('/home');
-                return;
-              } catch (e) {
-                // Concede didn't reach the server. Leaving anyway would
-                // strand the opponent in an unfinishable game — stay.
-                console.warn('[game] concede failed:', e);
-                Alert.alert('Could not leave', 'Connection hiccup — please try again.');
-                return;
-              }
-            }
-            await leaveGame(game.id).catch(console.warn);
-            router.replace('/home');
-          },
-        },
-      ],
-    );
+    // confirmAsync works on web (Alert.alert buttons are a no-op there).
+    const ok = await confirmAsync('Leave game', 'Are you sure you want to leave?', { confirmText: 'Leave', destructive: true });
+    if (!ok) return;
+    // Quitting a live 1v1 concedes it — otherwise the game stays 'active'
+    // with one player, the opponent gets no win and no signal, and (since the
+    // quitter is still online in the app) the disconnect auto-forfeit never
+    // fires either. This includes BOT matches: leave_game never finishes a
+    // game while the bot row remains seated, so a left bot game haunted the
+    // LIVE list forever. concede_game handles the bot-winner case itself.
+    if (game.status === 'active' && game.max_players === 2) {
+      try {
+        await concedeGame(game.id);
+        // Deliberately NO leaveGame after a successful concede: the game is
+        // finished; deleting our row would erase this loss from the
+        // opponent's final screen and from our own stats.
+        router.replace('/home');
+        return;
+      } catch (e) {
+        // Concede didn't reach the server. Leaving anyway would strand the
+        // opponent in an unfinishable game — stay.
+        console.warn('[game] concede failed:', e);
+        Alert.alert('Could not leave', 'Connection hiccup — please try again.');
+        return;
+      }
+    }
+    await leaveGame(game.id).catch(console.warn);
+    router.replace('/home');
   }
 
   async function handleRematch() {

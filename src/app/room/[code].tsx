@@ -15,6 +15,7 @@ import { playSound } from '../../lib/sounds';
 import { supabase } from '../../lib/supabase';
 import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
+import { useFriends, inviteFriendToRoom } from '../../lib/social';
 import { GAMES } from '../(tabs)/games';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
@@ -23,6 +24,8 @@ export default function RoomLobby() {
   const router = useRouter();
   const { session } = useSession();
   const { isOnline } = usePresence();
+  const { friends } = useFriends();
+  const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
 
   const [loading, setLoading] = useState(true);
   const [room, setRoom] = useState<any>(null);
@@ -407,6 +410,40 @@ export default function RoomLobby() {
               );
             })}
           </View>
+
+          {/* Invite online friends straight into this room (host, while waiting) */}
+          {isHost && room.status === 'lobby' && players.length < room.max_players && (() => {
+            const onlineFriends = friends.filter((f) => f.kind === 'accepted' && isOnline(f.id));
+            if (onlineFriends.length === 0) return null;
+            return (
+              <View style={styles.playersSection}>
+                <Text style={styles.sectionHeader}>Invite a Friend</Text>
+                {onlineFriends.map((f) => {
+                  const invited = invitedIds.has(f.id);
+                  return (
+                    <View key={f.id} style={styles.playerRow}>
+                      <View style={styles.playerAvatarWrap}>
+                        <Avatar letter={(f.username || 'P').charAt(0)} imageUrl={f.avatar_url} size={36} />
+                        <View style={[styles.presenceDot, { backgroundColor: colors.success }]} />
+                      </View>
+                      <Text style={[styles.playerName, { flex: 1 }]}>{f.username || 'Player'}</Text>
+                      <Pressable
+                        style={({ pressed }) => [styles.inviteFriendBtn, invited && styles.inviteFriendBtnDone, pressed && styles.pressed]}
+                        disabled={invited}
+                        onPress={async () => {
+                          setInvitedIds((prev) => new Set(prev).add(f.id));
+                          try { await inviteFriendToRoom(f.id, room.code); }
+                          catch { setInvitedIds((prev) => { const n = new Set(prev); n.delete(f.id); return n; }); }
+                        }}
+                      >
+                        <Text style={[styles.inviteFriendText, invited && { color: colors.success }]}>{invited ? 'Invited' : 'Invite'}</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })()}
         </ScrollView>
 
         {/* Bottom Action Area */}
@@ -490,6 +527,9 @@ const styles = StyleSheet.create({
   },
   playerName: { flex: 1, fontFamily: font.semibold, fontSize: 15, color: colors.text },
   hostBadge: { fontFamily: font.bold, fontSize: 10, color: colors.blue, letterSpacing: 1, backgroundColor: 'rgba(46,126,240,0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  inviteFriendBtn: { paddingHorizontal: space.md, paddingVertical: 8, borderRadius: radius.md, borderWidth: 1, borderColor: colors.blue, backgroundColor: colors.blue },
+  inviteFriendBtnDone: { backgroundColor: 'rgba(74,222,128,0.12)', borderColor: colors.success },
+  inviteFriendText: { fontFamily: font.bold, fontSize: 13, color: colors.white },
 
   settingsSection: {
     backgroundColor: colors.surface, padding: space.lg, borderRadius: radius.xl,
