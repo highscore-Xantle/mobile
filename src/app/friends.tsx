@@ -218,22 +218,20 @@ export default function FriendsScreen() {
             </Pressable>
 
             <Text style={[styles.modalLabel, { marginTop: space.lg }]}>ADD BY CODE</Text>
-            <View style={styles.pasteRow}>
-              <TextInput
-                style={styles.pasteInput}
-                placeholder="Paste a code"
-                placeholderTextColor={colors.textFaint}
-                autoCapitalize="characters"
-                autoCorrect={false}
-                value={codeInput}
-                onChangeText={(v) => { setCodeInput(v); if (addMsg) setAddMsg(null); }}
-                maxLength={6}
-              />
-              <Pressable style={({ pressed }) => [styles.addBtn, (adding || codeInput.trim().length < 4) && styles.addBtnDisabled, pressed && styles.pressed]}
-                disabled={adding || codeInput.trim().length < 4} onPress={submitCode}>
-                {adding ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.addBtnText}>Add</Text>}
-              </Pressable>
-            </View>
+            <TextInput
+              style={styles.pasteInput}
+              placeholder="Paste a code"
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              value={codeInput}
+              onChangeText={(v) => { setCodeInput(v); if (addMsg) setAddMsg(null); }}
+              maxLength={6}
+            />
+            <Pressable style={({ pressed }) => [styles.addBtn, (adding || codeInput.trim().length < 4) && styles.addBtnDisabled, pressed && styles.pressed]}
+              disabled={adding || codeInput.trim().length < 4} onPress={submitCode}>
+              {adding ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.addBtnText}>Add friend</Text>}
+            </Pressable>
             {addMsg && <Text style={styles.addMsg}>{addMsg}</Text>}
 
             <Pressable style={({ pressed }) => [styles.doneBtn, pressed && styles.pressed]} onPress={() => setAddOpen(false)}>
@@ -276,9 +274,8 @@ const styles = StyleSheet.create({
   codeText: { fontFamily: font.display, fontSize: 26, color: colors.text, letterSpacing: 4 },
   copyPill: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   copyText: { fontFamily: font.bold, fontSize: 13, color: colors.blue },
-  pasteRow: { flexDirection: 'row', gap: space.sm },
-  pasteInput: { flex: 1, backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.md, fontFamily: font.display, fontSize: 18, letterSpacing: 2, color: colors.text },
-  addBtn: { paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: colors.blue, alignItems: 'center', justifyContent: 'center', minWidth: 68 },
+  pasteInput: { backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.md, fontFamily: font.display, fontSize: 18, letterSpacing: 2, color: colors.text },
+  addBtn: { marginTop: space.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.blue, alignItems: 'center', justifyContent: 'center' },
   addBtnDisabled: { opacity: 0.4 },
   addBtnText: { fontFamily: font.bold, fontSize: 15, color: colors.white },
   addMsg: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, marginTop: space.sm },
