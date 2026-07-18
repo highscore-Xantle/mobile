@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, ScrollView,
+  ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -1254,18 +1254,24 @@ function OnlineNumberDuel() {
   };
   const handleBlock = () => {
     if (!opponentId) return;
-    Alert.alert(
-      `Block ${opponentName}?`,
-      "You won't be matched with them for 24 hours, and they'll be removed from your friends.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Block', style: 'destructive', onPress: async () => {
-          setBlocked(true);
-          try { await blockPlayer(opponentId); }
-          catch (e) { setBlocked(false); Alert.alert('Could not block', (e as Error).message); }
-        } },
-      ],
-    );
+    const doBlock = async () => {
+      setBlocked(true);
+      try { await blockPlayer(opponentId); }
+      catch (e) { setBlocked(false); Alert.alert('Could not block', (e as Error).message); }
+    };
+    const msg = `Block ${opponentName}? You won't be matched with them for 24 hours, and they'll be removed from your friends.`;
+    // Alert.alert's buttons/callbacks are a no-op on react-native-web, so the
+    // block confirm never fired on web. Use window.confirm there.
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(msg)) doBlock();
+    } else {
+      Alert.alert(`Block ${opponentName}?`,
+        "You won't be matched with them for 24 hours, and they'll be removed from your friends.",
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Block', style: 'destructive', onPress: doBlock },
+        ]);
+    }
   };
   const offerRematch = () => {
     playSound('click');
@@ -1669,7 +1675,7 @@ const s = StyleSheet.create({
   rematchWaitingText: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted, textAlign: 'center' },
   rematchCancelText: { fontFamily: font.bold, fontSize: 14, color: colors.textFaint, padding: space.xs },
   rematchOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: space.lg },
-  rematchCard: { width: '100%', maxWidth: 360, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline, padding: space.xl, alignItems: 'center', gap: space.sm, ...shadow.card },
+  rematchCard: { width: '100%', maxWidth: 360, backgroundColor: colors.surfaceSolid, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline, padding: space.xl, alignItems: 'center', gap: space.sm, ...shadow.card },
   rematchEmoji: { fontSize: 44 },
   rematchTitle: { fontFamily: font.display, fontSize: 20, color: colors.text, textAlign: 'center' },
   rematchSub: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted, textAlign: 'center', marginBottom: space.sm },
