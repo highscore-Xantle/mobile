@@ -219,8 +219,13 @@ function VersusJoin() {
   }, [meId]);
 
   // Listen for a real join; else settle on a (disguised) bot after MATCH_SECONDS.
+  // NOTE: `botOpp` is deliberately NOT a dependency. This effect calls
+  // setBotOpp() itself just before arming the 1.2s reveal→navigate timer; if
+  // botOpp were a dep, that state change would re-run the effect, whose
+  // cleanup clears the reveal timer we just set — leaving the player frozen
+  // on "Opponent found!" forever (the bot match never actually starts).
   useEffect(() => {
-    if (!roomId || !roomCode || botOpp) return;
+    if (!roomId || !roomCode) return;
     let revealTimer: ReturnType<typeof setTimeout> | null = null;
     const resolveToMatch = () => {
       if (resolvedRef.current) return;
@@ -285,7 +290,8 @@ function VersusJoin() {
       // host already left. No-ops if the room was already cancelled/matched.
       if (!resolvedRef.current) void supabase.rpc('cancel_matchmaking', { p_room: roomId });
     };
-  }, [roomId, roomCode, botOpp]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, roomCode]);
 
   const cancel = async () => {
     if (roomId) {
