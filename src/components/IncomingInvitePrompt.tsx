@@ -33,7 +33,10 @@ export function IncomingInvitePrompt() {
   const invite: GameInvite | undefined = invites.find((i) => !dismissed.has(i.id));
 
   useEffect(() => {
-    if (!invite) { setInviter(null); return; }
+    // Clear immediately so a queued second invite never renders the PREVIOUS
+    // inviter's name/photo while this one's profile is still loading.
+    setInviter(null);
+    if (!invite) return;
     let active = true;
     supabase.from('profiles').select('username, avatar_url').eq('id', invite.from_user).maybeSingle()
       .then(({ data }) => { if (active) setInviter(data ?? { username: null, avatar_url: null }); });
@@ -44,17 +47,15 @@ export function IncomingInvitePrompt() {
 
   const accept = async () => {
     setBusy(true);
-    try {
-      await respondGameInvite(invite.id, true);
-      await supabase.rpc('join_room', { p_code: invite.room_code });
-      router.push(`/room/${invite.room_code}` as any);
-    } catch {
-      // If the room's gone/full, just drop the card rather than dead-ending.
-    } finally {
-      setBusy(false);
-      setDismissed((prev) => new Set(prev).add(invite.id));
-      refresh();
-    }
+    // Mark accepted, then navigate to the lobby — the room screen auto-joins
+    // the invitee and surfaces its own error if the room is gone/full, so we
+    // don't swallow a join failure into a dead "accepted but never joined"
+    // state here.
+    try { await respondGameInvite(invite.id, true); } catch { /* best-effort */ }
+    setDismissed((prev) => new Set(prev).add(invite.id));
+    setBusy(false);
+    router.push(`/room/${invite.room_code}` as any);
+    refresh();
   };
 
   const decline = async () => {

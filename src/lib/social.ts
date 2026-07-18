@@ -51,10 +51,16 @@ export async function inviteFriendToGame(friendId: string, gameKind: string): Pr
     p_game_kind: gameKind, p_state: {}, p_is_group: false, p_max: 2,
   });
   if (error || !room) throw error ?? new Error('Could not create room');
+  // game_kind is derived server-side from the room now (the RPC no longer
+  // trusts a client-supplied kind/code — see migration 0018).
   const { error: invErr } = await supabase.rpc('create_game_invite', {
-    p_to: friendId, p_room_code: room.code, p_game_kind: gameKind,
+    p_to: friendId, p_room_code: room.code,
   });
-  if (invErr) throw invErr;
+  if (invErr) {
+    // Don't leave the just-created lobby orphaned if the invite failed.
+    await supabase.rpc('discard_room', { p_room: room.id }).then(undefined, () => {});
+    throw invErr;
+  }
   return room.code;
 }
 
@@ -74,19 +80,26 @@ export function useFriends() {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    if (!me) return;
+    if (!me) { setFriends([]); setLoading(false); return; }
     // RLS returns only rows where I'm requester or addressee.
     const { data: rows } = await supabase
       .from('friendships')
       .select('requester, addressee, status');
-    const others = (rows ?? []).map((r: any) => {
+    // De-dupe by the other user — a reciprocal/duplicate pair of rows would
+    // otherwise render twice with the same key. An accepted row wins over a
+    // pending one for the same person.
+    const rank = { accepted: 2, incoming: 1, outgoing: 0 } as const;
+    const byOther = new Map<string, { otherId: string; kind: FriendRow['kind'] }>();
+    for (const r of (rows ?? []) as any[]) {
       const otherId = r.requester === me ? r.addressee : r.requester;
       const kind: FriendRow['kind'] =
         r.status === 'accepted' ? 'accepted'
         : r.addressee === me ? 'incoming'   // they requested me
         : 'outgoing';                        // I requested them
-      return { otherId, kind };
-    });
+      const prev = byOther.get(otherId);
+      if (!prev || rank[kind] > rank[prev.kind]) byOther.set(otherId, { otherId, kind });
+    }
+    const others = [...byOther.values()];
     if (others.length === 0) { setFriends([]); setLoading(false); return; }
     const ids = [...new Set(others.map((o) => o.otherId))];
     const { data: profs } = await supabase
@@ -150,11 +163,9 @@ export function useIncomingInvites() {
   return { invites, refresh };
 }
 
-/** Upvote count for a profile (from rows readable to the viewer). */
+/** Upvote count for a profile. Via an RPC because player_upvotes RLS is
+ *  self-scoped — a direct count would only ever see the viewer's own row. */
 export async function getUpvoteCount(target: string): Promise<number> {
-  const { count } = await supabase
-    .from('player_upvotes')
-    .select('*', { count: 'exact', head: true })
-    .eq('target', target);
-  return count ?? 0;
+  const { data } = await supabase.rpc('get_upvote_count', { p_target: target });
+  return (data as number | null) ?? 0;
 }

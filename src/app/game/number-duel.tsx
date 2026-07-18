@@ -1252,7 +1252,8 @@ function OnlineNumberDuel() {
         { text: 'Cancel', style: 'cancel' },
         { text: 'Block', style: 'destructive', onPress: async () => {
           setBlocked(true);
-          try { await blockPlayer(opponentId); } catch (e) { Alert.alert('Could not block', (e as Error).message); }
+          try { await blockPlayer(opponentId); }
+          catch (e) { setBlocked(false); Alert.alert('Could not block', (e as Error).message); }
         } },
       ],
     );
@@ -1539,7 +1540,8 @@ function OnlineNumberDuel() {
               <Text style={s.ctaOutlineText}>OK</Text>
             </Pressable>
           </View>
-        ) : (
+        ) : blocked ? null : (
+          // No rematch against someone you just blocked.
           <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={offerRematch}>
             <GradientFill colors={gradients.button} />
             <Text style={s.ctaText}>Rematch 🔄</Text>
