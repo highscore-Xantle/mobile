@@ -16,6 +16,7 @@ import { useGoBackOr } from '../../lib/navigation';
 import { playSound } from '../../lib/sounds';
 import { useSession } from '../../lib/useSession';
 import { usePresence } from '../../lib/usePresence';
+import { sendFriendRequest, upvotePlayer, blockPlayer } from '../../lib/social';
 import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
@@ -443,6 +444,10 @@ function OnlineNumberDuel() {
   // the go-signal; 'declined' = they said no. Replaces the old one-tap flow
   // that yanked the opponent into the lobby without asking.
   const [rematchState, setRematchState] = useState<'idle' | 'offering' | 'incoming' | 'accepted' | 'declined'>('idle');
+  // Post-match social actions against a real opponent (never bots).
+  const [friendState, setFriendState] = useState<'none' | 'sent'>('none');
+  const [upvoted, setUpvoted] = useState(false);
+  const [blocked, setBlocked] = useState(false);
   // Handlers close over subscribe-time state — they must read the CURRENT
   // handshake state or a cancel racing an accept still drags both players
   // into the lobby (the exact bug this handshake exists to prevent).
@@ -1225,6 +1230,33 @@ function OnlineNumberDuel() {
     // non-host: navigation happens when rematch_go arrives
   };
 
+  // ── Post-match social actions (real opponent only) ────────────────────────
+  const handleAddFriend = async () => {
+    if (!opponentId) return;
+    setFriendState('sent');
+    try { await sendFriendRequest(opponentId); }
+    catch (e) { setFriendState('none'); Alert.alert('Could not send request', (e as Error).message); }
+  };
+  const handleUpvote = async () => {
+    if (!opponentId) return;
+    setUpvoted(true);
+    try { await upvotePlayer(opponentId); }
+    catch (e) { setUpvoted(false); Alert.alert('Could not upvote', (e as Error).message); }
+  };
+  const handleBlock = () => {
+    if (!opponentId) return;
+    Alert.alert(
+      `Block ${opponentName}?`,
+      "You won't be matched with them for 24 hours, and they'll be removed from your friends.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Block', style: 'destructive', onPress: async () => {
+          setBlocked(true);
+          try { await blockPlayer(opponentId); } catch (e) { Alert.alert('Could not block', (e as Error).message); }
+        } },
+      ],
+    );
+  };
   const offerRematch = () => {
     playSound('click');
     setRematchState('offering');
@@ -1513,6 +1545,37 @@ function OnlineNumberDuel() {
             <Text style={s.ctaText}>Rematch 🔄</Text>
           </Pressable>
         )}
+
+        {/* Post-match social actions vs a real opponent (never bots). */}
+        {!isBot && opponentId && !blocked && (
+          <View style={s.socialRow}>
+            <Pressable
+              style={({ pressed }) => [s.socialBtn, friendState === 'sent' && s.socialBtnDone, pressed && s.pressed]}
+              onPress={handleAddFriend}
+              disabled={friendState === 'sent'}
+            >
+              <Text style={[s.socialBtnText, friendState === 'sent' && s.socialBtnTextDone]}>
+                {friendState === 'sent' ? '✓ Requested' : '＋ Add friend'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [s.socialBtn, upvoted && s.socialBtnDone, pressed && s.pressed]}
+              onPress={handleUpvote}
+              disabled={upvoted}
+            >
+              <Text style={[s.socialBtnText, upvoted && s.socialBtnTextDone]}>
+                {upvoted ? '✓ Upvoted' : '▲ Upvote'}
+              </Text>
+            </Pressable>
+            <Pressable style={({ pressed }) => [s.socialBtn, pressed && s.pressed]} onPress={handleBlock}>
+              <Text style={[s.socialBtnText, { color: colors.danger }]}>⊘ Block</Text>
+            </Pressable>
+          </View>
+        )}
+        {blocked && (
+          <Text style={s.blockedNote}>{opponentName} blocked for 24 hours.</Text>
+        )}
+
         <Pressable style={({ pressed }) => [s.ctaOutline, pressed && s.pressed]} onPress={() => { abandonRematch(); setTimeout(() => router.replace('/home'), 100); }}>
           <Text style={s.ctaOutlineText}>Back to Home</Text>
         </Pressable>
@@ -1638,6 +1701,12 @@ const s = StyleSheet.create({
   cta: { borderRadius: radius.lg, overflow: 'hidden', ...shadow.blueGlow },
   ctaOutline: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline, paddingVertical: 18, alignItems: 'center' },
   ctaOutlineText: { fontFamily: font.bold, fontSize: 16, color: colors.textMuted },
+  socialRow: { flexDirection: 'row', gap: space.sm, marginTop: space.xs },
+  socialBtn: { flex: 1, paddingVertical: 12, borderRadius: radius.md, borderWidth: 1, borderColor: colors.hairline, alignItems: 'center', backgroundColor: colors.surface },
+  socialBtnDone: { backgroundColor: 'rgba(74,222,128,0.1)', borderColor: colors.success },
+  socialBtnText: { fontFamily: font.bold, fontSize: 12, color: colors.text },
+  socialBtnTextDone: { color: colors.success },
+  blockedNote: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, textAlign: 'center', marginTop: space.xs },
   ctaDisabled: { opacity: 0.4 },
   ctaText: { fontFamily: font.extrabold, fontSize: 17, color: colors.white, textAlign: 'center', paddingVertical: 18 },
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.88 },
