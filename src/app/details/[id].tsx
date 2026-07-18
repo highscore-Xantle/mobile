@@ -166,7 +166,12 @@ export default function GameDetail() {
 
   return (
     <View style={styles.root}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 130 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 170 }}
+        bounces={false}
+        overScrollMode="never"
+      >
         {/* Hero */}
         <View style={styles.hero}>
           <GradientFill colors={game.theme} />
@@ -299,7 +304,7 @@ const styles = StyleSheet.create({
   chipSub: { fontFamily: font.semibold, fontSize: 11, color: colors.textMuted, marginTop: 1 },
   chipPrice: { fontFamily: font.extrabold, fontSize: 13 },
 
-  bottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: 34, backgroundColor: colors.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: colors.hairline },
+  bottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: 34, backgroundColor: colors.surfaceSolid, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: colors.hairline },
   priceLabel: { fontFamily: font.bold, fontSize: 10, color: colors.textFaint, letterSpacing: 1.5 },
   price: { fontFamily: font.extrabold, fontSize: 22, color: colors.text },
   cta: { borderRadius: radius.lg, overflow: 'hidden', ...shadow.blueGlow, minWidth: 160 },
