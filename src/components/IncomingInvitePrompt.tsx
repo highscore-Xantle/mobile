@@ -88,7 +88,7 @@ export function IncomingInvitePrompt() {
 
 const styles = StyleSheet.create({
   wrap: { position: 'absolute', left: space.md, right: space.md, top: 54, zIndex: 100 },
-  card: { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline, padding: space.md, ...shadow.card },
+  card: { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: colors.surfaceSolid, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline, padding: space.md, ...shadow.card },
   title: { fontFamily: font.bold, fontSize: 14, color: colors.text },
   sub: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted, marginTop: 1 },
   decline: { paddingHorizontal: space.md, paddingVertical: 8, borderRadius: radius.md, borderWidth: 1, borderColor: colors.hairline },

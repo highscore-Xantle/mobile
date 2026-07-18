@@ -24,7 +24,12 @@ import {
   useFriends, respondFriendRequest, removeFriend, inviteFriendToGame,
   getMyFriendCode, addFriendByCode, type FriendRow,
 } from '../lib/social';
+import { GAMES } from './(tabs)/games';
 import { colors, font, gradients, radius, shadow, space } from '../theme';
+
+// Games invitable via the rooms/invite flow (Pixel Rush uses a separate
+// games-table schema that this invite path doesn't cover yet).
+const INVITE_GAME_IDS = ['number-duel', 'draughts'];
 
 export default function FriendsScreen() {
   const goBack = useGoBackOr('/home');
@@ -50,10 +55,17 @@ export default function FriendsScreen() {
     finally { setBusyId(null); }
   }, [refresh]);
 
-  const invite = (f: FriendRow) => withBusy(f.id, async () => {
-    const code = await inviteFriendToGame(f.id, 'number-duel');
-    router.push(`/room/${code}` as any);
-  });
+  // Which friend we're picking a game to invite to (null = chooser closed).
+  const [inviteFor, setInviteFor] = useState<FriendRow | null>(null);
+  const inviteGames = GAMES.filter((g) => g.available && INVITE_GAME_IDS.includes(g.id));
+
+  const doInvite = (f: FriendRow, gameId: string) => {
+    setInviteFor(null);
+    return withBusy(f.id, async () => {
+      const code = await inviteFriendToGame(f.id, gameId);
+      router.push(`/room/${code}` as any);
+    });
+  };
 
   const openAdd = async () => {
     setAddOpen(true);
@@ -152,7 +164,7 @@ export default function FriendsScreen() {
                   {online && (
                     <Pressable style={({ pressed }) => [styles.smallBtn, styles.inviteBtn, pressed && styles.pressed]}
                       disabled={busyId === f.id}
-                      onPress={() => invite(f)}>
+                      onPress={() => setInviteFor(f)}>
                       {busyId === f.id ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.inviteText}>Invite</Text>}
                     </Pressable>
                   )}
@@ -165,6 +177,29 @@ export default function FriendsScreen() {
           </ScrollView>
         )}
       </SafeAreaView>
+
+      {/* Pick which game to invite this friend to */}
+      <Modal visible={!!inviteFor} transparent animationType="fade" onRequestClose={() => setInviteFor(null)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setInviteFor(null)}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Invite {inviteFor ? (inviteFor.username || 'friend') : ''} to…</Text>
+            {inviteGames.map((g) => (
+              <Pressable
+                key={g.id}
+                style={({ pressed }) => [styles.gameChoice, pressed && styles.pressed]}
+                onPress={() => inviteFor && doInvite(inviteFor, g.id)}
+              >
+                <Text style={styles.gameChoiceEmoji}>{g.emoji}</Text>
+                <Text style={styles.gameChoiceTitle}>{g.title}</Text>
+                <FontAwesome name="chevron-right" size={14} color={colors.textFaint} />
+              </Pressable>
+            ))}
+            <Pressable style={({ pressed }) => [styles.doneBtn, pressed && styles.pressed]} onPress={() => setInviteFor(null)}>
+              <Text style={styles.doneText}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Add Friend modal — copy your code / paste theirs */}
       <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}>
@@ -244,6 +279,9 @@ const styles = StyleSheet.create({
   addBtnDisabled: { opacity: 0.4 },
   addBtnText: { fontFamily: font.bold, fontSize: 15, color: colors.white },
   addMsg: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted, marginTop: space.sm },
+  gameChoice: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md, paddingHorizontal: space.md, borderRadius: radius.md, backgroundColor: colors.surfaceAlt, marginBottom: space.sm },
+  gameChoiceEmoji: { fontSize: 24 },
+  gameChoiceTitle: { flex: 1, fontFamily: font.bold, fontSize: 16, color: colors.text },
   doneBtn: { marginTop: space.xl, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.hairline, alignItems: 'center' },
   doneText: { fontFamily: font.bold, fontSize: 15, color: colors.text },
 });
