@@ -164,8 +164,15 @@ export default function GameDetail() {
     if (mode === 'join') { setJoinVisible(true); return; }
   };
 
+  // Whole-page background in the game's dark tone (Number Duel's red-brown),
+  // not the shared navy. cardBg is the per-game dark card palette.
+  const cardBg = (game.cardBg as string[]);
+  const pageBgDark = cardBg[cardBg.length - 1];
+  const pageBg: [string, string] = [cardBg[0], pageBgDark];
+
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: pageBgDark }]}>
+      <GradientFill colors={pageBg} />
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 170 }}
@@ -253,7 +260,7 @@ export default function GameDetail() {
       </ScrollView>
 
       {/* Bottom bar — reflects the selected mode */}
-      <View style={styles.bottomBar}>
+      <View style={[styles.bottomBar, { backgroundColor: pageBgDark }]}>
         <View>
           <Text style={styles.priceLabel}>{selected ? selected.title.toUpperCase() : 'PRICE'}</Text>
           <Text style={styles.price}>{selected ? selected.price : 'Free'}</Text>
