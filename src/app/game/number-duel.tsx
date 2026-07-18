@@ -474,6 +474,8 @@ function OnlineNumberDuel() {
   const botSecretRef = useRef<number | null>(null);
   const botLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const botSolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Un-sticks the "Waiting…" state if the opponent's hint reply never arrives.
+  const guessReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [gameRules, setGameRules] = useState({ rounds: 5, difficulty: 'easy', mode: 'classic' });
 
@@ -782,6 +784,8 @@ function OnlineNumberDuel() {
 
     ch.on('broadcast', { event: 'hint_for_opponent' }, ({ payload }) => {
       if (payload.forUserId !== session.user.id) return;
+      // Reply arrived — cancel the "Waiting…" safety timeout.
+      if (guessReplyTimerRef.current) { clearTimeout(guessReplyTimerRef.current); guessReplyTimerRef.current = null; }
       const hint: Hint = payload.hint;
       // If the round already ended while this reply was in flight, don't
       // score off it — EXCEPT the both-solved-at-once case: the opponent
@@ -1152,6 +1156,17 @@ function OnlineNumberDuel() {
       type: 'broadcast', event: 'player_guess',
       payload: { userId: session?.user.id, username: myName, guess: guessStr },
     });
+    // The opponent's device evaluates the guess and sends the hint back. If
+    // that reply never arrives (their app is backgrounded, slow, or dropped
+    // the message), don't leave the player stuck on "Waiting…" forever —
+    // re-enable guessing after a few seconds so they can try again. The hint
+    // handler clears this the instant a reply does come.
+    if (guessReplyTimerRef.current) clearTimeout(guessReplyTimerRef.current);
+    guessReplyTimerRef.current = setTimeout(() => {
+      if (gsRef.current.phase !== 'guessing') return; // round already moved on
+      setSubmitting(false);
+      setInputValue(guessStr); // restore what they typed so a retry is one tap
+    }, 6000);
   };
 
   const handleTimeout = () => {

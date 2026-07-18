@@ -47,7 +47,12 @@ const CARD_W = BASE_W - 6;                        // trim width slightly (height
 // web, where the browser chrome eats vertical space) the card ran past the
 // bottom nav. Cap it to the viewport so the whole card + title always fit
 // without scrolling.
-const CARD_H = Math.min(Math.round(BASE_W * 1.24), Math.round(SCREEN_H * 0.40));
+// Width-based ideal height + a first-paint fallback. The REAL height is
+// measured at runtime from the carousel's available space (see Home) so the
+// card always fits whatever the device/browser actually gives us.
+const CARD_H_IDEAL = Math.round(BASE_W * 1.24);
+const CARD_H_MIN = Math.round(BASE_W * 0.9);
+const DEFAULT_CARD_H = Math.min(CARD_H_IDEAL, Math.round(SCREEN_H * 0.40));
 const GAP = 16;
 const ITEM = CARD_W + GAP;
 const CARD_INSET = Math.round((SCREEN_W - CARD_W) / 2); // centers the active card
@@ -73,17 +78,18 @@ function roundedPath(pts: number[][], r: number): string {
   return d + 'Z';
 }
 
-const CARD_PATH = roundedPath([[0, SLANT], [CARD_W, 0], [CARD_W, CARD_H], [0, CARD_H]], 22);
-
 function GameCard({
-  game, index, scrollX, onPress,
+  game, index, scrollX, onPress, cardH,
 }: {
   game: typeof GAMES[number];
   index: number;
   scrollX: SharedValue<number>;
   onPress: () => void;
+  cardH: number;
 }) {
   const gid = `gc-${game.id}`;
+  // Path recomputed from the live height so the card outline matches.
+  const cardPath = roundedPath([[0, SLANT], [CARD_W, 0], [CARD_W, cardH], [0, cardH]], 22);
 
   // Art bounces on touch.
   const artScale = useSharedValue(1);
@@ -103,14 +109,14 @@ function GameCard({
   });
 
   return (
-    <Animated.View style={[{ width: CARD_W, height: CARD_H }, styles.cardShadow, aStyle]}>
+    <Animated.View style={[{ width: CARD_W, height: cardH }, styles.cardShadow, aStyle]}>
       <Pressable
         onPress={onPress}
         onPressIn={() => { artScale.value = withSpring(1.16, { damping: 9, stiffness: 220 }); }}
         onPressOut={() => { artScale.value = withSpring(1, { damping: 12, stiffness: 200 }); }}
         style={StyleSheet.absoluteFill}
       >
-        <Svg width={CARD_W} height={CARD_H} style={StyleSheet.absoluteFill}>
+        <Svg width={CARD_W} height={cardH} style={StyleSheet.absoluteFill}>
           <Defs>
             <SvgLinearGradient id={gid} x1="0%" y1="0%" x2="0%" y2="100%">
               {game.cardBg.map((c, i) => (
@@ -118,10 +124,10 @@ function GameCard({
               ))}
             </SvgLinearGradient>
           </Defs>
-          <Path d={CARD_PATH} fill={`url(#${gid})`} />
+          <Path d={cardPath} fill={`url(#${gid})`} />
         </Svg>
 
-        <Animated.View style={[styles.cardArt, { height: CARD_H * 0.6 }, artStyle]}>
+        <Animated.View style={[styles.cardArt, { height: cardH * 0.6 }, artStyle]}>
           {game.image
             ? <Image source={game.image} style={styles.cardImg} contentFit="contain" />
             : <Text style={styles.cardEmoji}>{game.emoji}</Text>}
@@ -153,6 +159,11 @@ export default function Home() {
   }, [sessionLoading, session, router]);
 
   const [activeCat, setActiveCat] = useState(0);
+  // Card height is measured from the carousel's actual available space (see
+  // onLayout below) rather than guessed from the screen height — mobile
+  // browser chrome makes the reported screen height unreliable, which kept
+  // clipping the card. This adapts to whatever room the device really gives.
+  const [cardH, setCardH] = useState(DEFAULT_CARD_H);
 
   const { accent, setAccent } = useAccent();
   const scrollX = useSharedValue(0);
@@ -271,23 +282,33 @@ export default function Home() {
           })}
         </View>
 
-        <View style={{ flex: 1 }} />
-
-        <Animated.ScrollView
-          ref={scrollRef}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          snapToInterval={ITEM}
-          decelerationRate="fast"
-          onScroll={onScroll}
-          scrollEventThrottle={16}
-          style={styles.carousel}
-          contentContainerStyle={styles.cardRow}
+        <View
+          style={styles.carouselArea}
+          onLayout={(e) => {
+            // Size the card to the space actually available (minus the
+            // carousel's bottom margin + a little lift room), clamped so it
+            // never gets absurdly tall or too short.
+            const avail = Math.floor(e.nativeEvent.layout.height) - 32;
+            const next = Math.max(CARD_H_MIN, Math.min(CARD_H_IDEAL, avail));
+            setCardH((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+          }}
         >
-          {GAMES.map((g, i) => (
-            <GameCard key={g.id} game={g} index={i} scrollX={scrollX} onPress={() => openGame(g)} />
-          ))}
-        </Animated.ScrollView>
+          <Animated.ScrollView
+            ref={scrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={ITEM}
+            decelerationRate="fast"
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            style={styles.carousel}
+            contentContainerStyle={styles.cardRow}
+          >
+            {GAMES.map((g, i) => (
+              <GameCard key={g.id} game={g} index={i} scrollX={scrollX} cardH={cardH} onPress={() => openGame(g)} />
+            ))}
+          </Animated.ScrollView>
+        </View>
       </SafeAreaView>
     </View>
   );
@@ -339,6 +360,7 @@ const styles = StyleSheet.create({
 
   // Full-bleed: break out of the safe-area padding so cards use the device width,
   // first card flush to the edge (no margin).
+  carouselArea: { flex: 1, justifyContent: 'flex-end' },
   carousel: { marginHorizontal: -space.lg, marginBottom: 24 },
   cardRow: { gap: GAP, paddingTop: 8, paddingBottom: space.sm, paddingLeft: CARD_INSET, paddingRight: CARD_INSET },
   // Thick 3D drop shadow under each card.
