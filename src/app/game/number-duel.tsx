@@ -37,7 +37,7 @@ const ROUND_END_SECONDS = 5;
 // Number Duel's own colours (match the game icon), for the matchmaking
 // screen — the shared dark-blue background didn't read as "this game".
 // Mirrors the theme/accent in (tabs)/games.tsx.
-const ND_THEME = ['#8B5A2B', '#3B2A1D'] as [string, string]; // warm bronze/copper
+const ND_THEME = ['#6E362B', '#2A1512'] as [string, string]; // red-brown, matches the keypad board (keep in sync with games.tsx number-duel theme)
 const ND_ACCENT = '#D98F3B';                                  // amber-copper
 
 type Phase = 'picking' | 'opponent_picking' | 'drama' | 'guessing' | 'round_end' | 'game_over';

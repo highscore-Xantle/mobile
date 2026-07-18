@@ -39,10 +39,10 @@ export const GAMES = [
     title: 'Number Duel',
     tag: 'MIND GAME',
     tagline: 'Pick a secret. Race to guess.',
-    gradient: ['#8B5A2B', '#3B2A1D'] as [string, string],
-    cardBg: ['#3B2A1D', '#150E08'] as string[],           // warm bronze-black, matches the keypad's board background
-    theme: ['#8B5A2B', '#3B2A1D'] as [string, string],    // warm copper-bronze — this is the hero/background gradient, has to actually match the image's own dark warm tone, not just a pop color
-    accent: '#D98F3B',                                     // warm amber-copper, sampled from the keypad's lit "5" key — same warm family as theme, matches Draughts' accent/theme pairing
+    gradient: ['#6E362B', '#2A1512'] as [string, string],
+    cardBg: ['#3A1C18', '#150A08'] as string[],           // red-brown → near-black, matches the keypad board's actual warm tone (sampled #4E2523, red-leaning, not the old yellow bronze)
+    theme: ['#6E362B', '#2A1512'] as [string, string],    // hero/background gradient in the image's own red-brown family — the old #8B5A2B was too yellow and clashed with the board
+    accent: '#E39A5B',                                     // warm amber, sampled from the keypad's glow (#EEA96D) — the pop/highlight color
     emoji: '🔢',
     image: require('../../../assets/games-icon/number-duel.png') as number | null,
     available: true,
