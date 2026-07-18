@@ -32,13 +32,17 @@ const PICK_SECONDS = 30;
 // 12-second interruption is worse than the winner waiting a little longer.
 const DISCONNECT_GRACE_MS = 30000;
 const MATCH_SECONDS = 15;
+// How long the "Opponent found!" reveal holds before the match starts —
+// same beat for a real opponent and a bot, so a real match no longer snaps
+// in before you even see who you're playing.
+const REVEAL_MS = 1500;
 // How long the round-end screen holds before the next round auto-starts.
 const ROUND_END_SECONDS = 5;
 // Number Duel's own colours (match the game icon), for the matchmaking
 // screen — the shared dark-blue background didn't read as "this game".
 // Mirrors the theme/accent in (tabs)/games.tsx.
 const ND_THEME = ['#6E362B', '#2A1512'] as [string, string]; // red-brown, matches the keypad board (keep in sync with games.tsx number-duel theme)
-const ND_ACCENT = '#D98F3B';                                  // amber-copper
+const ND_ACCENT = '#E39A5B';                                  // amber, sampled from the keypad glow
 
 type Phase = 'picking' | 'opponent_picking' | 'drama' | 'guessing' | 'round_end' | 'game_over';
 type Hint = 'higher' | 'lower' | 'correct' | 'hot' | 'warm' | 'cold' | 'timeout';
@@ -183,13 +187,42 @@ function VersusJoin() {
 
   const [roomId, setRoomId] = useState<string | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(null);
-  const [botOpp, setBotOpp] = useState<VersusPlayer | null>(null);
+  // The matched opponent (real OR bot) that drives the "Opponent found!"
+  // reveal. Null while still searching.
+  const [matchedOpp, setMatchedOpp] = useState<VersusPlayer | null>(null);
   const [errored, setErrored] = useState(false);
-  // Once ANY outcome has navigated (real match, bot match, or cancel),
-  // every other pending path must stand down — without this, the bot
-  // fallback could fire after a real match already started and yank the
-  // player out of it.
+  // Once ANY outcome has committed (real match, bot match, or cancel), every
+  // other pending path must stand down — without this, the bot fallback could
+  // fire after a real match already started and yank the player out of it.
   const resolvedRef = useRef(false);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (revealTimerRef.current) clearTimeout(revealTimerRef.current); }, []);
+
+  // Show the "Opponent found!" reveal for REVEAL_MS, then enter the match —
+  // identical beat for a real opponent and a bot (a real match used to snap
+  // in instantly, before you could see who you matched with).
+  const revealAndGo = (opp: VersusPlayer, params: Record<string, string>) => {
+    if (resolvedRef.current) return;
+    resolvedRef.current = true;
+    setMatchedOpp(opp);
+    revealTimerRef.current = setTimeout(() => {
+      router.replace({ pathname: '/game/number-duel', params });
+    }, REVEAL_MS);
+  };
+
+  // The other seat in the matchmaking room — their real name + photo, so the
+  // reveal shows who you actually matched with.
+  const fetchOpponent = async (rId: string): Promise<VersusPlayer> => {
+    const { data } = await supabase
+      .from('room_players')
+      .select('user_id, display_name, profiles(username, avatar_url)')
+      .eq('room_id', rId);
+    const opp = (data ?? []).find((p: any) => p.user_id !== meId) as any;
+    return {
+      name: opp?.display_name || opp?.profiles?.username || 'Opponent',
+      avatar: opp?.profiles?.avatar_url ?? null,
+    };
+  };
 
   useEffect(() => {
     if (!meId) return;
@@ -200,10 +233,10 @@ function VersusJoin() {
         if (!active) return;
         if (error || !room) { setErrored(true); return; }
         if (room.status === 'active') {
-          if (!resolvedRef.current) {
-            resolvedRef.current = true;
-            router.replace({ pathname: '/game/number-duel', params: { roomCode: room.code } });
-          }
+          // Paired immediately into an existing lobby — reveal who, then go.
+          const opp = await fetchOpponent(room.id);
+          if (!active) return;
+          revealAndGo(opp, { roomCode: room.code });
           return;
         }
         setRoomCode(room.code);
@@ -219,18 +252,13 @@ function VersusJoin() {
   }, [meId]);
 
   // Listen for a real join; else settle on a (disguised) bot after MATCH_SECONDS.
-  // NOTE: `botOpp` is deliberately NOT a dependency. This effect calls
-  // setBotOpp() itself just before arming the 1.2s reveal→navigate timer; if
-  // botOpp were a dep, that state change would re-run the effect, whose
-  // cleanup clears the reveal timer we just set — leaving the player frozen
-  // on "Opponent found!" forever (the bot match never actually starts).
   useEffect(() => {
     if (!roomId || !roomCode) return;
-    let revealTimer: ReturnType<typeof setTimeout> | null = null;
-    const resolveToMatch = () => {
+    // A real opponent joined our lobby → reveal who, then enter the match.
+    const resolveToMatch = async () => {
       if (resolvedRef.current) return;
-      resolvedRef.current = true;
-      router.replace({ pathname: '/game/number-duel', params: { roomCode } });
+      const opp = await fetchOpponent(roomId);
+      revealAndGo(opp, { roomCode });
     };
     const ch = supabase
       .channel(`nd_mm_${roomId}`)
@@ -260,20 +288,15 @@ function VersusJoin() {
         // go play THEM, don't strand them against an empty seat.
         const { data: room } = await supabase.from('rooms').select('status').eq('id', roomId).maybeSingle();
         if (resolvedRef.current) return;
-        if (room?.status === 'active') { resolveToMatch(); return; }
+        if (room?.status === 'active') { void resolveToMatch(); return; }
         const { data: botRoom, error } = await supabase.rpc('create_bot_room', { p_state: {} });
         if (resolvedRef.current) return;
         if (error || !botRoom) { setErrored(true); return; }
-        const disguise = randomBotOpponent();        // freeze the flashing photo on this identity
-        setBotOpp(disguise);
-        revealTimer = setTimeout(() => {
-          if (resolvedRef.current) return;
-          resolvedRef.current = true;
-          // Pass the disguise through — the game screen would otherwise show
-          // the DB's "Xantle Bot" name and a different avatar, blowing the
-          // cover the search screen just established.
-          router.replace({ pathname: '/game/number-duel', params: { roomCode: botRoom.code, botName: disguise.name, botAvatar: disguise.avatar ?? '' } });
-        }, 1200);
+        const disguise = randomBotOpponent();
+        // Pass the disguise through — the game screen would otherwise show
+        // the DB's "Xantle Bot" name and a different avatar, blowing the
+        // cover the reveal just established.
+        revealAndGo(disguise, { roomCode: botRoom.code, botName: disguise.name, botAvatar: disguise.avatar ?? '' });
       } catch {
         // Without this catch, any rejected RPC call here (network blip, etc.)
         // left the user stuck on "Finding an opponent…" forever — nothing
@@ -284,7 +307,6 @@ function VersusJoin() {
     return () => {
       void supabase.removeChannel(ch);
       clearTimeout(timer);
-      if (revealTimer) clearTimeout(revealTimer);  // Cancel/unmount during the 1.2s reveal must not still navigate
       // Hardware back / swipe unmounts without cancel() — without this the
       // lobby stays matchable for 40s and a stranger pairs into a room whose
       // host already left. No-ops if the room was already cancelled/matched.
@@ -326,7 +348,7 @@ function VersusJoin() {
     <View style={s.root}>
       <GradientFill colors={ND_THEME} />
       <SafeAreaView style={[s.safe, { justifyContent: 'center' }]}>
-        <VersusSearch accent={ND_ACCENT} me={me} matched={botOpp} onCancel={cancel} />
+        <VersusSearch accent={ND_ACCENT} me={me} matched={matchedOpp} onCancel={cancel} />
       </SafeAreaView>
     </View>
   );
