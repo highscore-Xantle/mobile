@@ -115,8 +115,9 @@ export default function FriendsScreen() {
             <FontAwesome name="chevron-left" size={16} color={colors.text} />
           </Pressable>
           <Text style={styles.title}>Friends</Text>
-          <Pressable style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]} onPress={openAdd} accessibilityLabel="Add friend">
-            <FontAwesome name="user-plus" size={16} color={colors.text} />
+          <Pressable style={({ pressed }) => [styles.addPill, pressed && styles.pressed]} onPress={openAdd} accessibilityLabel="Add friend">
+            <FontAwesome name="plus" size={13} color={colors.white} />
+            <Text style={styles.addPillText}>Add</Text>
           </Pressable>
         </View>
 
@@ -250,6 +251,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, paddingHorizontal: space.lg },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: space.sm, paddingBottom: space.lg },
   iconBtn: { width: 40, height: 40, borderRadius: radius.sm, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', ...shadow.card },
+  addPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 40, paddingHorizontal: space.md, borderRadius: radius.sm, backgroundColor: colors.blue, ...shadow.card },
+  addPillText: { fontFamily: font.bold, fontSize: 14, color: colors.white },
   title: { fontFamily: font.black, fontSize: 22, color: colors.text },
   sectionLabel: { fontFamily: font.black, fontSize: 12, color: colors.textFaint, letterSpacing: 1.2, marginTop: space.lg, marginBottom: space.sm },
   empty: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted, paddingVertical: space.md },
