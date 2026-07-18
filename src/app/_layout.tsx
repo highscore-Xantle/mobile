@@ -1,6 +1,7 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Platform } from 'react-native';
 import { useEffect } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import {
@@ -32,6 +33,17 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded) SplashScreen.hideAsync();
   }, [loaded]);
+
+  // Web (SPA) only: the default document <body> is white, so mobile browsers
+  // flash white when the page rubber-bands past the app. +html.tsx is ignored
+  // in single-output mode, so set it at runtime instead.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    document.documentElement.style.backgroundColor = colors.bg;
+    document.body.style.backgroundColor = colors.bg;
+    (document.documentElement.style as any).overscrollBehavior = 'none';
+    (document.body.style as any).overscrollBehavior = 'none';
+  }, []);
 
   if (!loaded) return null;
 
