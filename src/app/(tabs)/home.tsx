@@ -231,6 +231,13 @@ export default function Home() {
           >
             <FontAwesome name="bell" size={17} color={colors.text} />
           </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
+            onPress={() => router.push('/friends' as any)}
+            accessibilityLabel="Friends"
+          >
+            <FontAwesome name="users" size={16} color={colors.text} />
+          </Pressable>
         </View>
 
         <View style={styles.titleBlock}>
@@ -298,6 +305,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
+    gap: space.sm,
     paddingBottom: space.lg,
   },
   iconBtn: {

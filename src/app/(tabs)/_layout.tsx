@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { BottomNav } from '../../components/BottomNav';
+import { IncomingInvitePrompt } from '../../components/IncomingInvitePrompt';
 import { AccentProvider } from '../../lib/accent';
 
 // Custom animated tab bar (BottomNav). It shows Home · Live · Settings ·
@@ -20,6 +21,7 @@ export default function TabsLayout() {
         <Tabs.Screen name="settings" />
         <Tabs.Screen name="profile" />
       </Tabs>
+      <IncomingInvitePrompt />
     </AccentProvider>
   );
 }
