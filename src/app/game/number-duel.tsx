@@ -581,20 +581,31 @@ function OnlineNumberDuel() {
   }, [isBot, roomCode, session, gs.phase, gs.mySecret]);
 
   // ── Bot: lock its own secret after a short "thinking" delay ────────────────
+  // Keyed on gs.round, NOT gs.phase: if it depended on phase, the human
+  // locking their secret (picking → opponent_picking) would re-run this
+  // effect, whose cleanup clears the bot's pending lock timer — and the
+  // re-run returns early because phase is no longer 'picking', so the bot
+  // never locks and the match hangs on "Waiting for {bot}…". Round is the
+  // right key: it changes exactly once per round, at the pick stage.
   useEffect(() => {
-    if (!isBot || gs.phase !== 'picking') return;
+    if (!isBot) return;
+    if (gs.phase !== 'picking') return; // only arm at the start of a round
     botSecretRef.current = null;
     const delay = 3000 + Math.random() * 5000;
     botLockTimerRef.current = setTimeout(() => {
       botSecretRef.current = randomSecret(allowDecimal, isHard);
       setOpponentReady(true);
       setGs(prev => {
+        // If the human already locked, both are ready → drama. If not, just
+        // mark the bot ready; the human's lockSecret sees opponentReady and
+        // goes to drama itself.
         if (prev.mySecret !== null && prev.phase === 'opponent_picking') return { ...prev, phase: 'drama' };
         return prev;
       });
     }, delay);
     return () => { if (botLockTimerRef.current) clearTimeout(botLockTimerRef.current); };
-  }, [isBot, gs.phase, allowDecimal, isHard]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBot, gs.round]);
 
   // ── Bot: "solve" the human's secret after a delay, unless the human wins first ──
   useEffect(() => {
