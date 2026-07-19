@@ -16,7 +16,7 @@ import { useGoBackOr } from '../../lib/navigation';
 import { playSound } from '../../lib/sounds';
 import { useSession } from '../../lib/useSession';
 import { usePresence } from '../../lib/usePresence';
-import { sendFriendRequest, blockPlayer } from '../../lib/social';
+import { sendFriendRequest, blockPlayer, useFriends } from '../../lib/social';
 import { confirmAsync } from '../../lib/confirm';
 import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
@@ -448,6 +448,9 @@ function OnlineNumberDuel() {
   // Post-match social actions against a real opponent (never bots).
   const [friendState, setFriendState] = useState<'none' | 'sent'>('none');
   const [blocked, setBlocked] = useState(false);
+  // Hide "Add friend" if they're already an accepted friend.
+  const { friends } = useFriends();
+  const alreadyFriend = !!opponentId && friends.some((f) => f.id === opponentId && f.kind === 'accepted');
   // Handlers close over subscribe-time state — they must read the CURRENT
   // handshake state or a cancel racing an accept still drags both players
   // into the lobby (the exact bug this handshake exists to prevent).
@@ -1571,15 +1574,21 @@ function OnlineNumberDuel() {
             so a bot match doesn't stand out; Block only for real opponents. */}
         {!blocked && (
           <View style={s.socialRow}>
-            <Pressable
-              style={({ pressed }) => [s.socialBtn, friendState === 'sent' && s.socialBtnDone, pressed && s.pressed]}
-              onPress={handleAddFriend}
-              disabled={friendState === 'sent'}
-            >
-              <Text style={[s.socialBtnText, friendState === 'sent' && s.socialBtnTextDone]}>
-                {friendState === 'sent' ? '✓ Requested' : '＋ Add friend'}
-              </Text>
-            </Pressable>
+            {alreadyFriend ? (
+              <View style={[s.socialBtn, s.socialBtnDone]}>
+                <Text style={[s.socialBtnText, s.socialBtnTextDone]}>✓ Friends</Text>
+              </View>
+            ) : (
+              <Pressable
+                style={({ pressed }) => [s.socialBtn, friendState === 'sent' && s.socialBtnDone, pressed && s.pressed]}
+                onPress={handleAddFriend}
+                disabled={friendState === 'sent'}
+              >
+                <Text style={[s.socialBtnText, friendState === 'sent' && s.socialBtnTextDone]}>
+                  {friendState === 'sent' ? '✓ Requested' : '＋ Add friend'}
+                </Text>
+              </Pressable>
+            )}
             {!isBot && opponentId && (
               <Pressable style={({ pressed }) => [s.socialBtn, pressed && s.pressed]} onPress={handleBlock}>
                 <Text style={[s.socialBtnText, { color: colors.danger }]}>⊘ Block</Text>
