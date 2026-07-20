@@ -229,6 +229,15 @@ export default function Home() {
     router.push(`/details/${game.id}` as any);   // → product-detail screen
   };
 
+  // Shared double-tap guard for the header nav buttons (bell / friends) — a
+  // double-tap pushed the same screen twice and broke back-navigation.
+  const pushOnce = (href: string) => {
+    const now = Date.now();
+    if (now - openLockRef.current < 1000) return;
+    openLockRef.current = now;
+    router.push(href as any);
+  };
+
   return (
     <View style={styles.root}>
       <GradientFill colors={[colors.bgTop, colors.bgBottom]} />
@@ -242,14 +251,14 @@ export default function Home() {
         <View style={[styles.header, { paddingTop: insets.top > 0 ? space.xs : space.md }]}>
           <Pressable
             style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
-            onPress={() => router.push('/notifications')}
+            onPress={() => pushOnce('/notifications')}
             accessibilityLabel="Notifications"
           >
             <FontAwesome name="bell" size={17} color={colors.text} />
           </Pressable>
           <Pressable
             style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
-            onPress={() => router.push('/friends' as any)}
+            onPress={() => pushOnce('/friends')}
             accessibilityLabel="Friends"
           >
             <FontAwesome name="users" size={16} color={colors.text} />

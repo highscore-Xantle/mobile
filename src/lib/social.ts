@@ -56,6 +56,32 @@ export const upvotePlayer = (target: string) =>
 export const respondGameInvite = (inviteId: string, accept: boolean) =>
   rpc('respond_game_invite', { p_invite: inviteId, p_accept: accept });
 
+// Players I've blocked that are still within the 24h window, with profiles.
+export function useBlockedPlayers() {
+  const { session } = useSession();
+  const me = session?.user?.id;
+  const [blocked, setBlocked] = useState<FriendProfile[]>([]);
+
+  const refresh = useCallback(async () => {
+    if (!me) { setBlocked([]); return; }
+    const { data, error } = await supabase
+      .from('player_blocks')
+      .select('blocked, expires_at')
+      .gt('expires_at', new Date().toISOString());
+    if (error) { console.warn('[blocks] load failed:', error.message); return; }
+    const ids = (data ?? []).map((r: any) => r.blocked);
+    if (ids.length === 0) { setBlocked([]); return; }
+    const { data: profs } = await supabase.from('profiles').select('id, username, avatar_url').in('id', ids);
+    const byId = new Map((profs ?? []).map((p: any) => [p.id, p]));
+    setBlocked(ids.map((id: string) => ({
+      id, username: byId.get(id)?.username ?? null, avatar_url: byId.get(id)?.avatar_url ?? null,
+    })));
+  }, [me]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+  return { blocked, refresh };
+}
+
 /** My shareable friend code (generated + persisted on first call). */
 export async function getMyFriendCode(): Promise<string> {
   const { data, error } = await supabase.rpc('my_friend_code');
@@ -108,9 +134,12 @@ export function useFriends() {
   const refresh = useCallback(async () => {
     if (!me) { setFriends([]); setLoading(false); return; }
     // RLS returns only rows where I'm requester or addressee.
-    const { data: rows } = await supabase
+    const { data: rows, error } = await supabase
       .from('friendships')
       .select('requester, addressee, status');
+    // On a transient failure keep whatever's already shown rather than
+    // wiping the list to a misleading "No friends yet".
+    if (error) { console.warn('[friends] load failed:', error.message); setLoading(false); return; }
     // De-dupe by the other user — a reciprocal/duplicate pair of rows would
     // otherwise render twice with the same key. An accepted row wins over a
     // pending one for the same person.
@@ -166,11 +195,12 @@ export function useIncomingInvites() {
 
   const refresh = useCallback(async () => {
     if (!me) { setInvites([]); return; }
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('game_invites')
       .select('id, from_user, to_user, room_code, game_kind, created_at')
       .eq('to_user', me).eq('status', 'pending')
       .order('created_at', { ascending: false });
+    if (error) { console.warn('[invites] load failed:', error.message); return; } // keep prior
     setInvites((data ?? []) as GameInvite[]);
   }, [me]);
 

@@ -12,6 +12,7 @@ import {
 } from '../../lib/pushNotifications';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
+import { confirmAsync } from '../../lib/confirm';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
 export default function Settings() {
@@ -74,29 +75,22 @@ export default function Settings() {
     router.replace('/login');
   };
 
-  const closeAccount = () => {
-    Alert.alert(
+  const closeAccount = async () => {
+    const ok = await confirmAsync(
       'Close account',
-      'This permanently deletes your account and all your data. This can\'t be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setDeleting(true);
-            const { error } = await supabase.rpc('delete_account');
-            if (error) {
-              setDeleting(false);
-              Alert.alert('Could not close account', error.message);
-              return;
-            }
-            await supabase.auth.signOut();
-            router.replace('/login');
-          },
-        },
-      ],
+      "This permanently deletes your account and all your data. This can't be undone.",
+      { confirmText: 'Delete', destructive: true },
     );
+    if (!ok) return;
+    setDeleting(true);
+    const { error } = await supabase.rpc('delete_account');
+    if (error) {
+      setDeleting(false);
+      Alert.alert('Could not close account', error.message);
+      return;
+    }
+    await supabase.auth.signOut();
+    router.replace('/login');
   };
 
   return (

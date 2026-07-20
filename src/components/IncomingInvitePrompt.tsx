@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { useIncomingInvites, respondGameInvite, type GameInvite } from '../lib/social';
 import { GradientFill } from './GradientFill';
@@ -24,13 +24,18 @@ const GAME_LABEL: Record<string, string> = {
 
 export function IncomingInvitePrompt() {
   const router = useRouter();
+  const pathname = usePathname();
   const { invites, refresh } = useIncomingInvites();
   const [inviter, setInviter] = useState<{ username: string | null; avatar_url: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
+  // Don't overlay an active game/lobby (disruptive mid-match). Shown
+  // everywhere else — home, friends, live, settings, details.
+  const suppressed = pathname.startsWith('/game') || pathname.startsWith('/room');
+
   // Show the newest not-yet-dismissed invite.
-  const invite: GameInvite | undefined = invites.find((i) => !dismissed.has(i.id));
+  const invite: GameInvite | undefined = suppressed ? undefined : invites.find((i) => !dismissed.has(i.id));
 
   useEffect(() => {
     // Clear immediately so a queued second invite never renders the PREVIOUS

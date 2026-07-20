@@ -110,7 +110,7 @@ const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { ...(StyleSheet.absoluteFill as ViewStyle), backgroundColor: 'rgba(0,0,0,0.6)' },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceSolid, // opaque — surface (rgba white) let the page bleed through the sheet
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: space.xl,

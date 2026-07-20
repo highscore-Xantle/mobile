@@ -27,6 +27,17 @@ import { AV_POOL, VersusSearch, randomBotOpponent, useMyVersusProfile, type Vers
 import { seedFor } from '../../lib/usePixelGame';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
+// PostgREST builders are LAZY — a bare `supabase.rpc(...)` statement never
+// sends the request (it only fires when awaited/.then()'d). Every room-state
+// persistence call goes through this so it actually executes and logs
+// failures. Without it, rooms.state (scores/round/history) was silently
+// never written: spectator views and match details always showed nothing.
+function persistRoomStateRpc(args: { p_room: string; p_state: Record<string, unknown> }) {
+  supabase.rpc('update_room_state', args).then(({ error }) => {
+    if (error) console.warn('[number-duel] update_room_state failed:', error.message);
+  });
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PICK_SECONDS = 30;
 // Disconnect forfeit grace. 30s (not 10s): a phone call or an app switch
@@ -312,7 +323,13 @@ function VersusJoin() {
       // Hardware back / swipe unmounts without cancel() — without this the
       // lobby stays matchable for 40s and a stranger pairs into a room whose
       // host already left. No-ops if the room was already cancelled/matched.
-      if (!resolvedRef.current) void supabase.rpc('cancel_matchmaking', { p_room: roomId });
+      // .then() is REQUIRED: a bare/void supabase.rpc(...) is a lazy builder
+      // that never sends the request — this cleanup was silently dead.
+      if (!resolvedRef.current) {
+        supabase.rpc('cancel_matchmaking', { p_room: roomId }).then(({ error }) => {
+          if (error) console.warn('[number-duel] cancel_matchmaking failed:', error.message);
+        });
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, roomCode]);
@@ -411,7 +428,7 @@ function OnlineNumberDuel() {
     setGs(prev => {
       const nextState = { ...prev, phase: 'game_over' as const, winner: 'me' as const };
       if (isHost && roomId) {
-        supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+        persistRoomStateRpc({ p_room: roomId, p_state: {
           ...gameRules, round: nextState.round,
           hostScore: isHost ? nextState.myScore : nextState.opponentScore,
           guestScore: isHost ? nextState.opponentScore : nextState.myScore,
@@ -622,7 +639,7 @@ function OnlineNumberDuel() {
           opponentSecretReveal: botSecretRef.current, phase: 'round_end' as const,
         };
         if (isHost && roomId) {
-          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+          persistRoomStateRpc({ p_room: roomId, p_state: {
             ...gameRules, round: nextState.round,
             hostScore: nextState.myScore, guestScore: nextState.opponentScore,
           }});
@@ -640,10 +657,13 @@ function OnlineNumberDuel() {
 
   // Close the room when the match ends. Rooms were never marked finished, so
   // the Games tab's LIVE list accumulated every match ever played (including
-  // bot rooms) as watchable-forever ghosts. Host-side only; a rematch's
-  // reset_room reopens it to 'lobby' just fine afterwards.
+  // bot rooms) as watchable-forever ghosts. BOTH members call it (the server
+  // allows any member precisely because the host may be the one who
+  // disconnected — a host-only gate left forfeit wins as ghost rooms); the
+  // second call is an idempotent no-op. A rematch's reset_room reopens the
+  // room to 'lobby' just fine afterwards.
   useEffect(() => {
-    if (gs.phase !== 'game_over' || !isHost || !roomId) return;
+    if (gs.phase !== 'game_over' || !roomId) return;
     supabase.rpc('finish_room', { p_room: roomId }).then(({ error }) => {
       if (error) console.warn('[number-duel] finish_room failed:', error.message);
     });
@@ -861,7 +881,7 @@ function OnlineNumberDuel() {
         }
         const nextState = { ...prev, myScore: prev.myScore + 1, roundWinner: 'me' as const, phase: 'round_end' as const };
         if (isHost && roomId) {
-          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+          persistRoomStateRpc({ p_room: roomId, p_state: {
             ...gameRules, round: nextState.round,
             hostScore: nextState.myScore, guestScore: nextState.opponentScore,
           }});
@@ -884,7 +904,7 @@ function OnlineNumberDuel() {
         }
         const nextState = { ...prev, myScore: prev.myScore + 1, roundWinner: 'me' as const, phase: 'round_end' as const };
         if (isHost && roomId) {
-          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+          persistRoomStateRpc({ p_room: roomId, p_state: {
             ...gameRules, round: nextState.round,
             hostScore: nextState.myScore, guestScore: nextState.opponentScore,
           }});
@@ -911,7 +931,7 @@ function OnlineNumberDuel() {
         if (prev.phase === 'game_over') return prev;
         const nextState = { ...prev, phase: 'game_over' as const, winner: 'me' as const };
         if (isHost && roomId) {
-          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+          persistRoomStateRpc({ p_room: roomId, p_state: {
             ...gameRules, round: nextState.round,
             hostScore: nextState.myScore, guestScore: nextState.opponentScore,
           }});
@@ -934,7 +954,7 @@ function OnlineNumberDuel() {
           opponentSecretReveal: iWon ? (payload.secretA ?? null) : prev.opponentSecretReveal,
         };
         if (isHost && roomId) {
-          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+          persistRoomStateRpc({ p_room: roomId, p_state: {
             ...gameRules, round: nextState.round,
             hostScore: isHost ? nextState.myScore : nextState.opponentScore,
             guestScore: isHost ? nextState.opponentScore : nextState.myScore,
@@ -959,6 +979,7 @@ function OnlineNumberDuel() {
       setOpponentReady(false);
       setInputValue('');
       setSubmitting(false); // never carry a stuck in-flight guess into a new round
+      if (guessReplyTimerRef.current) { clearTimeout(guessReplyTimerRef.current); guessReplyTimerRef.current = null; }
       setGs(prev => {
         // Only advance FROM round_end. A duplicate next_round (both devices
         // auto-advance) arriving after we've already moved to 'picking' — or
@@ -1042,7 +1063,10 @@ function OnlineNumberDuel() {
 
     ch.subscribe();
     chRef.current = ch;
-    return () => { supabase.removeChannel(ch); };
+    return () => {
+      supabase.removeChannel(ch);
+      if (guessReplyTimerRef.current) { clearTimeout(guessReplyTimerRef.current); guessReplyTimerRef.current = null; }
+    };
     // session?.user?.id (not session): an hourly token refresh emits a new
     // session object — tearing the channel down mid-match dropped whatever
     // broadcast was in flight (hint replies, round transitions).
@@ -1095,7 +1119,7 @@ function OnlineNumberDuel() {
       setGs(prev => {
         const nextState = { ...prev, phase: 'game_over' as const, winner: 'opponent' as const };
         if (isHost && roomId) {
-          supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+          persistRoomStateRpc({ p_room: roomId, p_state: {
             ...gameRules, round: nextState.round,
             hostScore: isHost ? nextState.myScore : nextState.opponentScore,
             guestScore: isHost ? nextState.opponentScore : nextState.myScore,
@@ -1173,8 +1197,14 @@ function OnlineNumberDuel() {
   };
 
   const handleTimeout = () => {
-    if (submitting) return;
+    // Do NOT gate on `submitting`: in time-attack the 15s can expire while a
+    // guess reply is in flight. Early-returning there wedged the countdown at
+    // 0 forever (it never re-fires), silently voiding the "timeout = loss"
+    // rule for the rest of the round. The timer expiring ends the round; a
+    // late reply lands in round_end and is handled by the phase guards.
     if (gs.phase !== 'guessing') return; // round already ended before the timer flushed
+    if (guessReplyTimerRef.current) { clearTimeout(guessReplyTimerRef.current); guessReplyTimerRef.current = null; }
+    setSubmitting(false);
     if (botSolveTimerRef.current) { clearTimeout(botSolveTimerRef.current); botSolveTimerRef.current = null; }
     myGuessTimeoutRoundRef.current = gs.round;
     chRef.current?.send({ type: 'broadcast', event: 'player_timeout', payload: { userId: session?.user.id } });
@@ -1211,7 +1241,7 @@ function OnlineNumberDuel() {
 
       // Persist final history to DB
       if (isHost && roomId) {
-        supabase.rpc('update_room_state', { p_room: roomId, p_state: {
+        persistRoomStateRpc({ p_room: roomId, p_state: {
           ...gameRules, round: cur.round,
           hostScore: isHost ? cur.myScore : cur.opponentScore,
           guestScore: isHost ? cur.opponentScore : cur.myScore,
@@ -1225,6 +1255,7 @@ function OnlineNumberDuel() {
     setOpponentReady(false);
     setInputValue('');
     setSubmitting(false); // never carry a stuck in-flight guess into a new round
+    if (guessReplyTimerRef.current) { clearTimeout(guessReplyTimerRef.current); guessReplyTimerRef.current = null; }
     chRef.current?.send({ type: 'broadcast', event: 'next_round', payload: { round: next } });
     setGs(prev => prev.phase !== 'round_end' ? prev : ({
       ...prev, phase: 'picking', round: next, mySecret: null,
@@ -1367,7 +1398,7 @@ function OnlineNumberDuel() {
         <View style={s.display}>
           <Text style={s.displayText}>{inputValue || '—'}</Text>
         </View>
-        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} />
+        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} maxDecimals={1} />
       </Animated.View>
     );
 
@@ -1416,7 +1447,7 @@ function OnlineNumberDuel() {
         <View style={s.display}>
           <Text style={s.displayText}>{inputValue || '—'}</Text>
         </View>
-        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} />
+        <NumberKeypad value={inputValue} onChange={setInputValue} allowDecimal={allowDecimal} maxLength={7} max={100} maxDecimals={1} />
       </Animated.View>
     );
 
@@ -1538,7 +1569,7 @@ function OnlineNumberDuel() {
           </View>
         )}
         {isBot ? (
-          <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={() => router.replace('/setup/number-duel')}>
+          <Pressable style={({ pressed }) => [s.cta, pressed && s.pressed]} onPress={() => router.replace('/game/number-duel?mp=online')}>
             <GradientFill colors={gradients.button} />
             <Text style={s.ctaText}>Find another match</Text>
           </Pressable>
@@ -1617,6 +1648,14 @@ function OnlineNumberDuel() {
         <View style={s.header}>
           <Pressable
             onPress={() => {
+              // Abandoning a BOT match: close the room, or it haunts the
+              // LIVE list forever as a frozen "watchable" ghost (bot rooms
+              // are created 'active' and nothing else ever finishes them).
+              if (isBot && roomId && gs.phase !== 'game_over') {
+                supabase.rpc('finish_room', { p_room: roomId }).then(({ error }) => {
+                  if (error) console.warn('[number-duel] finish_room failed:', error.message);
+                });
+              }
               // Quitting a live match concedes it — tell the opponent so
               // they get the win instead of waiting on us forever. Small
               // delay gives the broadcast time to flush before the channel

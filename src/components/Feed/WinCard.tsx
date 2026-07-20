@@ -198,9 +198,11 @@ export const WinCard = memo(function WinCard({ post, onLike, onComment, currentU
   // ── Share ────────────────────────────────────────────────────────────────────
   const handleShare = useCallback(() => {
     Haptics.selectionAsync();
+    // Web without navigator.share rejects — swallow it so the button doesn't
+    // throw an unhandled rejection.
     Share.share({
       message: `Check out this win on Xantle! "${post.result_text}"`,
-    });
+    }).catch(() => {});
   }, [post.result_text]);
 
   // ── Comment ──────────────────────────────────────────────────────────────────

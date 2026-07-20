@@ -21,8 +21,8 @@ import { useGoBackOr } from '../lib/navigation';
 import { usePresence } from '../lib/usePresence';
 import { confirmAsync } from '../lib/confirm';
 import {
-  useFriends, respondFriendRequest, removeFriend, inviteFriendToGame,
-  getMyFriendCode, addFriendByCode, type FriendRow,
+  useFriends, useBlockedPlayers, respondFriendRequest, removeFriend, inviteFriendToGame,
+  getMyFriendCode, addFriendByCode, unblockPlayer, type FriendRow,
 } from '../lib/social';
 import { GAMES } from './(tabs)/games';
 import { colors, font, gradients, radius, shadow, space } from '../theme';
@@ -35,6 +35,7 @@ export default function FriendsScreen() {
   const goBack = useGoBackOr('/home');
   const router = useRouter();
   const { friends, loading, refresh } = useFriends();
+  const { blocked, refresh: refreshBlocked } = useBlockedPlayers();
   const { isOnline } = usePresence();
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -71,8 +72,10 @@ export default function FriendsScreen() {
     setAddOpen(true);
     setAddMsg(null);
     setCodeInput('');
+    // Only cache a real code; leave null on failure so it's re-fetched next
+    // open instead of caching the "—" placeholder (which copyCode would copy).
     if (!myCode) {
-      try { setMyCode(await getMyFriendCode()); } catch { setMyCode('—'); }
+      try { setMyCode(await getMyFriendCode()); } catch { setMyCode(null); }
     }
   };
 
@@ -85,7 +88,7 @@ export default function FriendsScreen() {
 
   const submitCode = async () => {
     const code = codeInput.trim().toUpperCase();
-    if (code.length < 4) { setAddMsg('Enter a valid code.'); return; }
+    if (code.length !== 6) { setAddMsg('Codes are 6 characters.'); return; }
     setAdding(true);
     setAddMsg(null);
     try {
@@ -175,6 +178,25 @@ export default function FriendsScreen() {
                 </View>
               );
             })}
+
+            {blocked.length > 0 && (
+              <>
+                <Text style={styles.sectionLabel}>BLOCKED</Text>
+                {blocked.map((b) => (
+                  <View key={b.id} style={styles.row}>
+                    <Avatar letter={(b.username || 'P').charAt(0)} imageUrl={b.avatar_url} size={44} />
+                    <Text style={[styles.name, { flex: 1 }]} numberOfLines={1}>{b.username || 'Player'}</Text>
+                    <Pressable
+                      style={({ pressed }) => [styles.smallBtn, pressed && styles.pressed]}
+                      disabled={busyId === b.id}
+                      onPress={() => { setBusyId(b.id); unblockPlayer(b.id).catch(() => {}).finally(() => { setBusyId(null); refreshBlocked(); }); }}
+                    >
+                      <Text style={styles.declineText}>Unblock</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </>
+            )}
           </ScrollView>
         )}
       </SafeAreaView>
@@ -228,8 +250,8 @@ export default function FriendsScreen() {
               onChangeText={(v) => { setCodeInput(v); if (addMsg) setAddMsg(null); }}
               maxLength={6}
             />
-            <Pressable style={({ pressed }) => [styles.addBtn, (adding || codeInput.trim().length < 4) && styles.addBtnDisabled, pressed && styles.pressed]}
-              disabled={adding || codeInput.trim().length < 4} onPress={submitCode}>
+            <Pressable style={({ pressed }) => [styles.addBtn, (adding || codeInput.trim().length !== 6) && styles.addBtnDisabled, pressed && styles.pressed]}
+              disabled={adding || codeInput.trim().length !== 6} onPress={submitCode}>
               {adding ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.addBtnText}>Add friend</Text>}
             </Pressable>
             {addMsg && <Text style={styles.addMsg}>{addMsg}</Text>}

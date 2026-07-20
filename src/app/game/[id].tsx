@@ -244,10 +244,15 @@ export default function GameScreen() {
   async function shareCode() {
     if (!game) return;
     const link = Linking.createURL(`/game/${game.invite_code}`);
-    await Share.share({
-      message: `Join my Pixel Rush game on Xantle! Code: ${game.invite_code}\n${link}`,
-      title: 'Join Pixel Rush',
-    });
+    try {
+      await Share.share({
+        message: `Join my Pixel Rush game on Xantle! Code: ${game.invite_code}\n${link}`,
+        title: 'Join Pixel Rush',
+      });
+    } catch {
+      // Web without navigator.share / user-cancelled — fall back to copy.
+      await Clipboard.setStringAsync(game.invite_code).catch(() => {});
+    }
   }
 
   async function handleCopy() {

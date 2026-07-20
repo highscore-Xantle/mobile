@@ -173,10 +173,30 @@ export function useGame(code: string | undefined) {
         if (r.game_id !== gameIdRef.current) return; // only this game's rounds
         setRound(r);
       })
-      .subscribe();
+      .subscribe((status) => {
+        // The whole Pixel Rush screen is realtime-only; if the channel fails
+        // to come up, refetch on a poll so the game doesn't freeze silently.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[pixel-rush] realtime subscribe failed:', status);
+        }
+      });
+
+    // Safety net: a light poll re-pulls game/round/players even if realtime
+    // never delivers (failed subscribe, dropped socket). 5s is invisible
+    // during play but rescues an otherwise-frozen screen.
+    const poll = setInterval(async () => {
+      if (!gameIdRef.current) return;
+      const { data } = await supabase.from('games').select('*').eq('id', gameIdRef.current).maybeSingle();
+      if (!mounted || !data) return;
+      const g = data as Game;
+      setGame(g);
+      fetchRound(g.id, g.current_round);
+      fetchPlayers(g.id);
+    }, 5000);
 
     return () => {
       mounted = false;
+      clearInterval(poll);
       void supabase.removeChannel(ch);
     };
   }, [code, fetchPlayers, fetchRound]);

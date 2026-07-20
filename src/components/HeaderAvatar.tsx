@@ -4,12 +4,14 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useSession } from '../lib/useSession';
+import { useTapLock } from '../lib/navigation';
 import { colors, font, shadow } from '../theme';
 
 export function HeaderAvatar() {
   const router = useRouter();
   const { session } = useSession();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const goProfile = useTapLock(() => router.push('/profile'));
 
   const initial = (
     (session?.user?.user_metadata?.username as string)?.[0] ??
@@ -39,7 +41,7 @@ export function HeaderAvatar() {
   return (
     <Pressable
       style={({ pressed }) => [styles.outer, pressed && styles.pressed]}
-      onPress={() => router.push('/profile')}
+      onPress={goProfile}
     >
       {avatarUrl ? (
         <Image source={{ uri: avatarUrl }} style={styles.image} contentFit="cover" />

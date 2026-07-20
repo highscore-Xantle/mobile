@@ -1,5 +1,21 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { usePathname, useRouter, type Href } from 'expo-router';
+
+/**
+ * useTapLock — wrap a navigation/action handler so a rapid double-tap only
+ * fires once (default 700ms). Prevents duplicate screens on the stack (which
+ * break back navigation). The codebase already had ad-hoc versions of this
+ * (navLockRef, gamePressLockRef); this is the shared one.
+ */
+export function useTapLock(fn: () => void, ms = 700): () => void {
+  const lastRef = useRef(0);
+  return useCallback(() => {
+    const now = Date.now();
+    if (now - lastRef.current < ms) return;
+    lastRef.current = now;
+    fn();
+  }, [fn, ms]);
+}
 
 /**
  * Back-navigation handler. router.canGoBack() is unreliable on the

@@ -13,9 +13,15 @@ import {
 } from '@expo-google-fonts/inter';
 import { SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts/space-grotesk';
 import { PresenceProvider } from '../lib/usePresence';
+import { IncomingInvitePrompt } from '../components/IncomingInvitePrompt';
+import { SafeBoundary } from '../components/SafeBoundary';
+import { installWebAlertShim } from '../lib/confirm';
 import { colors } from '../theme';
 
 SplashScreen.preventAutoHideAsync();
+// Must run before any screen can call Alert.alert — on web the built-in is a
+// silent no-op and every error/notice in the app was invisible.
+installWebAlertShim();
 
 // Root navigator. Loads the type system before showing anything, so text never
 // flashes in a fallback face: Space Grotesk (display/headings/numerics) + Inter
@@ -58,6 +64,9 @@ export default function RootLayout() {
             animation: 'fade',
           }}
         />
+        {/* Global invite listener — floats over every route (it self-hides on
+            /game and /room). Boundary so a realtime hiccup can't blank the app. */}
+        <SafeBoundary><IncomingInvitePrompt /></SafeBoundary>
       </PresenceProvider>
     </GestureHandlerRootView>
   );
