@@ -169,6 +169,14 @@ export default function Home() {
   const scrollX = useSharedValue(0);
   const activeIdx = useSharedValue(0);
   const openLockRef = useRef(0);
+  // Which card is centered (JS-side mirror of activeIdx) — drives the desktop
+  // prev/next arrows so they always scroll relative to the real position.
+  const [focusIdx, setFocusIdx] = useState(0);
+
+  const scrollToIdx = (i: number) => {
+    const t = Math.max(0, Math.min(GAMES.length - 1, i));
+    scrollRef.current?.scrollTo?.({ x: t * ITEM, animated: true });
+  };
 
   // Web: a horizontal ScrollView is just an overflow-x div, and browsers don't
   // drag-scroll one with a mouse — so the carousel felt frozen on desktop. Map
@@ -177,8 +185,14 @@ export default function Home() {
   const scrollRef = useRef<any>(null);
   useEffect(() => {
     if (Platform.OS !== 'web') return;
-    const node: any = scrollRef.current?.getScrollableNode?.();
-    if (!node) return;
+    // The reanimated ScrollView ref doesn't always expose getScrollableNode
+    // on web, so fall back to the underlying scroll ref / the DOM node itself.
+    const r: any = scrollRef.current;
+    const node: any =
+      r?.getScrollableNode?.() ??
+      r?._scrollViewRef?.getScrollableNode?.() ??
+      (typeof r?.scrollTo === 'function' ? r : null);
+    if (!node || typeof node.addEventListener !== 'function') return;
 
     const onWheel = (e: any) => {
       if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // let real h-scroll through
@@ -208,7 +222,7 @@ export default function Home() {
   // Re-theme the app to the focused game (right band, chips, nav pill).
   const applyAccent = (i: number) => {
     const g = GAMES[i];
-    if (g) setAccent({ theme: g.theme, accent: g.accent });
+    if (g) { setAccent({ theme: g.theme, accent: g.accent }); setFocusIdx(i); }
   };
   const onScroll = useAnimatedScrollHandler((e) => {
     scrollX.value = e.contentOffset.x;
@@ -317,6 +331,32 @@ export default function Home() {
               <GameCard key={g.id} game={g} index={i} scrollX={scrollX} cardH={cardH} onPress={() => openGame(g)} />
             ))}
           </Animated.ScrollView>
+
+          {/* Desktop web has no touch-swipe and mouse-drag on an overflow div
+              is unreliable — explicit arrows guarantee you can reach every
+              game. Hidden on native (swipe works there). */}
+          {Platform.OS === 'web' && (
+            <>
+              {focusIdx > 0 && (
+                <Pressable
+                  style={[styles.carouselArrow, styles.carouselArrowLeft]}
+                  onPress={() => scrollToIdx(focusIdx - 1)}
+                  accessibilityLabel="Previous game"
+                >
+                  <FontAwesome name="chevron-left" size={18} color={colors.text} />
+                </Pressable>
+              )}
+              {focusIdx < GAMES.length - 1 && (
+                <Pressable
+                  style={[styles.carouselArrow, styles.carouselArrowRight]}
+                  onPress={() => scrollToIdx(focusIdx + 1)}
+                  accessibilityLabel="Next game"
+                >
+                  <FontAwesome name="chevron-right" size={18} color={colors.text} />
+                </Pressable>
+              )}
+            </>
+          )}
         </View>
       </SafeAreaView>
     </View>
@@ -370,6 +410,15 @@ const styles = StyleSheet.create({
   // Full-bleed: break out of the safe-area padding so cards use the device width,
   // first card flush to the edge (no margin).
   carouselArea: { flex: 1, justifyContent: 'flex-end' },
+  carouselArrow: {
+    position: 'absolute', top: '42%', zIndex: 10,
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.surfaceSolid,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.hairline, ...shadow.card,
+  },
+  carouselArrowLeft: { left: space.xs },
+  carouselArrowRight: { right: space.xs },
   carousel: { marginHorizontal: -space.lg, marginBottom: 24 },
   cardRow: { gap: GAP, paddingTop: 8, paddingBottom: space.sm, paddingLeft: CARD_INSET, paddingRight: CARD_INSET },
   // Thick 3D drop shadow under each card.
