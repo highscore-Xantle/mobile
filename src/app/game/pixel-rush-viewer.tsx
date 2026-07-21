@@ -23,6 +23,9 @@ interface Comment { id: string; username: string; text: string; }
 interface FloatingReaction { id: string; emoji: string; x: number; }
 
 const QUICK_REACTIONS = ['❤️', '🔥', '😱', '👏'];
+// Pixel Rush's own colours (match the game icon) instead of the shared blue.
+const PR_THEME = ['#2C6079', '#0E2530'] as [string, string];
+const PR_BUTTON = ['#3B7A96', '#245A73'] as [string, string];
 
 // ─── Floating Reaction (same pattern as the Number Duel viewer) ──────────────
 function FloatingEmoji({ emoji, x, onDone }: { emoji: string; x: number; onDone: () => void }) {
@@ -132,7 +135,7 @@ export default function PixelRushViewer() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
 
         <View style={StyleSheet.absoluteFill} pointerEvents="none">
           {floatingReactions.map(r => (
@@ -235,7 +238,7 @@ export default function PixelRushViewer() {
                 onPress={sendComment}
                 disabled={!commentInput.trim()}
               >
-                <GradientFill colors={gradients.button} />
+                <GradientFill colors={PR_BUTTON} />
                 <Text style={styles.sendText}>↑</Text>
               </Pressable>
             </View>

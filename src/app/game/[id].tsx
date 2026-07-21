@@ -53,6 +53,10 @@ import { colors, font, gradients, radius, shadow, space, text as themeText } fro
 // backgrounds the app and untracks presence — losing the match over a
 // 12-second interruption is worse than the winner waiting a little longer.
 const DISCONNECT_GRACE_MS = 30000;
+// Pixel Rush's own colours (match the game icon) instead of the shared blue.
+const PR_THEME = ['#2C6079', '#0E2530'] as [string, string];
+const PR_BUTTON = ['#3B7A96', '#245A73'] as [string, string];
+const PR_ACCENT = '#5E9BC2';
 
 export default function GameScreen() {
   const { id: code } = useLocalSearchParams<{ id: string }>();
@@ -291,9 +295,9 @@ export default function GameScreen() {
   if (loading) {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={[styles.safe, styles.center]}>
-          <ActivityIndicator color={colors.blue} size="large" />
+          <ActivityIndicator color={PR_ACCENT} size="large" />
         </SafeAreaView>
       </View>
     );
@@ -302,7 +306,7 @@ export default function GameScreen() {
   if (error || !game) {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={[styles.safe, styles.center]}>
           <Text style={themeText.body}>{error ?? 'Game not found.'}</Text>
           <Pressable style={[styles.outlineBtn, { marginTop: space.lg }]} onPress={() => router.replace('/home')}>
@@ -318,7 +322,7 @@ export default function GameScreen() {
   if (game.status === 'lobby') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <Header title="Pixel Rush 🧩" onBack={handleLeave} />
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -382,7 +386,7 @@ export default function GameScreen() {
                 onPress={handleStart}
                 disabled={players.length < 2 || actionBusy}
               >
-                <GradientFill colors={players.length >= 2 ? gradients.button : [colors.surface, colors.surface]} />
+                <GradientFill colors={players.length >= 2 ? PR_BUTTON : [colors.surface, colors.surface]} />
                 {actionBusy
                   ? <ActivityIndicator color={colors.white} />
                   : <Text style={[styles.primaryBtnText, players.length < 2 && styles.disabledText]}>
@@ -414,7 +418,7 @@ export default function GameScreen() {
 
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <Header
             title={`Round ${roundNo}/${game.rounds_total}`}
@@ -448,7 +452,7 @@ export default function GameScreen() {
             {/* Board or setup indicator */}
             {(!round || round.status === 'awaiting_image') ? (
               <View style={styles.setupRow}>
-                <ActivityIndicator color={colors.blue} />
+                <ActivityIndicator color={PR_ACCENT} />
                 <Text style={styles.setupText}>Setting up round…</Text>
               </View>
             ) : (
@@ -471,7 +475,7 @@ export default function GameScreen() {
                     ? `${winnerPlayer.user_id === myId ? 'You' : playerLabel(winnerPlayer)} won the round! 🎉`
                     : 'Round complete!'}
                 </Text>
-                <ActivityIndicator color={colors.blue} size="small" style={{ marginTop: 4 }} />
+                <ActivityIndicator color={PR_ACCENT} size="small" style={{ marginTop: 4 }} />
               </View>
             )}
           </ScrollView>
@@ -486,14 +490,14 @@ export default function GameScreen() {
 
   return (
     <View style={styles.root}>
-      <GradientFill colors={gradients.background} />
+      <GradientFill colors={PR_THEME} />
       <Confetti active={iWon} />
       <SafeAreaView style={styles.safe}>
         <Header title="Game over" onBack={() => router.replace('/home')} />
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
 
           <View style={styles.finishedCard}>
-            <GradientFill colors={iWon ? gradients.button : [colors.surface, colors.surfaceAlt]} />
+            <GradientFill colors={iWon ? PR_BUTTON : [colors.surface, colors.surfaceAlt]} />
             <Animated.Text entering={BounceIn.duration(700)} style={styles.finishedEmoji}>
               {iWon ? '🏆' : '🥈'}
             </Animated.Text>
@@ -518,7 +522,7 @@ export default function GameScreen() {
             onPress={hasBot ? () => router.replace('/games/pixel-rush') : handleRematch}
             disabled={actionBusy}
           >
-            <GradientFill colors={gradients.button} />
+            <GradientFill colors={PR_BUTTON} />
             {actionBusy
               ? <ActivityIndicator color={colors.white} />
               : <Text style={styles.primaryBtnText}>{hasBot ? 'Find another match' : 'Rematch'}</Text>
@@ -656,7 +660,7 @@ const styles = StyleSheet.create({
   codeText: {
     fontFamily: font.black,
     fontSize: 36,
-    color: colors.blue,
+    color: PR_ACCENT,
     letterSpacing: 6,
   },
   codeActionsRow: {
@@ -744,7 +748,7 @@ const styles = StyleSheet.create({
     gap: 4,
     ...shadow.card,
   },
-  scoreChipMe: { borderWidth: 1.5, borderColor: colors.blue },
+  scoreChipMe: { borderWidth: 1.5, borderColor: PR_ACCENT },
   scoreNameRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   presenceDotSmall: { width: 7, height: 7, borderRadius: 4 },
   scoreName: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted },

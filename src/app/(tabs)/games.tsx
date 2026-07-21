@@ -54,12 +54,12 @@ export const GAMES = [
     title: 'Pixel Rush',
     tag: '1v1 ARCADE',
     tagline: 'Fast. Frantic. Pixel-perfect.',
-    gradient: gradients.button as [string, string],
-    cardBg: ['#123542', '#0A1E26'] as string[],           // dark teal-navy, arcade energy
-    theme: ['#22D3EE', '#0891B2'] as [string, string],    // electric cyan -> teal right-band
-    accent: '#22D3EE',
+    gradient: ['#2C6079', '#0E2530'] as [string, string],
+    cardBg: ['#173D4E', '#0A1822'] as string[],           // dark teal-navy → near-black, matches the icon's board
+    theme: ['#2C6079', '#0E2530'] as [string, string],    // teal-steel → dark navy, the icon's own tone
+    accent: '#5E9BC2',                                     // steel-blue pop sampled from the icon
     emoji: '🎮',
-    image: null as number | null,
+    image: require('../../../assets/games-icon/pixel-rush.png') as number | null,
     available: true,
     route: '/games/pixel-rush' as string | null,
     hasViewer: true,

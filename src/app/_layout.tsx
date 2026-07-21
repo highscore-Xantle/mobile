@@ -15,7 +15,7 @@ import { SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts
 import { PresenceProvider } from '../lib/usePresence';
 import { IncomingInvitePrompt } from '../components/IncomingInvitePrompt';
 import { SafeBoundary } from '../components/SafeBoundary';
-import { installWebAlertShim } from '../lib/confirm';
+import { installWebAlertShim, ConfirmHost } from '../lib/confirm';
 import { colors } from '../theme';
 
 SplashScreen.preventAutoHideAsync();
@@ -67,6 +67,9 @@ export default function RootLayout() {
         {/* Global invite listener — floats over every route (it self-hides on
             /game and /room). Boundary so a realtime hiccup can't blank the app. */}
         <SafeBoundary><IncomingInvitePrompt /></SafeBoundary>
+        {/* Styled confirm/alert modal host — every confirmAsync + web
+            Alert.alert renders here instead of a browser dialog. */}
+        <ConfirmHost />
       </PresenceProvider>
     </GestureHandlerRootView>
   );

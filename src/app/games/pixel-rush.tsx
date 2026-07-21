@@ -33,6 +33,10 @@ type Screen = 'menu' | 'mode' | 'group-size' | 'onevone' | 'searching';
 const SEARCH_SECONDS = 30;
 const MIN_GROUP = 3;
 const MAX_GROUP = 8;
+// Pixel Rush's own colours (match the game icon) instead of the shared blue.
+const PR_THEME = ['#2C6079', '#0E2530'] as [string, string];   // page background
+const PR_BUTTON = ['#3B7A96', '#245A73'] as [string, string];  // CTA gradient
+const PR_ACCENT = '#5E9BC2';                                   // highlights / accents
 
 export default function PixelRushScreen() {
   const router = useRouter();
@@ -224,7 +228,7 @@ export default function PixelRushScreen() {
   if (screen === 'mode') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <View style={styles.topBar}>
             <Pressable
@@ -256,7 +260,7 @@ export default function PixelRushScreen() {
               style={({ pressed }) => [styles.modeCard, styles.modeCardBlue, pressed && styles.pressed]}
               onPress={() => setScreen('onevone')}
             >
-              <GradientFill colors={gradients.button} />
+              <GradientFill colors={PR_BUTTON} />
               <View style={styles.modeCardInner}>
                 <View style={styles.modeText}>
                   <Text style={[styles.modeTitle, styles.modeTitleWhite]}>Continue (1v1)</Text>
@@ -278,7 +282,7 @@ export default function PixelRushScreen() {
   if (screen === 'group-size') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <View style={styles.topBar}>
             <Pressable
@@ -320,7 +324,7 @@ export default function PixelRushScreen() {
               onPress={handleCreateGroup}
               disabled={busy}
             >
-              <GradientFill colors={gradients.button} />
+              <GradientFill colors={PR_BUTTON} />
               {busy
                 ? <ActivityIndicator color={colors.white} />
                 : <Text style={styles.primaryBtnText}>Create group →</Text>}
@@ -338,7 +342,7 @@ export default function PixelRushScreen() {
   if (screen === 'onevone') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <View style={styles.topBar}>
             <Pressable
@@ -366,7 +370,7 @@ export default function PixelRushScreen() {
                 <Switch
                   value={anyoneCanJoin}
                   onValueChange={setAnyoneCanJoin}
-                  trackColor={{ false: colors.hairline, true: colors.blue }}
+                  trackColor={{ false: colors.hairline, true: PR_ACCENT }}
                   thumbColor={colors.white}
                 />
               </View>
@@ -377,7 +381,7 @@ export default function PixelRushScreen() {
               onPress={handleContinueOneVOne}
               disabled={busy}
             >
-              <GradientFill colors={gradients.button} />
+              <GradientFill colors={PR_BUTTON} />
               {busy
                 ? <ActivityIndicator color={colors.white} />
                 : <Text style={styles.primaryBtnText}>Continue →</Text>}
@@ -395,9 +399,9 @@ export default function PixelRushScreen() {
   if (screen === 'searching') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={[styles.safe, { justifyContent: 'center' }]}>
-          <VersusSearch accent={colors.blue} me={me} matched={botOpp} onCancel={cancelSearching} />
+          <VersusSearch accent={PR_ACCENT} me={me} matched={botOpp} onCancel={cancelSearching} />
         </SafeAreaView>
       </View>
     );
@@ -407,7 +411,7 @@ export default function PixelRushScreen() {
 
   return (
     <View style={styles.root}>
-      <GradientFill colors={gradients.background} />
+      <GradientFill colors={PR_THEME} />
       <SafeAreaView style={styles.safe}>
         <View style={styles.topBar}>
           <Pressable
@@ -437,7 +441,7 @@ export default function PixelRushScreen() {
             style={({ pressed }) => [styles.modeCard, styles.modeCardBlue, pressed && styles.pressed]}
             onPress={() => { setErr(''); setScreen('mode'); }}
           >
-            <GradientFill colors={gradients.button} />
+            <GradientFill colors={PR_BUTTON} />
             <View style={styles.modeCardInner}>
               <View style={styles.modeText}>
                 <Text style={[styles.modeTitle, styles.modeTitleWhite]}>Play Multiplayer</Text>
@@ -541,7 +545,7 @@ const styles = StyleSheet.create({
   },
   rulesTitle: { fontFamily: font.extrabold, fontSize: 16, color: colors.text, marginBottom: 2 },
   ruleRow: { flexDirection: 'row' },
-  ruleNum: { fontFamily: font.extrabold, fontSize: 14, color: colors.blue },
+  ruleNum: { fontFamily: font.extrabold, fontSize: 14, color: PR_ACCENT },
   ruleText: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted, flex: 1, lineHeight: 20 },
 
   modeCard: {
@@ -583,7 +587,7 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   joinBtn: {
-    backgroundColor: colors.blue,
+    backgroundColor: PR_ACCENT,
     borderRadius: radius.md,
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
@@ -621,7 +625,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stepperBtnText: { fontFamily: font.extrabold, fontSize: 22, color: colors.text },
-  stepperValue: { fontFamily: font.black, fontSize: 40, color: colors.blue, minWidth: 60, textAlign: 'center' },
+  stepperValue: { fontFamily: font.black, fontSize: 40, color: PR_ACCENT, minWidth: 60, textAlign: 'center' },
   stepperHint: { fontFamily: font.semibold, fontSize: 12, color: colors.textFaint },
 
   // ── 1v1 toggle
