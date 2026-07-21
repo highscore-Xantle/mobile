@@ -12,6 +12,7 @@ import {
 } from '../../lib/pushNotifications';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
+import { confirmAsync } from '../../lib/confirm';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
 export default function Settings() {
@@ -48,8 +49,11 @@ export default function Settings() {
           );
         }
       } else {
-        await unregisterPushNotifications(session.user.id);
-        setNotifEnabled(false);
+        const ok = await unregisterPushNotifications(session.user.id);
+        setNotifEnabled(!ok);
+        if (!ok) {
+          Alert.alert('Something went wrong', 'Could not turn off notifications. Try again.');
+        }
       }
     } catch (err) {
       console.warn('[settings] notification toggle failed:', err);
@@ -61,33 +65,32 @@ export default function Settings() {
   };
 
   const signOut = async () => {
+    // Deregister this device's push token first — the row survives signOut,
+    // so the phone would keep receiving the signed-out account's game
+    // invites (shown to whoever holds the device next).
+    if (session?.user && isPushSupported()) {
+      await unregisterPushNotifications(session.user.id).catch(() => {});
+    }
     await supabase.auth.signOut();
     router.replace('/login');
   };
 
-  const closeAccount = () => {
-    Alert.alert(
+  const closeAccount = async () => {
+    const ok = await confirmAsync(
       'Close account',
-      'This permanently deletes your account and all your data. This can\'t be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setDeleting(true);
-            const { error } = await supabase.rpc('delete_account');
-            if (error) {
-              setDeleting(false);
-              Alert.alert('Could not close account', error.message);
-              return;
-            }
-            await supabase.auth.signOut();
-            router.replace('/login');
-          },
-        },
-      ],
+      "This permanently deletes your account and all your data. This can't be undone.",
+      { confirmText: 'Delete', destructive: true },
     );
+    if (!ok) return;
+    setDeleting(true);
+    const { error } = await supabase.rpc('delete_account');
+    if (error) {
+      setDeleting(false);
+      Alert.alert('Could not close account', error.message);
+      return;
+    }
+    await supabase.auth.signOut();
+    router.replace('/login');
   };
 
   return (

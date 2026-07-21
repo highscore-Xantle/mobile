@@ -3,7 +3,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as Linking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import Animated, { Easing, FadeInDown, interpolate, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
@@ -15,6 +15,8 @@ import { playSound } from '../../lib/sounds';
 import { supabase } from '../../lib/supabase';
 import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
+import { useFriends, inviteFriendToRoom } from '../../lib/social';
+import { GAMES } from '../(tabs)/games';
 import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
 export default function RoomLobby() {
@@ -22,11 +24,14 @@ export default function RoomLobby() {
   const router = useRouter();
   const { session } = useSession();
   const { isOnline } = usePresence();
+  const { friends } = useFriends();
+  const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
 
   const [loading, setLoading] = useState(true);
   const [room, setRoom] = useState<any>(null);
   const [players, setPlayers] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   // Hooks must all be declared before any early return (Rules of Hooks)
   const pulse = useSharedValue(0.5);
@@ -57,6 +62,21 @@ export default function RoomLobby() {
   // Derive isHost from state so we can use it in an effect before early return
   const isHost = !!room && room.host_id === session?.user.id;
 
+  // The start RPC resolving AND the realtime 'active' UPDATE both navigate
+  // into the game — whichever lands second remounted the game screen
+  // mid-handshake (channel resubscribe, state reset). Navigate exactly once.
+  const navigatedRef = useRef(false);
+  // Whether WE hold a seat in this room. A spectator (deep link into a full
+  // room) must not be shoved into the 2-player game screen when it starts.
+  const seatedRef = useRef(false);
+  const [seated, setSeated] = useState(false);
+  const markSeated = () => { seatedRef.current = true; setSeated(true); };
+  const goToGame = (gameKind: string) => {
+    if (navigatedRef.current || !seatedRef.current) return;
+    navigatedRef.current = true;
+    router.replace({ pathname: '/game/[id]', params: { id: gameKind, roomCode: code } });
+  };
+
   useEffect(() => {
     if (!isHost && !loading && room) {
       pulse.value = withRepeat(
@@ -79,7 +99,7 @@ export default function RoomLobby() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${code}` }, (payload) => {
         setRoom(payload.new);
         if (payload.new.status === 'active') {
-          router.replace({ pathname: '/game/[id]', params: { id: payload.new.game_kind, roomCode: code } });
+          goToGame(payload.new.game_kind);
         }
       })
       .subscribe();
@@ -87,21 +107,46 @@ export default function RoomLobby() {
     return () => {
       supabase.removeChannel(roomSub);
     };
-  }, [code, session]);
+    // session?.user?.id, not session: hourly token refresh emits a new
+    // session object and would tear down/resubscribe the channel — a status
+    // flip landing in that gap was lost.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, session?.user?.id]);
+
+  // Fallback poll: the lobby→game handoff is otherwise realtime-only, and a
+  // status UPDATE landing while the socket is down (backgrounded app, flaky
+  // network, subscribe gap) stranded the guest on "Waiting for host…"
+  // forever while the host sat alone in the game.
+  useEffect(() => {
+    if (!room?.id || room.status !== 'lobby') return;
+    const roomId = room.id;
+    const t = setInterval(async () => {
+      const { data } = await supabase.from('rooms').select('*').eq('id', roomId).maybeSingle();
+      if (!data) return;
+      setRoom(data);
+      if (data.status === 'active') goToGame(data.game_kind);
+    }, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id, room?.status]);
 
   useEffect(() => {
-    if (!room) return;
+    if (!room?.id) return;
+    const roomId = room.id;
     const playersSub = supabase
-      .channel(`players_${room.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${room.id}` }, () => {
-        fetchPlayers(room.id);
+      .channel(`players_${roomId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, () => {
+        fetchPlayers(roomId);
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(playersSub);
     };
-  }, [room]);
+    // room.id, not the room object: every rooms UPDATE replaces the object,
+    // and resubscribing on each one could drop a player INSERT in the gap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id]);
 
   const fetchRoomAndPlayers = async () => {
     const { data: roomData, error: roomError } = await supabase
@@ -118,10 +163,30 @@ export default function RoomLobby() {
 
     setRoom(roomData);
     await fetchPlayers(roomData.id);
+
+    // Auto-join: arriving via the shared deep link / QR ("Tap to join →")
+    // landed people here as pure spectators — never inserted into
+    // room_players, host stuck at 1/2, guest waiting forever. Mirror the
+    // Pixel Rush screen's behavior and seat them on arrival.
+    if (session) {
+      const { data: existing } = await supabase
+        .from('room_players').select('user_id')
+        .eq('room_id', roomData.id).eq('user_id', session.user.id).maybeSingle();
+      if (existing) {
+        markSeated();
+      } else if (roomData.status === 'lobby') {
+        const { error: joinErr } = await supabase.rpc('join_room', { p_code: code });
+        if (!joinErr) { markSeated(); await fetchPlayers(roomData.id); }
+        // join_room raising (room full, etc.) leaves them a spectator —
+        // `seated` stays false, which swaps the footer copy and stops the
+        // start navigation from dragging them into a game they have no seat in.
+      }
+    }
+
     setLoading(false);
 
     if (roomData.status === 'active') {
-      router.replace({ pathname: '/game/[id]', params: { id: roomData.game_kind, roomCode: code } });
+      goToGame(roomData.game_kind);
     }
   };
 
@@ -136,17 +201,19 @@ export default function RoomLobby() {
   };
 
   const handleStartGame = async () => {
-    if (!room || !canStart) return;
+    if (!room || !canStart || starting) return;
+    setStarting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     playSound('click');
 
     const { error } = await supabase.rpc('start_room', { p_room: room.id });
     if (error) {
+      setStarting(false);
       Alert.alert('Error starting game', error.message);
       return;
     }
 
-    router.replace({ pathname: '/game/[id]', params: { id: room.game_kind, roomCode: code } });
+    goToGame(room.game_kind);
   };
 
   const handleToggleFlip = () => {
@@ -193,15 +260,31 @@ export default function RoomLobby() {
   }
 
   const canStart = isHost && players.length >= 2;
+  // Theme the lobby to the game (Number Duel's warm red-brown, not blue).
+  const game = GAMES.find((g) => g.id === room.game_kind);
+  const theme = (game?.theme ?? gradients.background) as [string, string];
 
   return (
     <View style={styles.root}>
-      <GradientFill colors={gradients.background} />
+      <GradientFill colors={theme} />
       <SafeAreaView style={styles.safe}>
 
         {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={() => router.replace('/home')} style={styles.backBtn}>
+          <Pressable
+            onPress={() => {
+              // A seated guest backing out must give the seat up — otherwise
+              // the room stays 2/2 forever, later joiners get "room is full",
+              // and the host can start against an empty chair.
+              if (seated && !isHost && room?.status === 'lobby') {
+                supabase.rpc('leave_room', { p_room: room.id }).then(({ error }) => {
+                  if (error) console.warn('[room] leave_room failed:', error.message);
+                });
+              }
+              router.replace('/home');
+            }}
+            style={styles.backBtn}
+          >
             <Text style={styles.backText}>← Back</Text>
           </Pressable>
           <Text style={styles.gameKind}>{room.game_kind.toUpperCase()}</Text>
@@ -259,7 +342,9 @@ export default function RoomLobby() {
               <Pressable style={StyleSheet.absoluteFill} onPress={handleToggleFlip} />
               <Text style={styles.codeLabel}>SCAN TO JOIN</Text>
               <View style={styles.qrWrapper}>
-                <QRCode value={code} size={150} color={colors.bg} backgroundColor={colors.white} />
+                {/* Encode a real link — a camera scan of the bare code string
+                    ("A3F9C") opens nothing. Same pattern as Pixel Rush. */}
+                <QRCode value={Linking.createURL(`/room/${code}`)} size={150} color={colors.bg} backgroundColor={colors.white} />
               </View>
               <View pointerEvents="none" style={styles.qrFooterRow}>
                 <FontAwesome name="refresh" size={12} color={colors.textMuted} />
@@ -268,7 +353,9 @@ export default function RoomLobby() {
             </Animated.View>
           </View>
 
-          {/* Read-Only Rules Section */}
+          {/* Read-Only Rules Section — these are Number Duel's rules; showing
+              "Classic / 5 rounds / Auto" over a Draughts lobby was fiction. */}
+          {room.game_kind === 'number-duel' && (
           <View style={styles.settingsSection}>
             <Text style={styles.sectionHeader}>Game Rules</Text>
 
@@ -284,18 +371,19 @@ export default function RoomLobby() {
 
               <View style={styles.ruleItem}>
                 <Text style={styles.ruleLabel}>Rounds</Text>
-                <Text style={styles.ruleValue}>{room.state?.rounds || 12}</Text>
+                <Text style={styles.ruleValue}>{room.state?.rounds || 5}</Text>
               </View>
 
               <View style={styles.ruleItem}>
                 <Text style={styles.ruleLabel}>Difficulty</Text>
                 <Text style={styles.ruleValue}>
-                  {room.state?.difficulty ? room.state.difficulty.charAt(0).toUpperCase() + room.state.difficulty.slice(1) : 'Auto'}
+                  {room.state?.difficulty === 'hard' ? 'Hard' : 'Easy'}
                 </Text>
               </View>
             </View>
             <Text style={styles.guestSettingsNote}>These rules were chosen by the host.</Text>
           </View>
+          )}
 
           {/* Players List */}
           <View style={styles.playersSection}>
@@ -322,6 +410,40 @@ export default function RoomLobby() {
               );
             })}
           </View>
+
+          {/* Invite online friends straight into this room (host, while waiting) */}
+          {isHost && room.status === 'lobby' && players.length < room.max_players && (() => {
+            const onlineFriends = friends.filter((f) => f.kind === 'accepted' && isOnline(f.id));
+            if (onlineFriends.length === 0) return null;
+            return (
+              <View style={styles.playersSection}>
+                <Text style={styles.sectionHeader}>Invite a Friend</Text>
+                {onlineFriends.map((f) => {
+                  const invited = invitedIds.has(f.id);
+                  return (
+                    <View key={f.id} style={styles.playerRow}>
+                      <View style={styles.playerAvatarWrap}>
+                        <Avatar letter={(f.username || 'P').charAt(0)} imageUrl={f.avatar_url} size={36} />
+                        <View style={[styles.presenceDot, { backgroundColor: colors.success }]} />
+                      </View>
+                      <Text style={[styles.playerName, { flex: 1 }]}>{f.username || 'Player'}</Text>
+                      <Pressable
+                        style={({ pressed }) => [styles.inviteFriendBtn, invited && styles.inviteFriendBtnDone, pressed && styles.pressed]}
+                        disabled={invited}
+                        onPress={async () => {
+                          setInvitedIds((prev) => new Set(prev).add(f.id));
+                          try { await inviteFriendToRoom(f.id, room.code); }
+                          catch { setInvitedIds((prev) => { const n = new Set(prev); n.delete(f.id); return n; }); }
+                        }}
+                      >
+                        <Text style={[styles.inviteFriendText, invited && { color: colors.success }]}>{invited ? 'Invited' : 'Invite'}</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })()}
         </ScrollView>
 
         {/* Bottom Action Area */}
@@ -333,17 +455,21 @@ export default function RoomLobby() {
               disabled={!canStart}
             >
               <View style={styles.ctaInner}>
-                <GradientFill colors={canStart ? gradients.button : [colors.surfaceAlt, colors.surfaceAlt]} />
+                <GradientFill colors={canStart ? theme : [colors.surfaceAlt, colors.surfaceAlt]} />
                 <Text style={[styles.ctaText, !canStart && { color: colors.textFaint }]}>
                   {canStart ? 'Start Game' : 'Waiting for players...'}
                 </Text>
               </View>
             </Pressable>
-          ) : (
+          ) : seated ? (
             <Animated.View style={[styles.waitingBox, pulseStyle]}>
               <ActivityIndicator color={colors.blue} style={{ marginRight: 8 }} />
               <Text style={styles.waitingText}>Waiting for host to start...</Text>
             </Animated.View>
+          ) : (
+            <View style={styles.waitingBox}>
+              <Text style={styles.waitingText}>Room is full — you're watching, not playing.</Text>
+            </View>
           )}
         </View>
 
@@ -401,6 +527,9 @@ const styles = StyleSheet.create({
   },
   playerName: { flex: 1, fontFamily: font.semibold, fontSize: 15, color: colors.text },
   hostBadge: { fontFamily: font.bold, fontSize: 10, color: colors.blue, letterSpacing: 1, backgroundColor: 'rgba(46,126,240,0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  inviteFriendBtn: { paddingHorizontal: space.md, paddingVertical: 8, borderRadius: radius.md, borderWidth: 1, borderColor: colors.blue, backgroundColor: colors.blue },
+  inviteFriendBtnDone: { backgroundColor: 'rgba(74,222,128,0.12)', borderColor: colors.success },
+  inviteFriendText: { fontFamily: font.bold, fontSize: 13, color: colors.white },
 
   settingsSection: {
     backgroundColor: colors.surface, padding: space.lg, borderRadius: radius.xl,

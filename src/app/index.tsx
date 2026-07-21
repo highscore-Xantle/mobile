@@ -40,9 +40,19 @@ export default function Landing() {
 
   // Signed in already → skip the front door entirely.
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) router.replace('/home');
-      else setChecking(false);
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) { setChecking(false); return; }
+      // Valid session — but don't skip straight to /home unless onboarding
+      // actually finished (same check login.tsx does). Backgrounding/killing
+      // the app mid-onboarding used to drop a user into /home with no
+      // username ever set.
+      const { data: profile, error } = await supabase
+        .from('profiles').select('username').eq('id', session.user.id).single();
+      // A FAILED fetch (network flake) is not "no username" — routing an
+      // existing user into onboarding on an error let them overwrite their
+      // own profile. Only a real "row fetched, username empty" goes there.
+      if (error) { router.replace('/home'); return; }
+      router.replace(profile?.username ? '/home' : '/onboarding');
     });
   }, [router]);
 

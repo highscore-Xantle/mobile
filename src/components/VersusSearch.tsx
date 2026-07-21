@@ -54,14 +54,6 @@ export function VersusSearch({
   matched: VersusPlayer | null;
   onCancel: () => void;
 }) {
-  const [flashUri, setFlashUri] = useState(AV_POOL[0]);
-
-  useEffect(() => {
-    if (matched) return;
-    const id = setInterval(() => setFlashUri(AV_POOL[rand(AV_POOL.length)]), 130);
-    return () => clearInterval(id);
-  }, [matched]);
-
   return (
     <View>
       <Text style={s.heading}>{matched ? 'Opponent found!' : 'Finding an opponent…'}</Text>
@@ -75,8 +67,11 @@ export function VersusSearch({
         <Text style={[s.bigVs, { color: accent }]}>VS</Text>
 
         <View style={s.vCard}>
+          {/* Empty placeholder while searching — flashing through random
+              photos looked like the opponent kept changing. The real (or
+              bot) photo only appears once `matched` is set. */}
           <Animated.View entering={FadeIn}>
-            <VAvatar uri={matched ? matched.avatar : flashUri} name="?" size={92} />
+            <VAvatar uri={matched ? matched.avatar : null} name={matched ? matched.name : '?'} size={92} />
           </Animated.View>
           <Text style={s.vName} numberOfLines={1}>{matched ? matched.name : 'Searching…'}</Text>
           <View style={[s.joinedPill, !matched && { backgroundColor: colors.surfaceAlt }]}>

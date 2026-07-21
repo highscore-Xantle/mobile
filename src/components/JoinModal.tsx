@@ -19,7 +19,7 @@ export function JoinModal({ visible, onClose }: JoinModalProps) {
   const handleJoin = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (code.length !== 5) {
-      Alert.alert('Invalid Code', 'Room codes are exactly 5 letters.');
+      Alert.alert('Invalid Code', 'Room codes are exactly 5 characters.');
       return;
     }
 
@@ -49,7 +49,11 @@ export function JoinModal({ visible, onClose }: JoinModalProps) {
     setLoading(false);
 
     if (roomErr) {
-      Alert.alert('Cannot Join', 'No game or room found with that code.');
+      // Only a genuine miss should read as "wrong code" — masking 'room is
+      // full' / 'already started' told users their VALID code didn't exist.
+      Alert.alert('Cannot Join', roomErr.message.includes('not found')
+        ? 'No game or room found with that code.'
+        : roomErr.message);
       return;
     }
 
@@ -65,17 +69,19 @@ export function JoinModal({ visible, onClose }: JoinModalProps) {
         
         <View style={styles.card}>
           <Text style={styles.title}>Join a Game</Text>
-          <Text style={styles.sub}>Enter the 5-letter room code from the host.</Text>
+          <Text style={styles.sub}>Enter the 5-character room code from the host.</Text>
 
           <View style={styles.inputWrap}>
             <TextInput
               style={styles.input}
-              placeholder="A B C D E"
+              placeholder="A3F9C"
               placeholderTextColor={colors.textFaint}
               autoCapitalize="characters"
               maxLength={5}
               value={code}
-              onChangeText={(txt) => setCode(txt.toUpperCase())}
+              // Strip whitespace — pasted/typed spaces counted against
+              // maxLength and guaranteed a "not found".
+              onChangeText={(txt) => setCode(txt.replace(/\s/g, '').toUpperCase())}
               autoCorrect={false}
               autoFocus
             />
@@ -104,7 +110,7 @@ const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { ...(StyleSheet.absoluteFill as ViewStyle), backgroundColor: 'rgba(0,0,0,0.6)' },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceSolid, // opaque — surface (rgba white) let the page bleed through the sheet
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: space.xl,

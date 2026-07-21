@@ -95,9 +95,16 @@ export async function registerForPushNotifications(userId: string): Promise<stri
     const projectId = Constants.expoConfig?.extra?.eas?.projectId;
     const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
 
-    await supabase
+    // A failed write here used to be silently ignored — the caller got the
+    // token back and showed "notifications on" even though no row was ever
+    // written, so the user would never actually receive a push.
+    const { error } = await supabase
       .from('push_tokens')
       .upsert({ user_id: userId, token, updated_at: new Date().toISOString() });
+    if (error) {
+      console.warn('[pushNotifications] token upsert failed:', error);
+      return null;
+    }
 
     return token;
   } catch (err) {
@@ -106,7 +113,12 @@ export async function registerForPushNotifications(userId: string): Promise<stri
   }
 }
 
-/** Drops the stored token — used when the Settings toggle is switched off. */
-export async function unregisterPushNotifications(userId: string): Promise<void> {
-  await supabase.from('push_tokens').delete().eq('user_id', userId);
+/** Drops the stored token — used when the Settings toggle is switched off. Returns false on failure. */
+export async function unregisterPushNotifications(userId: string): Promise<boolean> {
+  const { error } = await supabase.from('push_tokens').delete().eq('user_id', userId);
+  if (error) {
+    console.warn('[pushNotifications] token delete failed:', error);
+    return false;
+  }
+  return true;
 }

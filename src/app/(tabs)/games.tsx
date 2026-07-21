@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, SlideInDown } from 'react-native-reanimated';
 import { useSession } from '../../lib/useSession';
@@ -38,10 +39,10 @@ export const GAMES = [
     title: 'Number Duel',
     tag: 'MIND GAME',
     tagline: 'Pick a secret. Race to guess.',
-    gradient: ['#3B9DE7', '#4967E0'] as [string, string],
-    cardBg: ['#26314A', '#161B2E'] as string[],           // deep indigo-navy
-    theme: ['#4F7FE0', '#3546A8'] as [string, string],    // indigo-blue right-band gradient
-    accent: '#4967E0',                                    // royal indigo pill / active-icon color
+    gradient: ['#6E362B', '#2A1512'] as [string, string],
+    cardBg: ['#3A1C18', '#150A08'] as string[],           // red-brown → near-black, matches the keypad board's actual warm tone (sampled #4E2523, red-leaning, not the old yellow bronze)
+    theme: ['#6E362B', '#2A1512'] as [string, string],    // hero/background gradient in the image's own red-brown family — the old #8B5A2B was too yellow and clashed with the board
+    accent: '#E39A5B',                                     // warm amber, sampled from the keypad's glow (#EEA96D) — the pop/highlight color
     emoji: '🔢',
     image: require('../../../assets/games-icon/number-duel.png') as number | null,
     available: true,
@@ -53,12 +54,12 @@ export const GAMES = [
     title: 'Pixel Rush',
     tag: '1v1 ARCADE',
     tagline: 'Fast. Frantic. Pixel-perfect.',
-    gradient: gradients.button as [string, string],
-    cardBg: ['#123542', '#0A1E26'] as string[],           // dark teal-navy, arcade energy
-    theme: ['#22D3EE', '#0891B2'] as [string, string],    // electric cyan -> teal right-band
-    accent: '#22D3EE',
+    gradient: ['#2C6079', '#0E2530'] as [string, string],
+    cardBg: ['#173D4E', '#0A1822'] as string[],           // dark teal-navy → near-black, matches the icon's board
+    theme: ['#2C6079', '#0E2530'] as [string, string],    // teal-steel → dark navy, the icon's own tone
+    accent: '#5E9BC2',                                     // steel-blue pop sampled from the icon
     emoji: '🎮',
-    image: null as number | null,
+    image: require('../../../assets/games-icon/pixel-rush.png') as number | null,
     available: true,
     route: '/games/pixel-rush' as string | null,
     hasViewer: true,
@@ -202,6 +203,7 @@ const sheetStyles = StyleSheet.create({
  */
 export default function GamesTab() {
   const router = useRouter();
+  const isFocused = useIsFocused();
   const { session } = useSession();
   const [joinVisible, setJoinVisible] = useState(false);
   const [liveRooms, setLiveRooms] = useState<Record<string, ActiveRoom[]>>({});
@@ -210,17 +212,24 @@ export default function GamesTab() {
 
   // ── Fetch active rooms (10-second poll) ─────────────────────────────────────
   const fetchLiveRooms = useCallback(async () => {
-    const [{ data: rooms }, { data: games }] = await Promise.all([
+    const [{ data: rooms, error: roomsErr }, { data: games, error: gamesErr }] = await Promise.all([
       supabase
         .from('rooms')
         .select(`code, game_kind, state, room_players ( display_name, profiles ( username ) )`)
-        .eq('status', 'active'),
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(24),
       supabase
         .from('games')
         .select(`invite_code, current_round, game_players ( guest_name, profile:user_id ( username ) )`)
         .eq('status', 'active')
-        .eq('game_type', 'pixel_rush'),
+        .eq('game_type', 'pixel_rush')
+        .order('created_at', { ascending: false })
+        .limit(24),
     ]);
+    // One flaky poll must not blank every LIVE badge for 10s — keep the
+    // previous data and let the next tick recover.
+    if (roomsErr && gamesErr) return;
     const map: Record<string, ActiveRoom[]> = {};
     (rooms ?? []).forEach((r: any) => {
       const names: string[] = (r.room_players ?? []).map((p: any) =>
@@ -242,16 +251,24 @@ export default function GamesTab() {
   }, []);
 
   useEffect(() => {
+    if (!isFocused) return;  // don't burn a 2-query poll from a background tab
     fetchLiveRooms();
     const interval = setInterval(fetchLiveRooms, 10_000);
     return () => clearInterval(interval);
-  }, [fetchLiveRooms]);
+  }, [fetchLiveRooms, isFocused]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
   // Every game opens the same product-detail screen (the Draughts pattern):
   // hero + description + the 4 selectable play modes. Same flow as the Home tab.
+  // The 150ms haptic pause made this an easy double-tap target: two taps in
+  // the window pushed /details twice, seeding duplicate stack entries that
+  // broke back-navigation further in. Lock re-entry for a beat.
+  const gamePressLockRef = useRef(0);
   const handleGamePress = async (game: typeof GAMES[number]) => {
     if (!game.available) return;
+    const now = Date.now();
+    if (now - gamePressLockRef.current < 1000) return;
+    gamePressLockRef.current = now;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     await new Promise(resolve => setTimeout(resolve, 150));
     router.push(`/details/${game.id}` as any);
@@ -341,7 +358,7 @@ export default function GamesTab() {
                     <View style={styles.gameBanner}>
                       <GradientFill colors={g.gradient} />
                       <Text style={styles.gameEmoji}>{g.emoji}</Text>
-                      {isLive && (
+                      {isLive && (g.hasViewer ? (
                         <Pressable
                           style={styles.liveBadge}
                           onPress={() => handleLiveBadgePress(g)}
@@ -351,7 +368,14 @@ export default function GamesTab() {
                           <LiveDot color={colors.white} />
                           <Text style={styles.liveBadgeText}>LIVE · {roomsForGame.length}</Text>
                         </Pressable>
-                      )}
+                      ) : (
+                        // No viewer for this game — show the count, but not as
+                        // a button whose tap silently does nothing.
+                        <View style={styles.liveBadge}>
+                          <LiveDot color={colors.white} />
+                          <Text style={styles.liveBadgeText}>LIVE · {roomsForGame.length}</Text>
+                        </View>
+                      ))}
                       {!g.available && (
                         <View style={styles.soonOverlay}>
                           <Text style={styles.soonText}>COMING SOON</Text>

@@ -47,12 +47,13 @@ export async function getDeviceLocation(): Promise<DeviceLocation> {
     throw new LocationCaptureError('permission-denied', 'Location permission was denied.');
   }
 
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const position = await Promise.race([
     Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
     new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new LocationCaptureError('timeout', 'Location request timed out.')), POSITION_TIMEOUT_MS);
+      timeoutId = setTimeout(() => reject(new LocationCaptureError('timeout', 'Location request timed out.')), POSITION_TIMEOUT_MS);
     }),
-  ]).catch((e) => {
+  ]).finally(() => clearTimeout(timeoutId)).catch((e) => {
     if (e instanceof LocationCaptureError) throw e;
     if (UNAVAILABLE_CODES.has(e?.code)) {
       throw new LocationCaptureError('unavailable', 'Location is unavailable — check that location services are turned on.');

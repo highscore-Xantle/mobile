@@ -144,6 +144,18 @@ export function useGame(code: string | undefined) {
       .channel(`game-${code}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'games' }, (payload) => {
         if (!mounted) return;
+        // DELETE: payload.new is empty — the old row (id only, by default
+        // replica identity) is in payload.old. Server-side deletes happen
+        // (stale-lobby cleanup, cancel racing a join); without this the
+        // screen froze forever on a game that no longer exists.
+        if (payload.eventType === 'DELETE') {
+          const old = payload.old as Partial<Game>;
+          if (old?.id && old.id === gameIdRef.current) {
+            setGame(null);
+            setError('This game no longer exists.');
+          }
+          return;
+        }
         const g = payload.new as Game;
         // The subscription isn't server-side filtered, so ignore other games' changes.
         if (g.invite_code !== code!.toUpperCase()) return;
@@ -161,10 +173,30 @@ export function useGame(code: string | undefined) {
         if (r.game_id !== gameIdRef.current) return; // only this game's rounds
         setRound(r);
       })
-      .subscribe();
+      .subscribe((status) => {
+        // The whole Pixel Rush screen is realtime-only; if the channel fails
+        // to come up, refetch on a poll so the game doesn't freeze silently.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[pixel-rush] realtime subscribe failed:', status);
+        }
+      });
+
+    // Safety net: a light poll re-pulls game/round/players even if realtime
+    // never delivers (failed subscribe, dropped socket). 5s is invisible
+    // during play but rescues an otherwise-frozen screen.
+    const poll = setInterval(async () => {
+      if (!gameIdRef.current) return;
+      const { data } = await supabase.from('games').select('*').eq('id', gameIdRef.current).maybeSingle();
+      if (!mounted || !data) return;
+      const g = data as Game;
+      setGame(g);
+      fetchRound(g.id, g.current_round);
+      fetchPlayers(g.id);
+    }, 5000);
 
     return () => {
       mounted = false;
+      clearInterval(poll);
       void supabase.removeChannel(ch);
     };
   }, [code, fetchPlayers, fetchRound]);
@@ -225,6 +257,20 @@ export async function requestRematch(gameId: string): Promise<void> {
 
 export async function leaveGame(gameId: string): Promise<void> {
   const { error } = await supabase.rpc('leave_game', { p_game_id: gameId });
+  if (error) throw error;
+}
+
+/** Ends the match with the caller as winner — used when the other player has disconnected. */
+export async function forfeitGame(gameId: string): Promise<void> {
+  const { error } = await supabase.rpc('forfeit_game', { p_game_id: gameId });
+  if (error) throw error;
+}
+
+/** Ends the match with the caller as LOSER — used when the caller quits a
+ *  live 1v1 via the Leave button, so the opponent gets the win instead of
+ *  being stranded in a game that can never finish. */
+export async function concedeGame(gameId: string): Promise<void> {
+  const { error } = await supabase.rpc('concede_game', { p_game_id: gameId });
   if (error) throw error;
 }
 

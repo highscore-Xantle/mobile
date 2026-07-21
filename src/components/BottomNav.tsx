@@ -36,11 +36,15 @@ export function BottomNav({ state, navigation }: BottomTabBarProps) {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    // Reset on user change first — otherwise the previous account's photo
+    // stays on screen (looks like an identity leak) until/unless the new
+    // fetch happens to resolve with a truthy value.
+    setAvatarUrl(null);
     if (!session?.user) return;
     let active = true;
     supabase
       .from('profiles').select('avatar_url').eq('id', session.user.id).maybeSingle()
-      .then(({ data }) => { if (active && data?.avatar_url) setAvatarUrl(data.avatar_url); });
+      .then(({ data }) => { if (active) setAvatarUrl(data?.avatar_url ?? null); });
     return () => { active = false; };
   }, [session?.user?.id]);
 

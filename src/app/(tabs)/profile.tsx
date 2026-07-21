@@ -1,9 +1,12 @@
-import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FontAwesome } from '@expo/vector-icons';
 import { GradientFill } from '../../components/GradientFill';
-import { goBackOr } from '../../lib/navigation';
+import { useGoBackOr } from '../../lib/navigation';
+import { uploadImage } from '../../lib/cloudinary';
 import { supabase } from '../../lib/supabase';
 import { useSession } from '../../lib/useSession';
 import { usePresence } from '../../lib/usePresence';
@@ -16,13 +19,15 @@ const VALID_RE = /^[a-z0-9_]+$/;
 type CheckState = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 
 export default function Profile() {
-  const router = useRouter();
+  const goBack = useGoBackOr('/home');
   const { session, loading: sessionLoading } = useSession();
 
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [username, setUsername] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const { isOnline } = usePresence();
   const online = !!session?.user && isOnline(session.user.id);
@@ -47,7 +52,7 @@ export default function Profile() {
     let active = true;
     supabase
       .from('profiles')
-      .select('username, created_at')
+      .select('username, avatar_url, created_at')
       .eq('id', session.user.id)
       .single()
       .then(({ data, error }) => {
@@ -56,6 +61,7 @@ export default function Profile() {
           setErrorMsg('Could not load your profile.');
         } else {
           setUsername(data.username);
+          setAvatarUrl(data.avatar_url);
           setJoinedAt(data.created_at);
         }
         setLoading(false);
@@ -68,20 +74,55 @@ export default function Profile() {
   useEffect(() => {
     if (!session?.user) return;
     let active = true;
-    supabase
-      .from('game_players')
-      .select('score, trophies')
-      .eq('user_id', session.user.id)
-      .then(({ data }) => {
-        if (!active || !data) return;
-        const matches = data.length;
-        const roundsWon = data.reduce((s, r) => s + (r.score ?? 0), 0);
-        const trophies = data.reduce((s, r) => s + (r.trophies ?? 0), 0);
-        const winRate = matches > 0 ? Math.round((trophies / matches) * 100) : 0;
-        setStats({ matches, roundsWon, trophies, winRate });
-      });
+    (async () => {
+      const [{ data: rows }, { count: wins }] = await Promise.all([
+        supabase.from('game_players').select('score, trophies').eq('user_id', session.user.id),
+        // Wins counted from finished games actually won — `trophies` is a
+        // lifetime counter that survives rematches within one game row, so
+        // trophies/matches could read 500%.
+        supabase.from('games').select('id', { count: 'exact', head: true })
+          .eq('winner_player', session.user.id).eq('status', 'finished'),
+      ]);
+      if (!active || !rows) return;
+      const matches = rows.length;
+      const roundsWon = rows.reduce((s, r) => s + (r.score ?? 0), 0);
+      const trophies = rows.reduce((s, r) => s + (r.trophies ?? 0), 0);
+      const winRate = matches > 0 ? Math.min(100, Math.round(((wins ?? 0) / matches) * 100)) : 0;
+      setStats({ matches, roundsWon, trophies, winRate });
+    })();
     return () => { active = false; };
   }, [session?.user?.id]);
+
+  // Onboarding only offers the photo picker once, during first-time signup —
+  // skip it there and it was gone for good. This is the way back in.
+  const handleChangePhoto = async () => {
+    if (!session?.user || uploadingPhoto) return;
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Photo access denied', 'Enable photo access in Settings to change your picture.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+      });
+      if (result.canceled || !result.assets[0]?.uri) return;
+
+      setUploadingPhoto(true);
+      const uploadedUrl = await uploadImage(result.assets[0].uri);
+      const { error } = await supabase
+        .from('profiles').update({ avatar_url: uploadedUrl }).eq('id', session.user.id);
+      if (error) throw error;
+      setAvatarUrl(uploadedUrl);
+    } catch (e: any) {
+      Alert.alert('Could not update photo', e?.message ?? 'Please try again.');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
 
   const startEditing = () => {
     setDraft(username ?? '');
@@ -116,13 +157,19 @@ export default function Profile() {
     debounceTimer.current = setTimeout(() => checkAvailability(trimmed), 600);
   };
 
+  // Versioned so a slow response for an OLD input can't overwrite the state
+  // set for the current one (type "cooldude", backspace to "co", stale
+  // "available" lands → Save enables for a 2-char name).
+  const checkSeqRef = useRef(0);
   const checkAvailability = async (value: string) => {
+    const seq = ++checkSeqRef.current;
     const { data, error } = await supabase
       .from('profiles')
       .select('username')
       .eq('username', value)
       .maybeSingle();
 
+    if (seq !== checkSeqRef.current) return; // stale response for older input
     if (error) {
       setCheckState('idle');
       return;
@@ -132,6 +179,13 @@ export default function Profile() {
 
   const handleSave = async () => {
     if (checkState !== 'available' || !session?.user) return;
+    // Re-validate the CURRENT draft — `checkState` may describe an earlier
+    // value of the input, and only the DB's unique constraint backstops
+    // "taken"; nothing else backstops "invalid".
+    if (draft.length < MIN_LEN || draft.length > MAX_LEN || !VALID_RE.test(draft)) {
+      setCheckState('invalid');
+      return;
+    }
     setSaving(true);
 
     const { error } = await supabase
@@ -144,7 +198,9 @@ export default function Profile() {
       if (error.code === '23505') {
         setCheckState('taken');
       } else {
-        setErrorMsg(error.message);
+        // Alert, not the full-screen errorMsg branch — that replaced the
+        // whole profile tab with a dead-end error page over one flaky save.
+        Alert.alert('Could not save username', error.message);
       }
       return;
     }
@@ -173,7 +229,7 @@ export default function Profile() {
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            onPress={() => goBackOr(router, '/home')}
+            onPress={goBack}
           >
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
@@ -194,10 +250,32 @@ export default function Profile() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.content}
           >
-            <View style={styles.avatar}>
-              <GradientFill colors={gradients.featured} />
-              <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
-            </View>
+            <Pressable
+              style={({ pressed }) => [styles.avatarWrap, pressed && styles.pressed]}
+              onPress={handleChangePhoto}
+              disabled={uploadingPhoto}
+              accessibilityLabel="Change profile picture"
+              accessibilityRole="button"
+            >
+              <View style={styles.avatar}>
+                {avatarUrl ? (
+                  <Image source={{ uri: avatarUrl }} style={styles.avatarImage} contentFit="cover" />
+                ) : (
+                  <>
+                    <GradientFill colors={gradients.featured} />
+                    <Text style={styles.avatarLetter}>{(username ?? '?').charAt(0).toUpperCase()}</Text>
+                  </>
+                )}
+                {uploadingPhoto && (
+                  <View style={styles.avatarUploadOverlay}>
+                    <ActivityIndicator color={colors.white} />
+                  </View>
+                )}
+              </View>
+              <View style={styles.avatarEditBadge}>
+                <FontAwesome name="camera" size={12} color={colors.white} />
+              </View>
+            </Pressable>
             <View style={[styles.statusBadge, online ? styles.statusOnline : styles.statusOffline]}>
               <View style={[styles.statusDot, { backgroundColor: online ? colors.success : colors.textMuted }]} />
               <Text style={[styles.statusText, { color: online ? colors.success : colors.textMuted }]}>
@@ -343,6 +421,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   content: { alignItems: 'center', paddingTop: space.md, paddingBottom: space.xl },
+  avatarWrap: { marginBottom: space.sm },
   avatar: {
     width: 96,
     height: 96,
@@ -350,10 +429,29 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: space.sm,
     ...shadow.blueGlow,
   },
   avatarLetter: { fontFamily: font.extrabold, fontSize: 38, color: colors.white },
+  avatarImage: { width: 96, height: 96 },
+  avatarUploadOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: space.sm,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.bg,
+  },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',

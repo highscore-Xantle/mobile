@@ -54,9 +54,16 @@ const GAME_BADGE_MAP: Record<string, { label: string; color: string }> = {
   'pixel-rush': { label: 'PIXEL RUSH', color: colors.blue },
 };
 
+// Posts arrive with either spelling: Pixel Rush shares 'pixel_rush' (its DB
+// game_type) while rooms games use kebab-case ids. Normalize before lookups.
+function normalizeGameType(gameType: string) {
+  return gameType.replace(/_/g, '-');
+}
+
 function gameBadge(gameType: string) {
+  const key = normalizeGameType(gameType);
   return (
-    GAME_BADGE_MAP[gameType] ?? { label: gameType.toUpperCase(), color: colors.textFaint }
+    GAME_BADGE_MAP[key] ?? { label: key.toUpperCase(), color: colors.textFaint }
   );
 }
 
@@ -116,9 +123,13 @@ export interface WinCardProps {
   post: WinPost;
   onLike: (postId: string) => Promise<string | null>;
   onComment: (postId: string) => void;
+  /** Lets the avatar tap open /profile only for the viewer's OWN posts —
+   *  there is no other-user profile screen yet, and routing everyone to the
+   *  viewer's own profile pretended otherwise. */
+  currentUserId?: string;
 }
 
-export const WinCard = memo(function WinCard({ post, onLike, onComment }: WinCardProps) {
+export const WinCard = memo(function WinCard({ post, onLike, onComment, currentUserId }: WinCardProps) {
   const router = useRouter();
   const heartScale = useSharedValue(0);
   // Guard duplicate rapid-fire like taps.
@@ -146,29 +157,34 @@ export const WinCard = memo(function WinCard({ post, onLike, onComment }: WinCar
 
   const handlePlayGame = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (post.game_type === 'pixel-rush') {
+    const kind = normalizeGameType(post.game_type);
+    if (kind === 'pixel-rush') {
       router.push('/games/pixel-rush' as any);
     } else {
-      router.push(`/setup/${post.game_type}` as any);
+      router.push(`/setup/${kind}` as any);
     }
   };
 
   // ── Double-tap gesture ──────────────────────────────────────────────────────
+  // Instagram-style semantics: double-tap only ever LIKES, never un-likes.
+  // triggerLike toggles, so this used to silently un-like an already-liked
+  // post on a double-tap — no animation (correctly gated), but the like was
+  // removed anyway since triggerLike() always fired regardless.
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
       'worklet';
-      if (!post.viewer_has_liked) {
-        animateHeart();
-      }
+      if (post.viewer_has_liked) return;
+      animateHeart();
       runOnJS(triggerLike)();
     });
 
   // ── Navigate to profile ──────────────────────────────────────────────────────
   const handleAvatarPress = useCallback(() => {
+    if (post.user_id !== currentUserId) return; // no other-user profile screen yet
     Haptics.selectionAsync();
     router.push('/profile');
-  }, [router]);
+  }, [router, post.user_id, currentUserId]);
 
   // ── Navigate to game details ─────────────────────────────────────────────────
   const handlePlayPress = useCallback(() => {
@@ -182,9 +198,11 @@ export const WinCard = memo(function WinCard({ post, onLike, onComment }: WinCar
   // ── Share ────────────────────────────────────────────────────────────────────
   const handleShare = useCallback(() => {
     Haptics.selectionAsync();
+    // Web without navigator.share rejects — swallow it so the button doesn't
+    // throw an unhandled rejection.
     Share.share({
       message: `Check out this win on Xantle! "${post.result_text}"`,
-    });
+    }).catch(() => {});
   }, [post.result_text]);
 
   // ── Comment ──────────────────────────────────────────────────────────────────

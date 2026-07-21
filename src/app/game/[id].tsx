@@ -22,11 +22,14 @@ import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import PixelBoard from '../../components/PixelBoard';
+import { AV_POOL } from '../../components/VersusSearch';
 import { computeBotSolveDelayMs, getRecentWinRate } from '../../lib/botOpponent';
 import { playSound } from '../../lib/sounds';
 import {
   DEFAULT_PUZZLE_IMAGE,
   autoAdvanceRound,
+  concedeGame,
+  forfeitGame,
   gridForRound,
   joinGame,
   leaveGame,
@@ -43,7 +46,17 @@ import {
 } from '../../lib/usePixelGame';
 import { usePresence } from '../../lib/usePresence';
 import { useSession } from '../../lib/useSession';
+import { confirmAsync } from '../../lib/confirm';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
+
+// Disconnect forfeit grace. 30s (not 10s): a phone call or an app switch
+// backgrounds the app and untracks presence — losing the match over a
+// 12-second interruption is worse than the winner waiting a little longer.
+const DISCONNECT_GRACE_MS = 30000;
+// Pixel Rush's own colours (match the game icon) instead of the shared blue.
+const PR_THEME = ['#2C6079', '#0E2530'] as [string, string];
+const PR_BUTTON = ['#3B7A96', '#245A73'] as [string, string];
+const PR_ACCENT = '#5E9BC2';
 
 export default function GameScreen() {
   const { id: code } = useLocalSearchParams<{ id: string }>();
@@ -52,7 +65,7 @@ export default function GameScreen() {
   const myId = session?.user?.id ?? null;
 
   const { game, players, round, loading, error } = useGame(code);
-  const { isOnline } = usePresence();
+  const { isOnline, synced } = usePresence();
   const isHost = game?.host_id === myId;
   const botPlayer = players.find((p) => p.is_bot) ?? null;
   const overallWinner = game?.winner_is_bot
@@ -69,6 +82,48 @@ export default function GameScreen() {
   const [shareState, setShareState] = useState<'idle' | 'busy' | 'done'>('idle');
   const [copied, setCopied] = useState(false);
   const botTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Only the host calls setRoundImage — if the host's app closes right when a
+  // new round needs one, everyone else was stuck on "Setting up round…"
+  // forever with no indication why. A short grace period avoids flagging a
+  // brief background/foreground blip as a real disconnect.
+  // Scoped to 1v1 — for a group match, "the host is gone" doesn't have a
+  // single obvious winner, so this only auto-resolves the common 1v1 case.
+  const opponent1v1 = game?.max_players === 2 ? players.find((p) => p.user_id !== myId && !p.is_bot) ?? null : null;
+  const [opponentOffline, setOpponentOffline] = useState(false);
+  const [graceRearm, setGraceRearm] = useState(0);
+  useEffect(() => {
+    // `synced` gate: before the first presence sync EVERYONE reads as
+    // offline — arming the timer then would forfeit an online opponent
+    // straight after mount/reconnect.
+    if (!opponent1v1?.user_id || game?.status !== 'active' || !synced) { setOpponentOffline(false); return; }
+    if (isOnline(opponent1v1.user_id)) { setOpponentOffline(false); return; }
+    const armedAt = Date.now();
+    const t = setTimeout(() => {
+      // A timer suspended by backgrounding flushes late on resume, before a
+      // fresh presence sync arrives — if far more real time passed than the
+      // grace we armed, don't trust the stale state; re-arm instead.
+      if (Date.now() - armedAt > DISCONNECT_GRACE_MS + 5000) { setGraceRearm(x => x + 1); return; }
+      setOpponentOffline(true);
+    }, DISCONNECT_GRACE_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opponent1v1?.user_id, game?.status, synced, graceRearm, isOnline(opponent1v1?.user_id)]);
+
+  // Auto-forfeit to whoever's still here — previously there was no way for
+  // the game to ever finish if the host disconnected (only the host can call
+  // setRoundImage), and no signal at all that the opponent was even gone.
+  // Fire at most once, and re-verify at call time: the opponent may have
+  // come back in the moment between the grace expiring and this effect.
+  const forfeitFiredRef = useRef(false);
+  useEffect(() => {
+    if (!opponentOffline || !game || game.status !== 'active') return;
+    if (forfeitFiredRef.current) return;
+    if (opponent1v1?.user_id && isOnline(opponent1v1.user_id)) return;
+    forfeitFiredRef.current = true;
+    forfeitGame(game.id).catch((e) => { forfeitFiredRef.current = false; console.warn(e); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opponentOffline, game?.id, game?.status]);
 
   // Reset solved flag when a new round starts.
   useEffect(() => { setMySolved(false); }, [round?.round_no]);
@@ -96,12 +151,16 @@ export default function GameScreen() {
     setRoundImage(game.id, round.round_no, pickPuzzleImage(game.id, round.round_no)).catch(console.warn);
   }, [game?.id, game?.status, round?.status, round?.round_no, isHost]);
 
-  // Both clients: auto-advance once a round is decided.
+  // Both clients: auto-advance once a round is decided. Players only — an
+  // unseated bystander (shared link opened mid-match) would just get a
+  // 'not a player in this game' raise from the server every round.
   useEffect(() => {
-    if (!game || !round) return;
+    if (!game || !round || !myId) return;
     if (round.status !== 'done') return;
+    if (!players.some((p) => p.user_id === myId)) return;
     autoAdvanceRound(game.id, round.round_no).catch(console.warn);
-  }, [game?.id, round?.status, round?.round_no]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.id, round?.status, round?.round_no, players.length]);
 
   // Bot matches: look up the human's win rate once, to scale the bot's pace.
   useEffect(() => {
@@ -139,27 +198,43 @@ export default function GameScreen() {
       await submitSolve(game.id, round.round_no, timeMs);
       await autoAdvanceRound(game.id, round.round_no);
     } catch (e) {
+      // If the submit never reached the server (network drop), unlock the
+      // board so the player can re-solve — otherwise they sit frozen on
+      // "Solved!" while the round is silently lost.
+      setMySolved(false);
       console.warn('[game] submitSolve error:', e);
     }
   }
 
   async function handleLeave() {
     if (!game) return;
-    Alert.alert(
-      'Leave game',
-      'Are you sure you want to leave?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Leave',
-          style: 'destructive',
-          onPress: async () => {
-            await leaveGame(game.id).catch(console.warn);
-            router.replace('/home');
-          },
-        },
-      ],
-    );
+    // confirmAsync works on web (Alert.alert buttons are a no-op there).
+    const ok = await confirmAsync('Leave game', 'Are you sure you want to leave?', { confirmText: 'Leave', destructive: true });
+    if (!ok) return;
+    // Quitting a live 1v1 concedes it — otherwise the game stays 'active'
+    // with one player, the opponent gets no win and no signal, and (since the
+    // quitter is still online in the app) the disconnect auto-forfeit never
+    // fires either. This includes BOT matches: leave_game never finishes a
+    // game while the bot row remains seated, so a left bot game haunted the
+    // LIVE list forever. concede_game handles the bot-winner case itself.
+    if (game.status === 'active' && game.max_players === 2) {
+      try {
+        await concedeGame(game.id);
+        // Deliberately NO leaveGame after a successful concede: the game is
+        // finished; deleting our row would erase this loss from the
+        // opponent's final screen and from our own stats.
+        router.replace('/home');
+        return;
+      } catch (e) {
+        // Concede didn't reach the server. Leaving anyway would strand the
+        // opponent in an unfinishable game — stay.
+        console.warn('[game] concede failed:', e);
+        Alert.alert('Could not leave', 'Connection hiccup — please try again.');
+        return;
+      }
+    }
+    await leaveGame(game.id).catch(console.warn);
+    router.replace('/home');
   }
 
   async function handleRematch() {
@@ -173,10 +248,15 @@ export default function GameScreen() {
   async function shareCode() {
     if (!game) return;
     const link = Linking.createURL(`/game/${game.invite_code}`);
-    await Share.share({
-      message: `Join my Pixel Rush game on Xantle! Code: ${game.invite_code}\n${link}`,
-      title: 'Join Pixel Rush',
-    });
+    try {
+      await Share.share({
+        message: `Join my Pixel Rush game on Xantle! Code: ${game.invite_code}\n${link}`,
+        title: 'Join Pixel Rush',
+      });
+    } catch {
+      // Web without navigator.share / user-cancelled — fall back to copy.
+      await Clipboard.setStringAsync(game.invite_code).catch(() => {});
+    }
   }
 
   async function handleCopy() {
@@ -215,9 +295,9 @@ export default function GameScreen() {
   if (loading) {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={[styles.safe, styles.center]}>
-          <ActivityIndicator color={colors.blue} size="large" />
+          <ActivityIndicator color={PR_ACCENT} size="large" />
         </SafeAreaView>
       </View>
     );
@@ -226,7 +306,7 @@ export default function GameScreen() {
   if (error || !game) {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={[styles.safe, styles.center]}>
           <Text style={themeText.body}>{error ?? 'Game not found.'}</Text>
           <Pressable style={[styles.outlineBtn, { marginTop: space.lg }]} onPress={() => router.replace('/home')}>
@@ -242,7 +322,7 @@ export default function GameScreen() {
   if (game.status === 'lobby') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <Header title="Pixel Rush 🧩" onBack={handleLeave} />
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -306,7 +386,7 @@ export default function GameScreen() {
                 onPress={handleStart}
                 disabled={players.length < 2 || actionBusy}
               >
-                <GradientFill colors={players.length >= 2 ? gradients.button : [colors.surface, colors.surface]} />
+                <GradientFill colors={players.length >= 2 ? PR_BUTTON : [colors.surface, colors.surface]} />
                 {actionBusy
                   ? <ActivityIndicator color={colors.white} />
                   : <Text style={[styles.primaryBtnText, players.length < 2 && styles.disabledText]}>
@@ -338,7 +418,7 @@ export default function GameScreen() {
 
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <Header
             title={`Round ${roundNo}/${game.rounds_total}`}
@@ -351,9 +431,19 @@ export default function GameScreen() {
             <View style={styles.scoreRow}>
               {players.map((p) => (
                 <View key={p.id} style={[styles.scoreChip, p.user_id === myId && styles.scoreChipMe]}>
-                  <Text style={styles.scoreName} numberOfLines={1}>
-                    {p.user_id === myId ? 'You' : playerLabel(p)}
-                  </Text>
+                  <Avatar
+                    letter={playerLabel(p).charAt(0)}
+                    imageUrl={p.is_bot ? AV_POOL[seedFor(game?.id ?? p.id, 0) % AV_POOL.length] : p.profile?.avatar_url ?? null}
+                    size={32}
+                  />
+                  <View style={styles.scoreNameRow}>
+                    {!p.is_bot && p.user_id !== myId && (
+                      <View style={[styles.presenceDotSmall, { backgroundColor: isOnline(p.user_id) ? colors.success : colors.textFaint }]} />
+                    )}
+                    <Text style={styles.scoreName} numberOfLines={1}>
+                      {p.user_id === myId ? 'You' : playerLabel(p)}
+                    </Text>
+                  </View>
                   <Text style={styles.scoreValue}>{p.score}</Text>
                 </View>
               ))}
@@ -362,7 +452,7 @@ export default function GameScreen() {
             {/* Board or setup indicator */}
             {(!round || round.status === 'awaiting_image') ? (
               <View style={styles.setupRow}>
-                <ActivityIndicator color={colors.blue} />
+                <ActivityIndicator color={PR_ACCENT} />
                 <Text style={styles.setupText}>Setting up round…</Text>
               </View>
             ) : (
@@ -385,7 +475,7 @@ export default function GameScreen() {
                     ? `${winnerPlayer.user_id === myId ? 'You' : playerLabel(winnerPlayer)} won the round! 🎉`
                     : 'Round complete!'}
                 </Text>
-                <ActivityIndicator color={colors.blue} size="small" style={{ marginTop: 4 }} />
+                <ActivityIndicator color={PR_ACCENT} size="small" style={{ marginTop: 4 }} />
               </View>
             )}
           </ScrollView>
@@ -400,14 +490,14 @@ export default function GameScreen() {
 
   return (
     <View style={styles.root}>
-      <GradientFill colors={gradients.background} />
+      <GradientFill colors={PR_THEME} />
       <Confetti active={iWon} />
       <SafeAreaView style={styles.safe}>
         <Header title="Game over" onBack={() => router.replace('/home')} />
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
 
           <View style={styles.finishedCard}>
-            <GradientFill colors={iWon ? gradients.button : [colors.surface, colors.surfaceAlt]} />
+            <GradientFill colors={iWon ? PR_BUTTON : [colors.surface, colors.surfaceAlt]} />
             <Animated.Text entering={BounceIn.duration(700)} style={styles.finishedEmoji}>
               {iWon ? '🏆' : '🥈'}
             </Animated.Text>
@@ -432,7 +522,7 @@ export default function GameScreen() {
             onPress={hasBot ? () => router.replace('/games/pixel-rush') : handleRematch}
             disabled={actionBusy}
           >
-            <GradientFill colors={gradients.button} />
+            <GradientFill colors={PR_BUTTON} />
             {actionBusy
               ? <ActivityIndicator color={colors.white} />
               : <Text style={styles.primaryBtnText}>{hasBot ? 'Find another match' : 'Rematch'}</Text>
@@ -570,7 +660,7 @@ const styles = StyleSheet.create({
   codeText: {
     fontFamily: font.black,
     fontSize: 36,
-    color: colors.blue,
+    color: PR_ACCENT,
     letterSpacing: 6,
   },
   codeActionsRow: {
@@ -655,10 +745,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: space.md,
     alignItems: 'center',
-    gap: 2,
+    gap: 4,
     ...shadow.card,
   },
-  scoreChipMe: { borderWidth: 1.5, borderColor: colors.blue },
+  scoreChipMe: { borderWidth: 1.5, borderColor: PR_ACCENT },
+  scoreNameRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  presenceDotSmall: { width: 7, height: 7, borderRadius: 4 },
   scoreName: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted },
   scoreValue: { fontFamily: font.black, fontSize: 28, color: colors.text },
 

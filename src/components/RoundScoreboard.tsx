@@ -7,6 +7,7 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
+import { Avatar } from './ui/Avatar';
 import { colors, font, radius, shadow, space } from '../theme';
 
 type Difficulty = 'easy' | 'medium' | 'hard';
@@ -19,6 +20,8 @@ interface RoundScoreboardProps {
   nameA: string;
   nameB: string;
   difficulty: Difficulty;
+  avatarA?: string | null;
+  avatarB?: string | null;
 }
 
 const DIFFICULTY_CONFIG: Record<Difficulty, { label: string; color: string }> = {
@@ -27,7 +30,7 @@ const DIFFICULTY_CONFIG: Record<Difficulty, { label: string; color: string }> = 
   hard: { label: 'HARD', color: colors.danger },
 };
 
-function ScoreCell({ score, name, isWinning }: { score: number; name: string; isWinning: boolean }) {
+function ScoreCell({ score, name, avatar, isWinning }: { score: number; name: string; avatar?: string | null; isWinning: boolean }) {
   const scale = useSharedValue(1);
 
   useEffect(() => {
@@ -41,6 +44,7 @@ function ScoreCell({ score, name, isWinning }: { score: number; name: string; is
 
   return (
     <View style={styles.scoreCell}>
+      <Avatar letter={name.charAt(0)} imageUrl={avatar} size={32} />
       <Text style={styles.scoreName} numberOfLines={1}>{name}</Text>
       <Animated.Text style={[styles.scoreValue, isWinning && styles.scoreWinning, animStyle]}>
         {score}
@@ -57,6 +61,8 @@ export function RoundScoreboard({
   nameA,
   nameB,
   difficulty,
+  avatarA,
+  avatarB,
 }: RoundScoreboardProps) {
   const diff = DIFFICULTY_CONFIG[difficulty];
 
@@ -73,11 +79,11 @@ export function RoundScoreboard({
 
       {/* Score Row */}
       <View style={styles.scores}>
-        <ScoreCell score={scoreA} name={nameA} isWinning={scoreA > scoreB} />
+        <ScoreCell score={scoreA} name={nameA} avatar={avatarA} isWinning={scoreA > scoreB} />
         <View style={styles.vs}>
           <Text style={styles.vsText}>vs</Text>
         </View>
-        <ScoreCell score={scoreB} name={nameB} isWinning={scoreB > scoreA} />
+        <ScoreCell score={scoreB} name={nameB} avatar={avatarB} isWinning={scoreB > scoreA} />
       </View>
 
       {/* Round Progress Bar */}

@@ -18,8 +18,10 @@ import { colors, font, gradients, radius, shadow, space } from '../../theme';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Comment { id: string; username: string; text: string; }
-interface GuessEvent { username: string; guess: string; hint: 'higher' | 'lower' | 'correct'; }
+type Hint = 'higher' | 'lower' | 'correct' | 'hot' | 'warm' | 'cold';
+interface GuessEvent { username: string; guess: string; hint: Hint; }
 interface FloatingReaction { id: string; emoji: string; x: number; }
+interface ViewerPlayer { userId: string | null; name: string; }
 
 const QUICK_REACTIONS = ['❤️', '🔥', '😱', '👏'];
 
@@ -47,11 +49,14 @@ function FloatingEmoji({ emoji, x, onDone }: { emoji: string; x: number; onDone:
 }
 
 // ─── Hint chip ────────────────────────────────────────────────────────────────
-function HintChip({ hint }: { hint: 'higher' | 'lower' | 'correct' }) {
+function HintChip({ hint }: { hint: Hint }) {
   const cfg = {
     higher: { label: '↑', color: colors.blue },
     lower: { label: '↓', color: colors.danger },
     correct: { label: '✓', color: colors.success },
+    hot: { label: '🔥', color: colors.danger },
+    warm: { label: '😅', color: colors.warning },
+    cold: { label: '❄️', color: colors.blue },
   }[hint];
   return (
     <View style={[hintStyles.chip, { backgroundColor: cfg.color + '22' }]}>
@@ -65,17 +70,26 @@ const hintStyles = StyleSheet.create({
 });
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+// Number Duel's round-by-round play is P2P broadcast, not DB-driven (unlike
+// Pixel Rush), so there's no round/secret state to read from the database.
+// But host/guest identity and the running score ARE persisted to rooms.state
+// by the host at several points during play — that's the authoritative source
+// here, not reconstructed from broadcast events the viewer might join late and
+// miss. Only the live guess feed and secret reveals (never persisted, by
+// design) come from the same broadcast channel the two players use.
 export default function NumberDuelViewer() {
   const { roomCode } = useLocalSearchParams<{ roomCode: string }>();
   const router = useRouter();
   const { session } = useSession();
 
   const [viewerCount, setViewerCount] = useState(0);
-  const [playerA, setPlayerA] = useState({ name: 'Player 1', score: 0 });
-  const [playerB, setPlayerB] = useState({ name: 'Player 2', score: 0 });
+  const [host, setHost] = useState<ViewerPlayer>({ userId: null, name: 'Host' });
+  const [guest, setGuest] = useState<ViewerPlayer>({ userId: null, name: 'Opponent' });
+  const [hostScore, setHostScore] = useState(0);
+  const [guestScore, setGuestScore] = useState(0);
   const [round, setRound] = useState(1);
-  const [revealA, setRevealA] = useState<string | null>(null);
-  const [revealB, setRevealB] = useState<string | null>(null);
+  const [totalRounds, setTotalRounds] = useState(12);
+  const [reveals, setReveals] = useState<Record<string, string>>({}); // userId -> revealed secret
   const [guessEvents, setGuessEvents] = useState<GuessEvent[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
@@ -86,7 +100,63 @@ export default function NumberDuelViewer() {
 
   const username = (session?.user?.user_metadata?.username as string) ?? session?.user?.email ?? 'Viewer';
 
-  // ── Presence + channel ────────────────────────────────────────────────────
+  // ── Fetch real room + player identities ───────────────────────────────────
+  useEffect(() => {
+    if (!roomCode) return;
+    let active = true;
+    (async () => {
+      const { data: room } = await supabase
+        .from('rooms').select('id, host_id, state').eq('code', roomCode).maybeSingle();
+      if (!active || !room) return;
+
+      const { data: players } = await supabase
+        .from('room_players')
+        .select('user_id, display_name, profiles(username)')
+        .eq('room_id', room.id);
+      if (!active) return;
+
+      const hostRow = players?.find((p: any) => p.user_id === room.host_id);
+      const guestRow = players?.find((p: any) => p.user_id !== room.host_id);
+      setHost({
+        userId: room.host_id,
+        name: hostRow?.display_name || (hostRow?.profiles as any)?.username || 'Host',
+      });
+      setGuest({
+        userId: guestRow?.user_id ?? null,
+        name: guestRow?.display_name || (guestRow?.profiles as any)?.username || 'Opponent',
+      });
+
+      const state = room.state as { hostScore?: number; guestScore?: number; round?: number; rounds?: number } | null;
+      if (state) {
+        setHostScore(state.hostScore ?? 0);
+        setGuestScore(state.guestScore ?? 0);
+        setRound(state.round ?? 1);
+        setTotalRounds(state.rounds ?? 12);
+      }
+    })();
+    return () => { active = false; };
+  }, [roomCode]);
+
+  // ── Score/round: authoritative from rooms.state, not reconstructed from
+  // broadcast events a late-joining viewer could easily have missed ─────────
+  useEffect(() => {
+    if (!roomCode) return;
+    const ch = supabase
+      .channel(`nd_viewer_state_${roomCode}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` },
+        ({ new: row }: any) => {
+          const state = row?.state as { hostScore?: number; guestScore?: number; round?: number; rounds?: number } | undefined;
+          if (!state) return;
+          setHostScore(state.hostScore ?? 0);
+          setGuestScore(state.guestScore ?? 0);
+          setRound(state.round ?? 1);
+          if (state.rounds) setTotalRounds(state.rounds);
+        })
+      .subscribe();
+    return () => { void supabase.removeChannel(ch); };
+  }, [roomCode]);
+
+  // ── Presence + live social layer + secret reveals ─────────────────────────
   useEffect(() => {
     if (!roomCode || !session) return;
 
@@ -103,17 +173,22 @@ export default function NumberDuelViewer() {
       }, ...prev].slice(0, 30));
     });
 
-    // Secrets only revealed at round end
+    // round_end only ever carries the LOSER's secret (misleadingly named
+    // secretA in the game's own broadcast) plus who won; the winner's own
+    // secret arrives separately via winner_reveals_secret.
     ch.on('broadcast', { event: 'round_end' }, ({ payload }) => {
-      setRevealA(payload.secretA);
-      setRevealB(payload.secretB);
-      setRound(payload.nextRound ?? round + 1);
+      if (!payload.winnerUserId || payload.secretA == null) return; // e.g. a timeout round reveals nothing
+      const loserId = payload.winnerUserId === host.userId ? guest.userId : host.userId;
+      if (loserId) setReveals(prev => ({ ...prev, [loserId]: String(payload.secretA) }));
     });
 
-    ch.on('broadcast', { event: 'next_round' }, ({ payload }) => {
-      setRevealA(null);
-      setRevealB(null);
-      setRound(payload.round);
+    ch.on('broadcast', { event: 'winner_reveals_secret' }, ({ payload }) => {
+      if (!payload.userId || payload.secret == null) return;
+      setReveals(prev => ({ ...prev, [payload.userId]: String(payload.secret) }));
+    });
+
+    ch.on('broadcast', { event: 'next_round' }, () => {
+      setReveals({});
       setGuessEvents([]);
     });
 
@@ -147,7 +222,7 @@ export default function NumberDuelViewer() {
 
     channelRef.current = ch;
     return () => { supabase.removeChannel(ch); };
-  }, [roomCode, session]);
+  }, [roomCode, session, host.userId, guest.userId]);
 
   // ── Send comment ──────────────────────────────────────────────────────────
   const sendComment = () => {
@@ -204,27 +279,30 @@ export default function NumberDuelViewer() {
           {/* ── Player cards ── */}
           <View style={styles.playerCards}>
             {[
-              { player: playerA, reveal: revealA },
-              { player: playerB, reveal: revealB },
-            ].map(({ player, reveal }, i) => (
-              <View key={i} style={styles.playerCard}>
-                <Text style={styles.playerCardName} numberOfLines={1}>{player.name}</Text>
-                <Text style={styles.playerCardScore}>{player.score}</Text>
-                {/* Secret: only shown after round ends */}
-                <View style={styles.secretBox}>
-                  <Text style={styles.secretBoxLabel}>SECRET</Text>
-                  <Text style={[styles.secretBoxValue, !reveal && { color: colors.textFaint }]}>
-                    {reveal ?? '???'}
-                  </Text>
+              { player: host, score: hostScore },
+              { player: guest, score: guestScore },
+            ].map(({ player, score }, i) => {
+              const reveal = player.userId ? reveals[player.userId] : undefined;
+              return (
+                <View key={i} style={styles.playerCard}>
+                  <Text style={styles.playerCardName} numberOfLines={1}>{player.name}</Text>
+                  <Text style={styles.playerCardScore}>{score}</Text>
+                  {/* Secret: only shown after round ends */}
+                  <View style={styles.secretBox}>
+                    <Text style={styles.secretBoxLabel}>SECRET</Text>
+                    <Text style={[styles.secretBoxValue, !reveal && { color: colors.textFaint }]}>
+                      {reveal ?? '???'}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            ))}
+              );
+            })}
           </View>
 
           {/* ── Round indicator ── */}
           <View style={styles.roundRow}>
-            <Text style={styles.roundText}>Round {round} of 12</Text>
-            {revealA && <Text style={styles.revealNote}>Round ended — secrets revealed!</Text>}
+            <Text style={styles.roundText}>Round {round} of {totalRounds}</Text>
+            {Object.keys(reveals).length > 0 && <Text style={styles.revealNote}>Round ended — secrets revealed!</Text>}
           </View>
 
           {/* ── Live guess feed ── */}

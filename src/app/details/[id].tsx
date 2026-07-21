@@ -14,7 +14,7 @@
 //   group  → $2 premium, not wired up yet (payment is a later stage)
 //   join   → shared JoinModal (already tries join_game then join_room, so
 //            it works for every game's schema without branching here)
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, Dimensions, Pressable, ScrollView,
   StyleSheet, Text, View,
@@ -70,7 +70,7 @@ const MODES_BY_GAME: Record<string, ModeDef[]> = {
   ],
   'number-duel': [
     { key: 'online', icon: 'globe',     title: 'Play Online',    sub: 'Match with anyone',      cta: 'Play',     price: 'Free' },
-    { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Set the rules & invite', cta: 'Invite',  price: 'Free' },
+    { key: 'invite', icon: 'user-plus', title: 'Invite a Friend', sub: 'Invite',                 cta: 'Invite',  price: 'Free' },
     { key: 'group',  icon: 'users',     title: 'Group',          sub: 'Up to 8 players',        cta: 'Create',   price: '$2' },
     { key: 'join',   icon: 'sign-in',   title: 'Join a Game',    sub: 'Enter an invite code',   cta: 'Join now', price: 'Free' },
   ],
@@ -99,6 +99,10 @@ export default function GameDetail() {
   const [mode, setMode] = useState<Mode>('online');
   const [joinVisible, setJoinVisible] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Double-tapping the CTA pushed the target screen twice — two stacked
+  // matchmaking screens each created a lobby and armed a bot-fallback timer,
+  // and the buried one could later hijack navigation out of the live match.
+  const navLockRef = useRef(0);
 
   if (!game) {
     return (
@@ -132,7 +136,12 @@ export default function GameDetail() {
 
   const handleCta = () => {
     if (busy) return;
+    const now = Date.now();
+    if (now - navLockRef.current < 1000) return;
     if (mode === 'online') {
+      navLockRef.current = now;   // only navigation branches arm the lock —
+      // the group alert / join modal don't navigate, and arming there
+      // swallowed a legitimate CTA tap made right after dismissing them.
       // Draughts and Number Duel matchmake straight into a live match (or a
       // bot after a short wait) with default rules — same "Play Online"
       // pattern for both. Custom rules live under "Invite a Friend" instead.
@@ -142,7 +151,12 @@ export default function GameDetail() {
       return;
     }
     if (mode === 'invite') {
+      navLockRef.current = now;
       if (game.route) { playSimple(); return; }  // has its own invite flow already
+      // Number Duel: let the host configure difficulty + rounds first, then
+      // create the room from the setup screen (was creating instantly with
+      // default rules, so "these rules were chosen by the host" was a lie).
+      if (game.id === 'number-duel') { router.push('/setup/number-duel' as any); return; }
       createRoom();
       return;
     }
@@ -150,9 +164,21 @@ export default function GameDetail() {
     if (mode === 'join') { setJoinVisible(true); return; }
   };
 
+  // Whole-page background in the game's dark tone (Number Duel's red-brown),
+  // not the shared navy. cardBg is the per-game dark card palette.
+  const cardBg = (game.cardBg as string[]);
+  const pageBgDark = cardBg[cardBg.length - 1];
+  const pageBg: [string, string] = [cardBg[0], pageBgDark];
+
   return (
-    <View style={styles.root}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 130 }}>
+    <View style={[styles.root, { backgroundColor: pageBgDark }]}>
+      <GradientFill colors={pageBg} />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 170 }}
+        bounces={false}
+        overScrollMode="never"
+      >
         {/* Hero */}
         <View style={styles.hero}>
           <GradientFill colors={game.theme} />
@@ -234,7 +260,7 @@ export default function GameDetail() {
       </ScrollView>
 
       {/* Bottom bar — reflects the selected mode */}
-      <View style={styles.bottomBar}>
+      <View style={[styles.bottomBar, { backgroundColor: pageBgDark }]}>
         <View>
           <Text style={styles.priceLabel}>{selected ? selected.title.toUpperCase() : 'PRICE'}</Text>
           <Text style={styles.price}>{selected ? selected.price : 'Free'}</Text>
@@ -285,7 +311,7 @@ const styles = StyleSheet.create({
   chipSub: { fontFamily: font.semibold, fontSize: 11, color: colors.textMuted, marginTop: 1 },
   chipPrice: { fontFamily: font.extrabold, fontSize: 13 },
 
-  bottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: 34, backgroundColor: colors.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: colors.hairline },
+  bottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: 34, backgroundColor: colors.surfaceSolid, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: colors.hairline },
   priceLabel: { fontFamily: font.bold, fontSize: 10, color: colors.textFaint, letterSpacing: 1.5 },
   price: { fontFamily: font.extrabold, fontSize: 22, color: colors.text },
   cta: { borderRadius: radius.lg, overflow: 'hidden', ...shadow.blueGlow, minWidth: 160 },

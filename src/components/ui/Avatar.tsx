@@ -7,6 +7,7 @@
  *
  * Design-system compliant: all values come from theme.ts.
  */
+import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { colors, font, shadow } from '../../theme';
@@ -27,6 +28,8 @@ export function Avatar({ letter, imageUrl, size = 40, showOnline = false }: Avat
   const innerSize = size - 4;
   const innerRadius = innerSize / 2;
   const dotSize = Math.max(10, Math.round(size * 0.26));
+  // A 404ing avatar URL rendered an empty circle; fall back to the initial.
+  const [imgFailed, setImgFailed] = useState(false);
 
   return (
     <View
@@ -42,12 +45,13 @@ export function Avatar({ letter, imageUrl, size = 40, showOnline = false }: Avat
           { width: innerSize, height: innerSize, borderRadius: innerRadius },
         ]}
       >
-        {imageUrl ? (
+        {imageUrl && !imgFailed ? (
           <Image
             source={{ uri: imageUrl }}
             style={{ width: innerSize, height: innerSize, borderRadius: innerRadius }}
             contentFit="cover"
             transition={200}
+            onError={() => setImgFailed(true)}
           />
         ) : (
           <Text style={[styles.letter, { fontSize: Math.max(11, Math.round(size * 0.38)) }]}>

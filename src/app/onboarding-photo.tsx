@@ -42,18 +42,22 @@ export default function OnboardingPhoto() {
 
   const pickImage = async () => {
     setErrorMsg('');
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      setErrorMsg('Photo access was denied — enable it in Settings, or skip for now.');
-      return;
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        setErrorMsg('Photo access was denied — enable it in Settings, or skip for now.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets[0]?.uri) setLocalUri(result.assets[0].uri);
+    } catch (e: any) {
+      setErrorMsg(e?.message ?? "Couldn't open your photo library. Please try again.");
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.7,
-    });
-    if (!result.canceled && result.assets[0]?.uri) setLocalUri(result.assets[0].uri);
   };
 
   // finalUrl: what to store. A freshly-picked local image is uploaded first;
@@ -165,7 +169,7 @@ const styles = StyleSheet.create({
   chooseText: { fontFamily: font.bold, fontSize: 15, color: colors.blue },
 
   errorBox: {
-    backgroundColor: 'rgba(239,68,68,0.10)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.30)',
+    backgroundColor: 'rgba(248,113,113,0.10)', borderWidth: 1, borderColor: 'rgba(248,113,113,0.30)', // colors.danger tint
     borderRadius: radius.sm, padding: space.md,
   },
   errorText: { fontFamily: font.semibold, fontSize: 14, color: colors.danger, textAlign: 'center' },

@@ -43,6 +43,12 @@ export async function signInWithGoogle() {
     null;
   if (!idToken) throw new Error('Google did not return an ID token.');
 
+  if (!ANON_KEY) {
+    // Without this check, a missing env var silently sent a literal
+    // "Bearer undefined" header instead of failing with a readable error.
+    throw new Error('Missing EXPO_PUBLIC_SUPABASE_ANON_KEY — cannot verify Google sign-in.');
+  }
+
   const res = await fetch(EDGE_URL, {
     method: 'POST',
     headers: {

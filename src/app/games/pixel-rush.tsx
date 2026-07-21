@@ -14,11 +14,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
-import { goBackOr } from '../../lib/navigation';
+import { useGoBackOr } from '../../lib/navigation';
 import { playSound } from '../../lib/sounds';
 import { supabase } from '../../lib/supabase';
 import {
   cancelPixelRushMatch,
+  concedeGame,
   createBotMatch,
   createPixelRushGame,
   joinGame,
@@ -32,9 +33,14 @@ type Screen = 'menu' | 'mode' | 'group-size' | 'onevone' | 'searching';
 const SEARCH_SECONDS = 30;
 const MIN_GROUP = 3;
 const MAX_GROUP = 8;
+// Pixel Rush's own colours (match the game icon) instead of the shared blue.
+const PR_THEME = ['#2C6079', '#0E2530'] as [string, string];   // page background
+const PR_BUTTON = ['#3B7A96', '#245A73'] as [string, string];  // CTA gradient
+const PR_ACCENT = '#5E9BC2';                                   // highlights / accents
 
 export default function PixelRushScreen() {
   const router = useRouter();
+  const goBack = useGoBackOr('/home');
   const me = useMyVersusProfile();
   const [screen, setScreen] = useState<Screen>('menu');
   const [joinCode, setJoinCode] = useState('');
@@ -51,16 +57,26 @@ export default function PixelRushScreen() {
   // wait for a postgres_changes update or the bot-fallback timeout, whichever
   // comes first. resolvedRef stops both from acting if they land at once.
   const matchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const botRevealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const matchChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const matchGameIdRef = useRef<string | null>(null);
+  const botGameIdRef = useRef<string | null>(null);
   const resolvedRef = useRef(false);
 
   function stopWaiting() {
     if (matchTimeoutRef.current) { clearTimeout(matchTimeoutRef.current); matchTimeoutRef.current = null; }
+    if (botRevealTimeoutRef.current) { clearTimeout(botRevealTimeoutRef.current); botRevealTimeoutRef.current = null; }
     if (matchChannelRef.current) { void supabase.removeChannel(matchChannelRef.current); matchChannelRef.current = null; }
   }
 
-  useEffect(() => stopWaiting, []);
+  useEffect(() => () => {
+    stopWaiting();
+    // Hardware back / swipe unmounts without the Cancel button: clean up the
+    // matchable lobby (else a stranger pairs into a hostless game for 40s)
+    // and any bot game created mid-reveal (else it ghosts the LIVE list).
+    if (!resolvedRef.current && matchGameIdRef.current) cancelPixelRushMatch(matchGameIdRef.current).catch(() => {});
+    if (!resolvedRef.current && botGameIdRef.current) concedeGame(botGameIdRef.current).catch(() => {});
+  }, []);
 
   async function handleCreateGroup() {
     playSound('click');
@@ -131,18 +147,44 @@ export default function PixelRushScreen() {
       .channel(`pixelrush_match_${gameId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
         ({ new: row }: any) => { if (row?.status === 'active') resolveMatch(code); })
-      .subscribe();
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          // An opponent can pair into this game in the gap BEFORE the
+          // subscription went live — that UPDATE is never delivered and they
+          // end up stranded against an empty seat. Re-check once now.
+          const { data } = await supabase.from('games').select('status').eq('id', gameId).maybeSingle();
+          if (data?.status === 'active') resolveMatch(code);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          // The bot-fallback timeout is still the safety net either way — this
+          // just makes a flaky realtime connection visible instead of silent.
+          console.warn('[pixel-rush matchmaking] realtime subscribe failed:', status);
+        }
+      });
 
     matchTimeoutRef.current = setTimeout(async () => {
       if (resolvedRef.current) return;
       stopWaiting();
       try {
         await cancelPixelRushMatch(gameId);
+        // cancel only deletes games still in 'lobby' — if an opponent flipped
+        // this one 'active' at the same instant, we're already matched; join
+        // THEM instead of leaving them stranded and playing a bot.
+        const { data: g } = await supabase.from('games').select('status').eq('id', gameId).maybeSingle();
         if (resolvedRef.current) return;
+        if (g?.status === 'active') { resolveMatch(code); return; }
         const bot = await createBotMatch('pixel_rush');
-        if (resolvedRef.current) return;
+        // Record BEFORE the resolved check: if the user cancelled while the
+        // RPC was in flight, the game already exists — without the id there
+        // is nothing to clean up and the 'active' bot game haunts the LIVE
+        // list forever.
+        botGameIdRef.current = bot.id;
+        if (resolvedRef.current) {
+          concedeGame(bot.id).catch(() => {});
+          botGameIdRef.current = null;
+          return;
+        }
         setBotOpp(randomBotOpponent());   // freeze the flashing photo on this identity
-        setTimeout(() => resolveMatch(bot.invite_code), 1200);
+        botRevealTimeoutRef.current = setTimeout(() => resolveMatch(bot.invite_code), 1200);
       } catch (e) {
         setErr((e as Error).message);
         setScreen('onevone');
@@ -152,9 +194,16 @@ export default function PixelRushScreen() {
 
   function cancelSearching() {
     const gameId = matchGameIdRef.current;
+    const botGameId = botGameIdRef.current;
     resolvedRef.current = true;
     stopWaiting();
     if (gameId) cancelPixelRushMatch(gameId).catch(() => {});
+    // Cancelling during the 1.2s bot reveal: the bot game already exists and
+    // is 'active'. CONCEDE it (bot wins, game finished) — leave_game never
+    // finishes a game while the bot row remains, so leaving left a ghost
+    // "live room" behind forever.
+    if (botGameId) { concedeGame(botGameId).catch(() => {}); botGameIdRef.current = null; }
+    setBotOpp(null);
     setScreen('onevone');
   }
 
@@ -179,7 +228,7 @@ export default function PixelRushScreen() {
   if (screen === 'mode') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <View style={styles.topBar}>
             <Pressable
@@ -211,7 +260,7 @@ export default function PixelRushScreen() {
               style={({ pressed }) => [styles.modeCard, styles.modeCardBlue, pressed && styles.pressed]}
               onPress={() => setScreen('onevone')}
             >
-              <GradientFill colors={gradients.button} />
+              <GradientFill colors={PR_BUTTON} />
               <View style={styles.modeCardInner}>
                 <View style={styles.modeText}>
                   <Text style={[styles.modeTitle, styles.modeTitleWhite]}>Continue (1v1)</Text>
@@ -233,7 +282,7 @@ export default function PixelRushScreen() {
   if (screen === 'group-size') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <View style={styles.topBar}>
             <Pressable
@@ -275,7 +324,7 @@ export default function PixelRushScreen() {
               onPress={handleCreateGroup}
               disabled={busy}
             >
-              <GradientFill colors={gradients.button} />
+              <GradientFill colors={PR_BUTTON} />
               {busy
                 ? <ActivityIndicator color={colors.white} />
                 : <Text style={styles.primaryBtnText}>Create group →</Text>}
@@ -293,7 +342,7 @@ export default function PixelRushScreen() {
   if (screen === 'onevone') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={styles.safe}>
           <View style={styles.topBar}>
             <Pressable
@@ -321,7 +370,7 @@ export default function PixelRushScreen() {
                 <Switch
                   value={anyoneCanJoin}
                   onValueChange={setAnyoneCanJoin}
-                  trackColor={{ false: colors.hairline, true: colors.blue }}
+                  trackColor={{ false: colors.hairline, true: PR_ACCENT }}
                   thumbColor={colors.white}
                 />
               </View>
@@ -332,7 +381,7 @@ export default function PixelRushScreen() {
               onPress={handleContinueOneVOne}
               disabled={busy}
             >
-              <GradientFill colors={gradients.button} />
+              <GradientFill colors={PR_BUTTON} />
               {busy
                 ? <ActivityIndicator color={colors.white} />
                 : <Text style={styles.primaryBtnText}>Continue →</Text>}
@@ -350,9 +399,9 @@ export default function PixelRushScreen() {
   if (screen === 'searching') {
     return (
       <View style={styles.root}>
-        <GradientFill colors={gradients.background} />
+        <GradientFill colors={PR_THEME} />
         <SafeAreaView style={[styles.safe, { justifyContent: 'center' }]}>
-          <VersusSearch accent={colors.blue} me={me} matched={botOpp} onCancel={cancelSearching} />
+          <VersusSearch accent={PR_ACCENT} me={me} matched={botOpp} onCancel={cancelSearching} />
         </SafeAreaView>
       </View>
     );
@@ -362,12 +411,12 @@ export default function PixelRushScreen() {
 
   return (
     <View style={styles.root}>
-      <GradientFill colors={gradients.background} />
+      <GradientFill colors={PR_THEME} />
       <SafeAreaView style={styles.safe}>
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            onPress={() => goBackOr(router, '/home')}
+            onPress={goBack}
           >
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
@@ -392,7 +441,7 @@ export default function PixelRushScreen() {
             style={({ pressed }) => [styles.modeCard, styles.modeCardBlue, pressed && styles.pressed]}
             onPress={() => { setErr(''); setScreen('mode'); }}
           >
-            <GradientFill colors={gradients.button} />
+            <GradientFill colors={PR_BUTTON} />
             <View style={styles.modeCardInner}>
               <View style={styles.modeText}>
                 <Text style={[styles.modeTitle, styles.modeTitleWhite]}>Play Multiplayer</Text>
@@ -496,7 +545,7 @@ const styles = StyleSheet.create({
   },
   rulesTitle: { fontFamily: font.extrabold, fontSize: 16, color: colors.text, marginBottom: 2 },
   ruleRow: { flexDirection: 'row' },
-  ruleNum: { fontFamily: font.extrabold, fontSize: 14, color: colors.blue },
+  ruleNum: { fontFamily: font.extrabold, fontSize: 14, color: PR_ACCENT },
   ruleText: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted, flex: 1, lineHeight: 20 },
 
   modeCard: {
@@ -538,7 +587,7 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   joinBtn: {
-    backgroundColor: colors.blue,
+    backgroundColor: PR_ACCENT,
     borderRadius: radius.md,
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
@@ -576,7 +625,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stepperBtnText: { fontFamily: font.extrabold, fontSize: 22, color: colors.text },
-  stepperValue: { fontFamily: font.black, fontSize: 40, color: colors.blue, minWidth: 60, textAlign: 'center' },
+  stepperValue: { fontFamily: font.black, fontSize: 40, color: PR_ACCENT, minWidth: 60, textAlign: 'center' },
   stepperHint: { fontFamily: font.semibold, fontSize: 12, color: colors.textFaint },
 
   // ── 1v1 toggle

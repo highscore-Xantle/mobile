@@ -138,6 +138,7 @@ export function CommentSheet({
   const inputRef = useRef<TextInput>(null);
   const [text, setText] = useState('');
   const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const { comments, loading, submitting, error, addComment } = useComments(
     visible ? postId : null,
@@ -161,9 +162,17 @@ export function CommentSheet({
     if (!trimmed || submitting) return;
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSubmitError(null);
     const parentId = replyTarget?.id ?? null;
+    // addComment's own `error` state only ever surfaces via the empty-list
+    // view, so a post that already has comments showed zero feedback on a
+    // failed submit — the comment just silently vanished. Check the return
+    // value directly instead and show it regardless of list length.
+    // Clear the input only AFTER success: clearing first destroyed the
+    // user's typed comment on a failed submit.
+    const err = await addComment(trimmed, parentId, currentUserId, currentUsername, currentAvatarUrl);
+    if (err) { setSubmitError(err); return; }
     clearReply();
-    await addComment(trimmed, parentId, currentUserId, currentUsername, currentAvatarUrl);
   }, [text, submitting, replyTarget, addComment, currentUserId, currentUsername, currentAvatarUrl, clearReply]);
 
   // ── Empty / error states ─────────────────────────────────────────────────────
@@ -245,6 +254,16 @@ export function CommentSheet({
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             />
+          )}
+
+          {/* Submit-error banner — shown regardless of list length */}
+          {submitError && (
+            <View style={styles.submitErrorBanner}>
+              <Text style={styles.submitErrorText}>{submitError}</Text>
+              <Pressable onPress={() => setSubmitError(null)} accessibilityLabel="Dismiss error">
+                <FontAwesome name="times-circle" size={16} color={colors.danger} />
+              </Pressable>
+            </View>
           )}
 
           {/* Reply banner */}
@@ -424,6 +443,21 @@ const styles = StyleSheet.create({
   },
   replyBannerText: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted },
   replyBannerName: { fontFamily: font.bold, color: colors.blue },
+
+  // Submit-error banner
+  submitErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(248,113,113,0.10)',
+    borderRadius: radius.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    marginBottom: space.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.30)',
+  },
+  submitErrorText: { flex: 1, fontFamily: font.semibold, fontSize: 12, color: colors.danger },
 
   // Input row
   inputRow: {

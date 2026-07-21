@@ -45,3 +45,6 @@ example
 
 # Supabase CLI local artifacts
 supabase/.temp/
+
+# Local Netlify folder
+.netlify

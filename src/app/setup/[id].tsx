@@ -9,6 +9,10 @@ import { colors, font, gradients, radius, shadow, space } from '../../theme';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
 import { JoinModal } from '../../components/JoinModal';
+import { GAMES } from '../(tabs)/games';
+
+const MIN_ROUNDS = 5;
+const MAX_ROUNDS = 15;
 
 const GAME_RULES: Record<string, { title: string; desc: string }> = {
   'number-duel': {
@@ -28,12 +32,17 @@ export default function GameSetup() {
   const [creating, setCreating] = useState(false);
   const [joinVisible, setJoinVisible] = useState(false);
   const [settings, setSettings] = useState({
-    rounds: 12,
-    difficulty: 'auto', // 'auto', 'easy', 'hardcore'
-    mode: 'classic',    // 'classic', 'time_attack', 'blind_duel'
+    rounds: MIN_ROUNDS,
+    difficulty: 'easy',  // 'easy' = whole numbers, 'hard' = decimals
+    mode: 'classic',     // 'classic', 'time_attack', 'blind_duel'
   });
 
   const rules = GAME_RULES[id!] || { title: 'Unknown Game', desc: 'Configure your room.' };
+  // Theme the screen to the game (Number Duel's warm red-brown, not the
+  // shared dark blue). Falls back to the app defaults for unknown games.
+  const game = GAMES.find((g) => g.id === id);
+  const theme = (game?.theme ?? gradients.background) as [string, string];
+  const accent = game?.accent ?? colors.blue;
 
   const handleCreateRoom = async () => {
     if (creating) return;
@@ -66,7 +75,7 @@ export default function GameSetup() {
 
   return (
     <View style={styles.root}>
-      <GradientFill colors={gradients.background} />
+      <GradientFill colors={theme} />
       <JoinModal visible={joinVisible} onClose={() => setJoinVisible(false)} />
       <SafeAreaView style={styles.safe}>
 
@@ -111,31 +120,15 @@ export default function GameSetup() {
               {settings.mode === 'blind_duel' && <Text style={styles.settingNote}>No higher/lower hints. Only Hot/Warm/Cold.</Text>}
             </View>
 
-            {/* Rounds */}
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Rounds</Text>
-              <View style={styles.segmentedControl}>
-                {[3, 5, 12].map((r) => (
-                  <Pressable 
-                    key={r} 
-                    onPress={() => updateSetting('rounds', r)}
-                    style={[styles.segment, settings.rounds === r && styles.segmentActive]}
-                  >
-                    <Text style={[styles.segmentText, settings.rounds === r && styles.segmentTextActive]}>{r}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
             {/* Difficulty */}
             <View style={styles.settingRow}>
               <Text style={styles.settingLabel}>Difficulty</Text>
               <View style={styles.segmentedControl}>
-                {['auto', 'easy', 'hardcore'].map((d) => (
-                  <Pressable 
-                    key={d} 
+                {['easy', 'hard'].map((d) => (
+                  <Pressable
+                    key={d}
                     onPress={() => updateSetting('difficulty', d)}
-                    style={[styles.segment, settings.difficulty === d && styles.segmentActive]}
+                    style={[styles.segment, settings.difficulty === d && [styles.segmentActive, { borderColor: accent, borderWidth: 1.5 }]]}
                   >
                     <Text style={[styles.segmentText, settings.difficulty === d && styles.segmentTextActive]}>
                       {d.charAt(0).toUpperCase() + d.slice(1)}
@@ -143,8 +136,32 @@ export default function GameSetup() {
                   </Pressable>
                 ))}
               </View>
-              {settings.difficulty === 'auto' && <Text style={styles.settingNote}>Starts easy, decimals get added later.</Text>}
-              {settings.difficulty === 'hardcore' && <Text style={styles.settingNote}>2 decimals required immediately.</Text>}
+              <Text style={[styles.settingNote, { color: accent }]}>
+                {settings.difficulty === 'easy' ? 'Whole numbers (0–100).' : 'Decimals allowed (e.g. 42.5).'}
+              </Text>
+            </View>
+
+            {/* Rounds */}
+            <View style={styles.settingRow}>
+              <Text style={styles.settingLabel}>Rounds</Text>
+              <View style={styles.stepper}>
+                <Pressable
+                  style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed, settings.rounds <= MIN_ROUNDS && styles.stepBtnDisabled]}
+                  disabled={settings.rounds <= MIN_ROUNDS}
+                  onPress={() => updateSetting('rounds', Math.max(MIN_ROUNDS, settings.rounds - 1))}
+                >
+                  <Text style={styles.stepBtnText}>−</Text>
+                </Pressable>
+                <Text style={styles.stepValue}>{settings.rounds}</Text>
+                <Pressable
+                  style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed, settings.rounds >= MAX_ROUNDS && styles.stepBtnDisabled]}
+                  disabled={settings.rounds >= MAX_ROUNDS}
+                  onPress={() => updateSetting('rounds', Math.min(MAX_ROUNDS, settings.rounds + 1))}
+                >
+                  <Text style={styles.stepBtnText}>+</Text>
+                </Pressable>
+              </View>
+              <Text style={[styles.settingNote, { color: accent }]}>Best of {settings.rounds} — first to {Math.ceil((settings.rounds + 1) / 2)} wins.</Text>
             </View>
           </View>
           )}
@@ -157,7 +174,7 @@ export default function GameSetup() {
             onPress={handleCreateRoom}
             disabled={creating}
           >
-            <GradientFill colors={gradients.button} />
+            <GradientFill colors={theme} />
             {creating ? (
               <ActivityIndicator color={colors.white} style={{ paddingVertical: 18 }} />
             ) : (
@@ -200,6 +217,11 @@ const styles = StyleSheet.create({
   segmentActive: { backgroundColor: colors.surface, ...shadow.card },
   segmentText: { fontFamily: font.semibold, fontSize: 13, color: colors.textFaint },
   segmentTextActive: { color: colors.text, fontFamily: font.bold },
+  stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.xl, backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingVertical: space.sm },
+  stepBtn: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', ...shadow.card },
+  stepBtnDisabled: { opacity: 0.4 },
+  stepBtnText: { fontFamily: font.black, fontSize: 24, color: colors.text, lineHeight: 26 },
+  stepValue: { fontFamily: font.display, fontSize: 32, color: colors.text, minWidth: 48, textAlign: 'center' },
   footer: { padding: space.lg, paddingTop: 0, paddingBottom: space.xl, gap: space.sm },
   cta: { borderRadius: radius.xl, overflow: 'hidden', ...shadow.blueGlow },
   ctaDisabled: { opacity: 0.7 },

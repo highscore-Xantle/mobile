@@ -57,41 +57,52 @@ export function useWinsFeed(currentUserId: string | undefined) {
     error: null,
   });
 
-  // Cursor: ISO timestamp of the oldest post currently loaded.
-  const cursorRef = useRef<string | null>(null);
+  // Cursor: (created_at, id) of the oldest post currently loaded. Both fields
+  // are needed — created_at alone silently drops every row that ties with the
+  // cursor value (plausible for bulk-inserted/same-transaction rows) since a
+  // strict `lt` excludes all of them, not just the ones already seen.
+  const cursorRef = useRef<{ createdAt: string; id: string } | null>(null);
   // Guard against concurrent pagination calls.
   const fetchingRef = useRef(false);
 
   // ── Core fetch ──────────────────────────────────────────────────────────────
+  // A refresh requested while a pagination fetch is in flight used to no-op
+  // silently (spinner cleared, stale content kept); queue it instead.
+  const pendingRefreshRef = useRef(false);
+
   const fetchPage = useCallback(
-    async (opts: { cursor: string | null; replace: boolean }) => {
-      if (fetchingRef.current) return;
+    async (opts: { cursor: { createdAt: string; id: string } | null; replace: boolean }) => {
+      if (fetchingRef.current) {
+        if (opts.replace) pendingRefreshRef.current = true;
+        return;
+      }
       fetchingRef.current = true;
 
       try {
         let query = supabase
           .from('posts')
-          .select(
-            `
-              id,
-              user_id,
-              game_type,
-              match_id,
-              result_text,
-              media_url,
-              created_at,
-              profiles:user_id ( username ),
-              post_likes ( user_id ),
-              post_comments ( id )
-            `,
-            // TODO(samuel): restore avatar_url in profiles select once the
-            // profiles.avatar_url column + Cloudinary migration has landed.
-          )
+          .select(`
+            id,
+            user_id,
+            game_type,
+            match_id,
+            result_text,
+            media_url,
+            created_at,
+            profiles:user_id ( username, avatar_url ),
+            post_likes ( user_id ),
+            post_comments ( id )
+          `)
           .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
           .limit(PAGE_SIZE);
 
         if (opts.cursor) {
-          query = query.lt('created_at', opts.cursor);
+          // created_at alone would drop every row tied with the cursor value;
+          // id is the tiebreaker, matching the ORDER BY above exactly.
+          query = query.or(
+            `created_at.lt.${opts.cursor.createdAt},and(created_at.eq.${opts.cursor.createdAt},id.lt.${opts.cursor.id})`,
+          );
         }
 
         const { data, error } = await query;
@@ -110,7 +121,7 @@ export function useWinsFeed(currentUserId: string | undefined) {
           created_at: r.created_at,
           author: {
             username: r.profiles?.username ?? null,
-            avatar_url: null, // TODO(samuel): r.profiles?.avatar_url ?? null
+            avatar_url: r.profiles?.avatar_url ?? null,
           },
           like_count: (r.post_likes ?? []).length,
           comment_count: (r.post_comments ?? []).length,
@@ -119,8 +130,8 @@ export function useWinsFeed(currentUserId: string | undefined) {
             : false,
         }));
 
-        const newCursor = mapped.length > 0 ? mapped[mapped.length - 1].created_at : null;
-        if (newCursor) cursorRef.current = newCursor;
+        const last = mapped.length > 0 ? mapped[mapped.length - 1] : null;
+        if (last) cursorRef.current = { createdAt: last.created_at, id: last.id };
 
         setState((prev) => ({
           ...prev,
@@ -139,6 +150,12 @@ export function useWinsFeed(currentUserId: string | undefined) {
         }));
       } finally {
         fetchingRef.current = false;
+        if (pendingRefreshRef.current) {
+          pendingRefreshRef.current = false;
+          cursorRef.current = null;
+          // Run the queued refresh now that the in-flight fetch settled.
+          fetchPage({ cursor: null, replace: true });
+        }
       }
     },
     [currentUserId],
@@ -172,35 +189,36 @@ export function useWinsFeed(currentUserId: string | undefined) {
    */
   const mutateLike = useCallback(
     async (postId: string): Promise<string | null> => {
-      // 1. Snapshot before mutation for rollback.
-      const snapshot = [...state.posts];
+      const flip = (p: WinPost): WinPost => ({
+        ...p,
+        viewer_has_liked: !p.viewer_has_liked,
+        like_count: p.viewer_has_liked ? p.like_count - 1 : p.like_count + 1,
+      });
 
-      // 2. Optimistic update.
+      // Optimistic update.
       setState((prev) => ({
         ...prev,
-        posts: prev.posts.map((p) =>
-          p.id === postId
-            ? {
-                ...p,
-                viewer_has_liked: !p.viewer_has_liked,
-                like_count: p.viewer_has_liked ? p.like_count - 1 : p.like_count + 1,
-              }
-            : p,
-        ),
+        posts: prev.posts.map((p) => (p.id === postId ? flip(p) : p)),
       }));
 
-      // 3. Server call.
+      // Server call. Rollback is TARGETED — re-flipping just this post.
+      // Restoring a whole-array snapshot silently discarded anything that
+      // happened while the RPC was in flight (pages appended by pagination,
+      // other optimistic likes), and left the cursor pointing past the
+      // dropped rows.
       try {
         const { error } = await supabase.rpc('toggle_like', { p_post_id: postId });
         if (error) throw error;
         return null;
       } catch (err: any) {
-        // 4. Rollback.
-        setState((prev) => ({ ...prev, posts: snapshot }));
+        setState((prev) => ({
+          ...prev,
+          posts: prev.posts.map((p) => (p.id === postId ? flip(p) : p)),
+        }));
         return err?.message ?? 'Failed to update like.';
       }
     },
-    [state.posts],
+    [],
   );
 
   return {

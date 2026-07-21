@@ -1,4 +1,3 @@
-import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,14 +12,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientFill } from '../../components/GradientFill';
-import { goBackOr } from '../../lib/navigation';
+import { useGoBackOr } from '../../lib/navigation';
 import { supabase } from '../../lib/supabase';
 import { colors, font, gradients, radius, shadow, space, text as themeText } from '../../theme';
 
 const MIN_LEN = 8;
 
 export default function ChangePassword() {
-  const router = useRouter();
+  const goBack = useGoBackOr('/settings');
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -43,7 +42,7 @@ export default function ChangePassword() {
     }
 
     Alert.alert('Password updated');
-    goBackOr(router, '/settings');
+    goBack();
   };
 
   return (
@@ -53,7 +52,7 @@ export default function ChangePassword() {
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-            onPress={() => goBackOr(router, '/settings')}
+            onPress={goBack}
           >
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
@@ -167,9 +166,9 @@ const styles = StyleSheet.create({
   },
 
   errorBox: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: 'rgba(248, 113, 113, 0.1)', // colors.danger tint
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderColor: 'rgba(248, 113, 113, 0.3)',
     borderRadius: radius.sm,
     padding: space.md,
     marginBottom: space.md,

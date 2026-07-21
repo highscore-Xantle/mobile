@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { playSound } from '../lib/sounds';
 
-const PREVIEW_MS = 5000;
+export const PREVIEW_MS = 5000;
 const GAP = 2;
 
 export interface PixelBoardProps {

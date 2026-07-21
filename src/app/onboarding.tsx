@@ -58,9 +58,15 @@ export default function Onboarding() {
     debounceTimer.current = setTimeout(() => checkAvailability(trimmed), 600);
   };
 
+  // Versioned so a slow response for an OLD input can't overwrite the state
+  // set for the current one (stale "available" would enable Confirm for a
+  // name that was never actually checked).
+  const checkSeqRef = useRef(0);
   const checkAvailability = async (value: string) => {
+    const seq = ++checkSeqRef.current;
     const { data, error } = await supabase
       .from('profiles').select('username').eq('username', value).maybeSingle();
+    if (seq !== checkSeqRef.current) return; // stale response for older input
     if (error) {
       // Surface the error so the user isn't left staring at a disabled button
       setCheckState('idle');
@@ -89,6 +95,13 @@ export default function Onboarding() {
 
   const handleConfirm = () => {
     if (checkState !== 'available' || !session?.user) return;
+    // Re-validate the CURRENT input — checkState may describe an earlier
+    // value (stale async response); only the DB backstops "taken", nothing
+    // backstops "invalid".
+    if (username.length < MIN_LEN || username.length > MAX_LEN || !VALID_RE.test(username)) {
+      setCheckState('invalid');
+      return;
+    }
     setErrorMsg('');
     setStep('location');
   };
@@ -142,24 +155,26 @@ export default function Onboarding() {
     setErrorMsg('');
     const { error } = await supabase
       .from('profiles')
-      .update({
-        username,
-        address: loc.address,
-        city: loc.city,
-        region: loc.region,
-        country: loc.country,
-        latitude: loc.latitude,
-        longitude: loc.longitude,
-      })
+      .update({ username })
       .eq('id', session.user.id);
-    setSaving(false);
     if (error) {
+      setSaving(false);
       if (error.code === '23505') {
         setCheckState('taken');
         setStep('username');
       } else {
         setErrorMsg(error.message);
       }
+      return;
+    }
+    // Location/address lives in its own self-only table (profile_location),
+    // not on profiles — that table is readable by every authenticated user.
+    const { error: locWriteError } = await supabase
+      .from('profile_location')
+      .upsert({ user_id: session.user.id, ...loc });
+    setSaving(false);
+    if (locWriteError) {
+      setErrorMsg(locWriteError.message);
       return;
     }
     // Username + location saved — send them to the profile-photo step.
@@ -346,6 +361,18 @@ export default function Onboarding() {
                       onChangeText={editAddress}
                     />
                   </View>
+                  {/* City was missing entirely from the manual path, so anyone
+                      who denied GPS had a permanently-null city — the one field
+                      "nearby players" actually uses. */}
+                  <View style={styles.inputCard}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="City"
+                      placeholderTextColor={colors.textFaint}
+                      value={city}
+                      onChangeText={editCity}
+                    />
+                  </View>
                   <View style={styles.inputCard}>
                     <TextInput
                       style={styles.input}
@@ -486,9 +513,9 @@ const styles = StyleSheet.create({
 
   // Error
   errorBox: {
-    backgroundColor: 'rgba(239,68,68,0.10)',
+    backgroundColor: 'rgba(248,113,113,0.10)', // colors.danger tint
     borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.30)',
+    borderColor: 'rgba(248,113,113,0.30)',
     borderRadius: radius.sm,
     padding: space.md,
   },

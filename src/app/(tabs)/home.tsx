@@ -40,9 +40,19 @@ const CATEGORIES: { icon: FAIcon; key: string }[] = [
 ];
 
 const SCREEN_W = Dimensions.get('window').width;
+const SCREEN_H = Dimensions.get('window').height;
 const BASE_W = Math.round(SCREEN_W * 0.66);
 const CARD_W = BASE_W - 6;                        // trim width slightly (height unchanged)
-const CARD_H = Math.round(BASE_W * 1.24);
+// Height was derived purely from width, so on a tall-narrow phone (and mobile
+// web, where the browser chrome eats vertical space) the card ran past the
+// bottom nav. Cap it to the viewport so the whole card + title always fit
+// without scrolling.
+// Width-based ideal height + a first-paint fallback. The REAL height is
+// measured at runtime from the carousel's available space (see Home) so the
+// card always fits whatever the device/browser actually gives us.
+const CARD_H_IDEAL = Math.round(BASE_W * 1.24);
+const CARD_H_MIN = Math.round(BASE_W * 0.9);
+const DEFAULT_CARD_H = Math.min(CARD_H_IDEAL, Math.round(SCREEN_H * 0.40));
 const GAP = 16;
 const ITEM = CARD_W + GAP;
 const CARD_INSET = Math.round((SCREEN_W - CARD_W) / 2); // centers the active card
@@ -68,17 +78,18 @@ function roundedPath(pts: number[][], r: number): string {
   return d + 'Z';
 }
 
-const CARD_PATH = roundedPath([[0, SLANT], [CARD_W, 0], [CARD_W, CARD_H], [0, CARD_H]], 22);
-
 function GameCard({
-  game, index, scrollX, onPress,
+  game, index, scrollX, onPress, cardH,
 }: {
   game: typeof GAMES[number];
   index: number;
   scrollX: SharedValue<number>;
   onPress: () => void;
+  cardH: number;
 }) {
   const gid = `gc-${game.id}`;
+  // Path recomputed from the live height so the card outline matches.
+  const cardPath = roundedPath([[0, SLANT], [CARD_W, 0], [CARD_W, cardH], [0, cardH]], 22);
 
   // Art bounces on touch.
   const artScale = useSharedValue(1);
@@ -98,14 +109,14 @@ function GameCard({
   });
 
   return (
-    <Animated.View style={[{ width: CARD_W, height: CARD_H }, styles.cardShadow, aStyle]}>
+    <Animated.View style={[{ width: CARD_W, height: cardH }, styles.cardShadow, aStyle]}>
       <Pressable
         onPress={onPress}
         onPressIn={() => { artScale.value = withSpring(1.16, { damping: 9, stiffness: 220 }); }}
         onPressOut={() => { artScale.value = withSpring(1, { damping: 12, stiffness: 200 }); }}
         style={StyleSheet.absoluteFill}
       >
-        <Svg width={CARD_W} height={CARD_H} style={StyleSheet.absoluteFill}>
+        <Svg width={CARD_W} height={cardH} style={StyleSheet.absoluteFill}>
           <Defs>
             <SvgLinearGradient id={gid} x1="0%" y1="0%" x2="0%" y2="100%">
               {game.cardBg.map((c, i) => (
@@ -113,10 +124,10 @@ function GameCard({
               ))}
             </SvgLinearGradient>
           </Defs>
-          <Path d={CARD_PATH} fill={`url(#${gid})`} />
+          <Path d={cardPath} fill={`url(#${gid})`} />
         </Svg>
 
-        <Animated.View style={[styles.cardArt, { height: CARD_H * 0.6 }, artStyle]}>
+        <Animated.View style={[styles.cardArt, { height: cardH * 0.6 }, artStyle]}>
           {game.image
             ? <Image source={game.image} style={styles.cardImg} contentFit="contain" />
             : <Text style={styles.cardEmoji}>{game.emoji}</Text>}
@@ -138,13 +149,38 @@ function GameCard({
 export default function Home() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { session } = useSession();
+  const { session, loading: sessionLoading } = useSession();
+
+  // A session that goes null after mount (token refresh failure, signed out
+  // elsewhere, account deleted) used to just render a blank screen forever —
+  // nothing ever sent the user back to login.
+  useEffect(() => {
+    if (!sessionLoading && !session) router.replace('/login');
+  }, [sessionLoading, session, router]);
 
   const [activeCat, setActiveCat] = useState(0);
+  // Card height is measured from the carousel's actual available space (see
+  // onLayout below) rather than guessed from the screen height — mobile
+  // browser chrome makes the reported screen height unreliable, which kept
+  // clipping the card. This adapts to whatever room the device really gives.
+  const [cardH, setCardH] = useState(DEFAULT_CARD_H);
+  // Top offset of the carousel within the safe area — used to end the themed
+  // accent band ABOVE the cards so the focused game's colour never bleeds
+  // over the peeking next card.
+  const [carouselTop, setCarouselTop] = useState<number | null>(null);
 
   const { accent, setAccent } = useAccent();
   const scrollX = useSharedValue(0);
   const activeIdx = useSharedValue(0);
+  const openLockRef = useRef(0);
+  // Which card is centered (JS-side mirror of activeIdx) — drives the desktop
+  // prev/next arrows so they always scroll relative to the real position.
+  const [focusIdx, setFocusIdx] = useState(0);
+
+  const scrollToIdx = (i: number) => {
+    const t = Math.max(0, Math.min(GAMES.length - 1, i));
+    scrollRef.current?.scrollTo?.({ x: t * ITEM, animated: true });
+  };
 
   // Web: a horizontal ScrollView is just an overflow-x div, and browsers don't
   // drag-scroll one with a mouse — so the carousel felt frozen on desktop. Map
@@ -153,8 +189,14 @@ export default function Home() {
   const scrollRef = useRef<any>(null);
   useEffect(() => {
     if (Platform.OS !== 'web') return;
-    const node: any = scrollRef.current?.getScrollableNode?.();
-    if (!node) return;
+    // The reanimated ScrollView ref doesn't always expose getScrollableNode
+    // on web, so fall back to the underlying scroll ref / the DOM node itself.
+    const r: any = scrollRef.current;
+    const node: any =
+      r?.getScrollableNode?.() ??
+      r?._scrollViewRef?.getScrollableNode?.() ??
+      (typeof r?.scrollTo === 'function' ? r : null);
+    if (!node || typeof node.addEventListener !== 'function') return;
 
     const onWheel = (e: any) => {
       if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // let real h-scroll through
@@ -184,7 +226,7 @@ export default function Home() {
   // Re-theme the app to the focused game (right band, chips, nav pill).
   const applyAccent = (i: number) => {
     const g = GAMES[i];
-    if (g) setAccent({ theme: g.theme, accent: g.accent });
+    if (g) { setAccent({ theme: g.theme, accent: g.accent }); setFocusIdx(i); }
   };
   const onScroll = useAnimatedScrollHandler((e) => {
     scrollX.value = e.contentOffset.x;
@@ -197,15 +239,34 @@ export default function Home() {
   if (!session) return null;
 
   const openGame = (game: typeof GAMES[number]) => {
+    // Same double-tap lock the Games tab uses — a double-tap here pushed two
+    // stacked details screens and broke back-navigation downstream.
+    const now = Date.now();
+    if (now - openLockRef.current < 1000) return;
+    openLockRef.current = now;
     router.push(`/details/${game.id}` as any);   // → product-detail screen
+  };
+
+  // Shared double-tap guard for the header nav buttons (bell / friends) — a
+  // double-tap pushed the same screen twice and broke back-navigation.
+  const pushOnce = (href: string) => {
+    const now = Date.now();
+    if (now - openLockRef.current < 1000) return;
+    openLockRef.current = now;
+    router.push(href as any);
   };
 
   return (
     <View style={styles.root}>
       <GradientFill colors={[colors.bgTop, colors.bgBottom]} />
 
-      {/* Accent band — themes to the focused game's colour */}
-      <View style={styles.rightBand} pointerEvents="none">
+      {/* Accent band — themes to the focused game's colour. Capped to end
+          above the carousel (insets.top + carouselTop) so it never sits over
+          the peeking next card and shows the wrong game's colour there. */}
+      <View
+        style={[styles.rightBand, carouselTop != null && { height: insets.top + carouselTop - 8 }]}
+        pointerEvents="none"
+      >
         <GradientFill colors={accent.theme} />
       </View>
 
@@ -213,10 +274,17 @@ export default function Home() {
         <View style={[styles.header, { paddingTop: insets.top > 0 ? space.xs : space.md }]}>
           <Pressable
             style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
-            onPress={() => router.push('/notifications')}
+            onPress={() => pushOnce('/notifications')}
             accessibilityLabel="Notifications"
           >
             <FontAwesome name="bell" size={17} color={colors.text} />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
+            onPress={() => pushOnce('/friends')}
+            accessibilityLabel="Friends"
+          >
+            <FontAwesome name="users" size={16} color={colors.text} />
           </Pressable>
         </View>
 
@@ -246,23 +314,61 @@ export default function Home() {
           })}
         </View>
 
-        <View style={{ flex: 1 }} />
-
-        <Animated.ScrollView
-          ref={scrollRef}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          snapToInterval={ITEM}
-          decelerationRate="fast"
-          onScroll={onScroll}
-          scrollEventThrottle={16}
-          style={styles.carousel}
-          contentContainerStyle={styles.cardRow}
+        <View
+          style={styles.carouselArea}
+          onLayout={(e) => {
+            // Size the card to the space actually available (minus the
+            // carousel's bottom margin + a little lift room), clamped so it
+            // never gets absurdly tall or too short.
+            const { height, y } = e.nativeEvent.layout;
+            const avail = Math.floor(height) - 32;
+            const next = Math.max(CARD_H_MIN, Math.min(CARD_H_IDEAL, avail));
+            setCardH((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+            setCarouselTop((prev) => (prev == null || Math.abs(prev - y) > 1 ? y : prev));
+          }}
         >
-          {GAMES.map((g, i) => (
-            <GameCard key={g.id} game={g} index={i} scrollX={scrollX} onPress={() => openGame(g)} />
-          ))}
-        </Animated.ScrollView>
+          <Animated.ScrollView
+            ref={scrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={ITEM}
+            decelerationRate="fast"
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            style={styles.carousel}
+            contentContainerStyle={styles.cardRow}
+          >
+            {GAMES.map((g, i) => (
+              <GameCard key={g.id} game={g} index={i} scrollX={scrollX} cardH={cardH} onPress={() => openGame(g)} />
+            ))}
+          </Animated.ScrollView>
+
+          {/* Desktop web has no touch-swipe and mouse-drag on an overflow div
+              is unreliable — explicit arrows guarantee you can reach every
+              game. Hidden on native (swipe works there). */}
+          {Platform.OS === 'web' && (
+            <>
+              {focusIdx > 0 && (
+                <Pressable
+                  style={[styles.carouselArrow, styles.carouselArrowLeft]}
+                  onPress={() => scrollToIdx(focusIdx - 1)}
+                  accessibilityLabel="Previous game"
+                >
+                  <FontAwesome name="chevron-left" size={18} color={colors.text} />
+                </Pressable>
+              )}
+              {focusIdx < GAMES.length - 1 && (
+                <Pressable
+                  style={[styles.carouselArrow, styles.carouselArrowRight]}
+                  onPress={() => scrollToIdx(focusIdx + 1)}
+                  accessibilityLabel="Next game"
+                >
+                  <FontAwesome name="chevron-right" size={18} color={colors.text} />
+                </Pressable>
+              )}
+            </>
+          )}
+        </View>
       </SafeAreaView>
     </View>
   );
@@ -274,17 +380,19 @@ const styles = StyleSheet.create({
 
   rightBand: {
     position: 'absolute',
-    top: 0, bottom: 48, right: 0,          // occupies the top; bottom comes down a bit
+    top: 0, right: 0,
+    height: '42%',                        // fallback until the carousel top is measured
     width: Math.round(SCREEN_W * 0.34),   // ~30–35% of the width
     overflow: 'hidden',
     borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 12,          // soft curve near the nav, like the sample
+    borderBottomLeftRadius: 12,          // soft curve at the band's lower-left
   },
 
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
+    gap: space.sm,
     paddingBottom: space.lg,
   },
   iconBtn: {
@@ -296,11 +404,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4, shadowRadius: 10, elevation: 8,
   },
 
-  titleBlock: { marginBottom: space.xl },
+  titleBlock: { marginBottom: space.lg },
   titleSolid: { fontFamily: font.display, fontSize: 40, lineHeight: 44, color: colors.text },
   titleOutline: { fontFamily: font.display, fontSize: 40, lineHeight: 44, color: 'rgba(234,240,250,0.28)' },
 
-  catRow: { flexDirection: 'row', gap: space.md, marginBottom: space.xl },
+  catRow: { flexDirection: 'row', gap: space.md, marginBottom: space.lg },
   catChip: {
     width: 54, height: 54, borderRadius: 14,   // box shape, small radius
     backgroundColor: colors.surface,
@@ -313,6 +421,16 @@ const styles = StyleSheet.create({
 
   // Full-bleed: break out of the safe-area padding so cards use the device width,
   // first card flush to the edge (no margin).
+  carouselArea: { flex: 1, justifyContent: 'flex-end' },
+  carouselArrow: {
+    position: 'absolute', top: '42%', zIndex: 10,
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.surfaceSolid,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.hairline, ...shadow.card,
+  },
+  carouselArrowLeft: { left: space.xs },
+  carouselArrowRight: { right: space.xs },
   carousel: { marginHorizontal: -space.lg, marginBottom: 24 },
   cardRow: { gap: GAP, paddingTop: 8, paddingBottom: space.sm, paddingLeft: CARD_INSET, paddingRight: CARD_INSET },
   // Thick 3D drop shadow under each card.

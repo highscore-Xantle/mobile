@@ -87,8 +87,13 @@ export default function Login() {
 
   const handleAuthResult = async (error: any, data: any) => {
     if (error) { setErrorMsg(error.message); return; }
-    const { data: profile } = await supabase
+    const { data: profile, error: profileErr } = await supabase
       .from('profiles').select('username').eq('id', data.user.id).single();
+    // A FAILED fetch (network flake) is not "no username" — routing an
+    // existing user into onboarding on an error forces them to rename their
+    // own account (their name reads "already taken" there). Same fix as the
+    // root index.tsx: only a real "row fetched, username empty" goes there.
+    if (profileErr) { router.replace('/home'); return; }
     router.replace(profile?.username ? '/home' : '/onboarding');
   };
 
@@ -131,16 +136,19 @@ export default function Login() {
     setErrorMsg('');
 
     const { data, error } = await supabase.auth.verifyOtp({ email: email.trim(), token: otp, type: 'email' });
-    setLoading(false);
 
     if (error) {
+      setLoading(false);
       setErrorMsg(error.message);
       setOtp('');
       return;
     }
 
-    // Auth successful
-    handleAuthResult(null, data);
+    // Auth successful. Keep `loading` true through the profile fetch +
+    // navigation — re-enabling the button here let a second tap re-submit
+    // the already-consumed token and flash "Token has expired" mid-redirect.
+    await handleAuthResult(null, data);
+    setLoading(false);
   };
 
 
@@ -249,6 +257,8 @@ export default function Login() {
               chipBg={colors.surfaceAlt}
               label="Continue with Google"
               onPress={signInWithGoogle_}
+              loading={loading}
+              disabled={loading}
             />
           )}
 
@@ -501,9 +511,9 @@ const styles = StyleSheet.create({
 
   // Error
   errorBox: {
-    backgroundColor: 'rgba(239,68,68,0.10)',
+    backgroundColor: 'rgba(248,113,113,0.10)', // colors.danger tint
     borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.30)',
+    borderColor: 'rgba(248,113,113,0.30)',
     borderRadius: radius.sm,
     padding: space.md,
   },
