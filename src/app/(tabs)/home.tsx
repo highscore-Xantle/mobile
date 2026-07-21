@@ -164,6 +164,10 @@ export default function Home() {
   // browser chrome makes the reported screen height unreliable, which kept
   // clipping the card. This adapts to whatever room the device really gives.
   const [cardH, setCardH] = useState(DEFAULT_CARD_H);
+  // Top offset of the carousel within the safe area — used to end the themed
+  // accent band ABOVE the cards so the focused game's colour never bleeds
+  // over the peeking next card.
+  const [carouselTop, setCarouselTop] = useState<number | null>(null);
 
   const { accent, setAccent } = useAccent();
   const scrollX = useSharedValue(0);
@@ -256,8 +260,13 @@ export default function Home() {
     <View style={styles.root}>
       <GradientFill colors={[colors.bgTop, colors.bgBottom]} />
 
-      {/* Accent band — themes to the focused game's colour */}
-      <View style={styles.rightBand} pointerEvents="none">
+      {/* Accent band — themes to the focused game's colour. Capped to end
+          above the carousel (insets.top + carouselTop) so it never sits over
+          the peeking next card and shows the wrong game's colour there. */}
+      <View
+        style={[styles.rightBand, carouselTop != null && { height: insets.top + carouselTop - 8 }]}
+        pointerEvents="none"
+      >
         <GradientFill colors={accent.theme} />
       </View>
 
@@ -311,9 +320,11 @@ export default function Home() {
             // Size the card to the space actually available (minus the
             // carousel's bottom margin + a little lift room), clamped so it
             // never gets absurdly tall or too short.
-            const avail = Math.floor(e.nativeEvent.layout.height) - 32;
+            const { height, y } = e.nativeEvent.layout;
+            const avail = Math.floor(height) - 32;
             const next = Math.max(CARD_H_MIN, Math.min(CARD_H_IDEAL, avail));
             setCardH((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+            setCarouselTop((prev) => (prev == null || Math.abs(prev - y) > 1 ? y : prev));
           }}
         >
           <Animated.ScrollView
@@ -369,11 +380,12 @@ const styles = StyleSheet.create({
 
   rightBand: {
     position: 'absolute',
-    top: 0, bottom: 48, right: 0,          // occupies the top; bottom comes down a bit
+    top: 0, right: 0,
+    height: '42%',                        // fallback until the carousel top is measured
     width: Math.round(SCREEN_W * 0.34),   // ~30–35% of the width
     overflow: 'hidden',
     borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 12,          // soft curve near the nav, like the sample
+    borderBottomLeftRadius: 12,          // soft curve at the band's lower-left
   },
 
   header: {
