@@ -419,23 +419,28 @@ function OnlineNumberDuel() {
   }, [isBot, opponentId, synced, graceRearm, isOnline(opponentId)]);
 
   const [forfeitReason, setForfeitReason] = useState<'disconnect' | 'timeout' | null>(null);
+  const forfeitClaimedRef = useRef(false);
   useEffect(() => {
     if (!opponentOffline || gs.phase === 'game_over') return;
     // Re-verify at claim time — the opponent may have re-tracked in the
     // moment between the grace timer expiring and this effect running.
     if (opponentId && isOnline(opponentId)) { setOpponentOffline(false); return; }
-    setForfeitReason('disconnect');
-    setGs(prev => {
-      const nextState = { ...prev, phase: 'game_over' as const, winner: 'me' as const };
-      if (isHost && roomId) {
-        persistRoomStateRpc({ p_room: roomId, p_state: {
-          ...gameRules, round: nextState.round,
-          hostScore: isHost ? nextState.myScore : nextState.opponentScore,
-          guestScore: isHost ? nextState.opponentScore : nextState.myScore,
-        }});
-      }
-      return nextState;
-    });
+    if (forfeitClaimedRef.current || !roomId) return;
+    forfeitClaimedRef.current = true;
+    // Server-authoritative: the FIRST player to claim wins; a claim after the
+    // room is decided returns the recorded winner. This stops the split-brain
+    // where a connection flap made BOTH players read the other offline and
+    // BOTH set winner='me'.
+    (async () => {
+      const { data: winnerId, error } = await supabase.rpc('claim_room_win', { p_room: roomId });
+      if (error) { forfeitClaimedRef.current = false; return; }
+      const iWon = winnerId === session?.user.id;
+      setForfeitReason('disconnect');
+      setGs(prev => prev.phase === 'game_over' ? prev : { ...prev, phase: 'game_over', winner: iWon ? 'me' : 'opponent' });
+      // Nudge the opponent (if they're actually connected — the flap case) so
+      // they converge on the same result instead of waiting out their grace.
+      chRef.current?.send({ type: 'broadcast', event: 'disconnect_result', payload: { winnerUserId: winnerId } });
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opponentOffline]);
 
@@ -1021,6 +1026,16 @@ function OnlineNumberDuel() {
       setGs(prev => prev.phase === 'game_over' ? prev : { ...prev, phase: 'game_over', winner: 'me' });
     });
 
+    // The other side claimed the disconnect win (see claim_room_win). Converge
+    // on the authoritative result rather than each device deciding locally.
+    ch.on('broadcast', { event: 'disconnect_result' }, ({ payload }) => {
+      if (gsRef.current.phase === 'game_over') return;
+      forfeitClaimedRef.current = true;
+      setForfeitReason('disconnect');
+      const iWon = payload.winnerUserId === session.user.id;
+      setGs(prev => prev.phase === 'game_over' ? prev : { ...prev, phase: 'game_over', winner: iWon ? 'me' : 'opponent' });
+    });
+
     // ── Rematch handshake ──────────────────────────────────────────────
     ch.on('broadcast', { event: 'rematch_offer' }, ({ payload }) => {
       if (payload.userId === session.user.id) return;
@@ -1060,6 +1075,19 @@ function OnlineNumberDuel() {
       rematchNavRef.current = true;
       router.replace({ pathname: '/room/[code]', params: { code: roomCode } });
     });
+
+    // Catch the authoritative disconnect result even if we missed the
+    // broadcast (we were the one who dropped and have now reconnected): the
+    // room is flipped 'finished' with a winnerUserId by claim_room_win.
+    ch.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
+      ({ new: row }: any) => {
+        const winnerId = row?.state?.winnerUserId;
+        if (!winnerId || gsRef.current.phase === 'game_over') return;
+        forfeitClaimedRef.current = true;
+        setForfeitReason('disconnect');
+        const iWon = winnerId === session.user.id;
+        setGs(prev => prev.phase === 'game_over' ? prev : { ...prev, phase: 'game_over', winner: iWon ? 'me' : 'opponent' });
+      });
 
     ch.subscribe();
     chRef.current = ch;
