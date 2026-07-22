@@ -260,11 +260,12 @@ export default function Home() {
     <View style={styles.root}>
       <GradientFill colors={[colors.bgTop, colors.bgBottom]} />
 
-      {/* Accent band — themes to the focused game's colour. Capped to end
-          above the carousel (insets.top + carouselTop) so it never sits over
-          the peeking next card and shows the wrong game's colour there. */}
+      {/* Accent band — themes to the focused game's colour. Capped to the
+          carousel's measured top (which already includes the safe-area
+          inset, since it's laid out inside SafeAreaView) so it never sits
+          over the peeking next card and shows the wrong game's colour. */}
       <View
-        style={[styles.rightBand, carouselTop != null && { height: insets.top + carouselTop - 8 }]}
+        style={[styles.rightBand, carouselTop != null && { height: Math.max(0, carouselTop - 8) }]}
         pointerEvents="none"
       >
         <GradientFill colors={accent.theme} />

@@ -192,12 +192,21 @@ export default function PixelRushScreen() {
     }, SEARCH_SECONDS * 1000);
   }
 
-  function cancelSearching() {
+  async function cancelSearching() {
     const gameId = matchGameIdRef.current;
     const botGameId = botGameIdRef.current;
-    resolvedRef.current = true;
     stopWaiting();
-    if (gameId) cancelPixelRushMatch(gameId).catch(() => {});
+    // A real opponent may have flipped our lobby to 'active' in the same
+    // instant we tapped Cancel. cancel_pixel_rush_match only deletes 'lobby'
+    // rows, so abandoning here would strand them alone in an active game
+    // (and, because presence is app-global, they'd never win by forfeit).
+    // Re-check and go PLAY them instead. (Skip when we're mid bot-reveal.)
+    if (gameId && !botGameId) {
+      await cancelPixelRushMatch(gameId).catch(() => {});
+      const { data } = await supabase.from('games').select('status, invite_code').eq('id', gameId).maybeSingle();
+      if (data?.status === 'active' && !resolvedRef.current) { resolveMatch(data.invite_code); return; }
+    }
+    resolvedRef.current = true;
     // Cancelling during the 1.2s bot reveal: the bot game already exists and
     // is 'active'. CONCEDE it (bot wins, game finished) — leave_game never
     // finishes a game while the bot row remains, so leaving left a ghost

@@ -178,7 +178,11 @@ export function useFriends() {
     const ch = supabase
       .channel(friendsChannelId)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => refresh())
-      .subscribe();
+      .subscribe((status) => {
+        // If the subscription dies, live updates stop silently — refetch once
+        // so the list isn't stuck on a stale snapshot.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') refresh();
+      });
     return () => { void supabase.removeChannel(ch); };
   }, [me, refresh, friendsChannelId]);
 
@@ -214,8 +218,13 @@ export function useIncomingInvites() {
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'game_invites', filter: `to_user=eq.${me}` },
         () => refresh())
-      .subscribe();
-    return () => { void supabase.removeChannel(ch); };
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') refresh();
+      });
+    // Poll fallback: the global invite prompt depends on this, so a dead
+    // subscription must not silently swallow incoming invites. 15s is quiet.
+    const poll = setInterval(refresh, 15000);
+    return () => { clearInterval(poll); void supabase.removeChannel(ch); };
   }, [me, refresh, invitesChannelId]);
 
   return { invites, refresh };

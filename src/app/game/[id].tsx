@@ -29,6 +29,7 @@ import {
   DEFAULT_PUZZLE_IMAGE,
   autoAdvanceRound,
   concedeGame,
+  expireRound,
   forfeitGame,
   gridForRound,
   joinGame,
@@ -82,6 +83,15 @@ export default function GameScreen() {
   const [shareState, setShareState] = useState<'idle' | 'busy' | 'done'>('idle');
   const [copied, setCopied] = useState(false);
   const botTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Bumped on a failed setRoundImage/autoAdvance/forfeit so the effect
+  // re-runs and retries — otherwise a single dropped RPC left the round stuck
+  // forever (the deps don't change on failure, and the 5s poll refetches the
+  // SAME awaiting_image/done round without re-invoking the action).
+  const [retryTick, setRetryTick] = useState(0);
+  const retry = () => setTimeout(() => setRetryTick((n) => n + 1), 1500);
+  // Force-remounts PixelBoard so a rejected solve unlatches "Solved!" and the
+  // player can try again (the board's internal solved state doesn't reset).
+  const [boardNonce, setBoardNonce] = useState(0);
 
   // Only the host calls setRoundImage — if the host's app closes right when a
   // new round needs one, everyone else was stuck on "Setting up round…"
@@ -121,9 +131,13 @@ export default function GameScreen() {
     if (forfeitFiredRef.current) return;
     if (opponent1v1?.user_id && isOnline(opponent1v1.user_id)) return;
     forfeitFiredRef.current = true;
-    forfeitGame(game.id).catch((e) => { forfeitFiredRef.current = false; console.warn(e); });
+    forfeitGame(game.id).catch((e) => {
+      forfeitFiredRef.current = false;
+      console.warn('[pixel-rush] forfeitGame failed, retrying:', e);
+      retry(); // deps won't change on failure; nudge a re-run
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opponentOffline, game?.id, game?.status]);
+  }, [opponentOffline, game?.id, game?.status, retryTick]);
 
   // Reset solved flag when a new round starts.
   useEffect(() => { setMySolved(false); }, [round?.round_no]);
@@ -143,13 +157,20 @@ export default function GameScreen() {
     joinGame(code).catch(console.warn);
   }, [game?.id, game?.status, game?.max_players, code, myId, players]);
 
-  // Host: automatically set the round image when a new round needs one.
+  // ANY seated player sets the round image (not just the host): the image is
+  // deterministic (seeded by game id + round), so every client picks the same
+  // one and the server dedupes on conflict. This removes the host-only
+  // bottleneck that stranded group matches when the host disconnected, and
+  // adds natural redundancy if one client's call fails.
   useEffect(() => {
-    if (!game || !round || !isHost) return;
+    if (!game || !round || !myId) return;
     if (game.status !== 'active') return;
     if (round.status !== 'awaiting_image') return;
-    setRoundImage(game.id, round.round_no, pickPuzzleImage(game.id, round.round_no)).catch(console.warn);
-  }, [game?.id, game?.status, round?.status, round?.round_no, isHost]);
+    if (!players.some((p) => p.user_id === myId)) return;
+    setRoundImage(game.id, round.round_no, pickPuzzleImage(game.id, round.round_no))
+      .catch((e) => { console.warn('[pixel-rush] setRoundImage failed, retrying:', e); retry(); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.id, game?.status, round?.status, round?.round_no, players.length, retryTick]);
 
   // Both clients: auto-advance once a round is decided. Players only — an
   // unseated bystander (shared link opened mid-match) would just get a
@@ -158,9 +179,24 @@ export default function GameScreen() {
     if (!game || !round || !myId) return;
     if (round.status !== 'done') return;
     if (!players.some((p) => p.user_id === myId)) return;
-    autoAdvanceRound(game.id, round.round_no).catch(console.warn);
+    autoAdvanceRound(game.id, round.round_no)
+      .catch((e) => { console.warn('[pixel-rush] autoAdvanceRound failed, retrying:', e); retry(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game?.id, round?.status, round?.round_no, players.length]);
+  }, [game?.id, round?.status, round?.round_no, players.length, retryTick]);
+
+  // No-solver safety net: if a racing round runs 92s with nobody solving,
+  // expire it so the match can't hang 'active' forever. The server re-checks
+  // the round is genuinely 90s+ stale before ending it.
+  useEffect(() => {
+    if (!game || !round || !myId) return;
+    if (game.status !== 'active' || round.status !== 'racing') return;
+    if (!players.some((p) => p.user_id === myId)) return;
+    const t = setTimeout(() => {
+      expireRound(game.id, round.round_no).catch((e) => console.warn('[pixel-rush] expireRound:', e));
+    }, 92000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.id, game?.status, round?.status, round?.round_no, players.length]);
 
   // Bot matches: look up the human's win rate once, to scale the bot's pace.
   useEffect(() => {
@@ -194,16 +230,25 @@ export default function GameScreen() {
   async function handleSolve(timeMs: number) {
     if (!game || !round || mySolved) return;
     setMySolved(true);
+    // Clamp to the server's accepted bounds (0016: 500–600000ms). A client
+    // clock running behind the server makes `Date.now() - raceStart` tiny or
+    // negative, which the server rejects as "invalid time" — clamping avoids
+    // that false rejection while the server's own min-elapsed check still
+    // enforces the anti-cheat window.
+    const safeMs = Math.min(600000, Math.max(600, Math.round(timeMs || 0)));
     try {
-      await submitSolve(game.id, round.round_no, timeMs);
-      await autoAdvanceRound(game.id, round.round_no);
+      await submitSolve(game.id, round.round_no, safeMs);
     } catch (e) {
-      // If the submit never reached the server (network drop), unlock the
-      // board so the player can re-solve — otherwise they sit frozen on
-      // "Solved!" while the round is silently lost.
+      // Submit never landed (network drop / rejection): unlatch the board so
+      // the player can re-solve instead of sitting frozen on "Solved!".
       setMySolved(false);
-      console.warn('[game] submitSolve error:', e);
+      setBoardNonce((n) => n + 1);
+      console.warn('[pixel-rush] submitSolve error:', e);
+      return;
     }
+    // Scored — advance; if that RPC fails the retry effect covers it.
+    autoAdvanceRound(game.id, round.round_no)
+      .catch((e) => { console.warn('[pixel-rush] autoAdvanceRound (post-solve) failed:', e); retry(); });
   }
 
   async function handleLeave() {
@@ -457,6 +502,7 @@ export default function GameScreen() {
               </View>
             ) : (
               <PixelBoard
+                key={`${round?.round_no}-${boardNonce}`}
                 image={imageUrl}
                 seed={seed}
                 grid={grid}

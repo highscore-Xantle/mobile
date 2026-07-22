@@ -1202,16 +1202,24 @@ function OnlineNumberDuel() {
     // 0 forever (it never re-fires), silently voiding the "timeout = loss"
     // rule for the rest of the round. The timer expiring ends the round; a
     // late reply lands in round_end and is handled by the phase guards.
-    if (gs.phase !== 'guessing') return; // round already ended before the timer flushed
+    // Read the LIVE phase (gsRef), not the stale render closure: a win can
+    // commit round_end in the same tick the 15s expires. Without this the
+    // updater below would clobber that win into an opponent point.
+    if (gsRef.current.phase !== 'guessing') return;
     if (guessReplyTimerRef.current) { clearTimeout(guessReplyTimerRef.current); guessReplyTimerRef.current = null; }
     setSubmitting(false);
     if (botSolveTimerRef.current) { clearTimeout(botSolveTimerRef.current); botSolveTimerRef.current = null; }
     myGuessTimeoutRoundRef.current = gs.round;
     chRef.current?.send({ type: 'broadcast', event: 'player_timeout', payload: { userId: session?.user.id } });
-    setGs(prev => ({
-      ...prev, opponentScore: prev.opponentScore + 1, roundWinner: 'opponent', phase: 'round_end',
-      opponentSecretReveal: isBot ? botSecretRef.current : prev.opponentSecretReveal,
-    }));
+    setGs(prev => {
+      // Guard inside the updater too — if the win already landed between the
+      // check above and here, leave it alone.
+      if (prev.phase !== 'guessing') return prev;
+      return {
+        ...prev, opponentScore: prev.opponentScore + 1, roundWinner: 'opponent', phase: 'round_end',
+        opponentSecretReveal: isBot ? botSecretRef.current : prev.opponentSecretReveal,
+      };
+    });
   };
 
   // Advance out of round_end. No longer a button: the old "Next Round" CTA

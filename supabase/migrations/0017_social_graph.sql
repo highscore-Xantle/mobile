@@ -336,4 +336,11 @@ end $$;
 grant execute on function public.matchmake_pixel_rush() to authenticated;
 
 -- Realtime for live pending-invite delivery.
-alter publication supabase_realtime add table public.game_invites;
+do $$ begin
+  if not exists (
+    select 1 from pg_publication_tables
+     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'game_invites'
+  ) then
+    alter publication supabase_realtime add table public.game_invites;
+  end if;
+end $$;

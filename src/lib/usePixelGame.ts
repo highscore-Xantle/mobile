@@ -233,6 +233,12 @@ export async function setRoundImage(gameId: string, round: number, imageUrl: str
   if (error) throw error;
 }
 
+/** Ends a stale racing round nobody solved (server re-checks the 90s age). */
+export async function expireRound(gameId: string, round: number): Promise<void> {
+  const { error } = await supabase.rpc('expire_round', { p_game_id: gameId, p_round: round });
+  if (error) throw error;
+}
+
 export async function submitSolve(gameId: string, round: number, timeMs: number): Promise<void> {
   const { error } = await supabase.rpc('submit_solve', {
     p_game_id: gameId,

@@ -60,6 +60,10 @@ export function ConfirmHost() {
   if (!req) return null;
 
   const press = (b: HostButton) => {
+    // Only act if this dialog is still the front one — a rapid second click
+    // on the same (still-mounted) dialog must not shift a DIFFERENT queued
+    // request off the front and leave its promise unresolved.
+    if (queue[0] !== req) return;
     queue.shift();
     emit();
     b.onPress?.();
