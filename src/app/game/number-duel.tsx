@@ -21,6 +21,7 @@ import { confirmAsync } from '../../lib/confirm';
 import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
+import { ConnectionPill } from '../../components/ConnectionPill';
 import { NumberKeypad } from '../../components/NumberKeypad';
 import { RoundScoreboard } from '../../components/RoundScoreboard';
 import { AV_POOL, VersusSearch, randomBotOpponent, useMyVersusProfile, type VersusPlayer } from '../../components/VersusSearch';
@@ -1713,7 +1714,10 @@ function OnlineNumberDuel() {
             <Text style={s.backText}>← Exit</Text>
           </Pressable>
           <Text style={s.headerTitle}>Number Duel</Text>
-          <HeaderAvatar />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+            <ConnectionPill />
+            <HeaderAvatar />
+          </View>
         </View>
         <View style={s.scoreboardWrap}>
           <RoundScoreboard round={gs.round} totalRounds={gameRules.rounds} scoreA={gs.myScore} scoreB={gs.opponentScore} nameA={myName} nameB={opponentName} avatarA={myAvatar} avatarB={opponentAvatar} difficulty={diffDisplay} />

@@ -21,6 +21,7 @@ import { Avatar } from '../../components/ui/Avatar';
 import { Confetti } from '../../components/Confetti';
 import { GradientFill } from '../../components/GradientFill';
 import { HeaderAvatar } from '../../components/HeaderAvatar';
+import { ConnectionPill } from '../../components/ConnectionPill';
 import PixelBoard from '../../components/PixelBoard';
 import { AV_POOL } from '../../components/VersusSearch';
 import { computeBotSolveDelayMs, getRecentWinRate } from '../../lib/botOpponent';
@@ -621,7 +622,10 @@ function Header({
         <Text style={themeText.h2}>{title}</Text>
         {subtitle ? <Text style={themeText.hint}>{subtitle}</Text> : null}
       </View>
-      <HeaderAvatar />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+        <ConnectionPill />
+        <HeaderAvatar />
+      </View>
     </View>
   );
 }
